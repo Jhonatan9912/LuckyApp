@@ -47,6 +47,16 @@ app.*.map.json
 # Env files
 .env
 
+# 🔐 Android signing (NO subir nunca)
+android/key.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+*.cer
+*.der
+
+
 # Python backend
 venv/
 __pycache__/
