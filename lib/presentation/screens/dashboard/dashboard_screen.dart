@@ -1,0 +1,650 @@
+import 'package:flutter/material.dart';
+import 'widgets/ball_tube.dart';
+import 'widgets/play_button.dart';
+import 'widgets/action_buttons.dart';
+import 'controller/dashboard_controller.dart';
+import 'widgets/help_bottom_sheet.dart';
+import 'package:base_app/core/ui/dialogs.dart';
+import 'package:base_app/data/api/games_api.dart';
+import 'package:base_app/data/api/auth_api.dart';
+import 'package:base_app/data/session/session_manager.dart';
+import 'package:base_app/domain/auth/auth_repository.dart';
+import 'widgets/empty_selection_placeholder.dart';
+import 'package:base_app/core/config/env.dart';
+import 'package:base_app/core/utils/formatters.dart';
+import 'widgets/dashboard_app_bar.dart';
+import 'widgets/selection_row.dart';
+import 'widgets/big_ball_overlay.dart';
+import 'dart:async';
+import 'widgets/selection_tabs.dart' as tabs;
+import 'widgets/history_panel.dart' as hist;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
+
+class DashboardScreen extends StatefulWidget {
+  const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  bool _dialogBusy = false; // evita abrir 2 diálogos a la vez
+  bool _scheduleShownOnce = false; // no repetir alerta de programado
+
+  Future<void> _safeShow(Future<void> Function() task) async {
+    if (!mounted || _dialogBusy) return;
+    _dialogBusy = true;
+    try {
+      await task();
+    } finally {
+      _dialogBusy = false;
+    }
+  }
+
+  late final DashboardController _ctrl;
+
+  Timer? _notifTimer; // 👈 timer para notificaciones
+  int _tabIndex = 0; // 0 = Juego, 1 = Historial
+  // Espaciados (ajústalos a tu gusto)
+  double gapTop = 1; // espacio desde arriba hasta el tubo
+  double gapTubeTabs = 40; // espacio entre el tubo y las pestañas
+
+  double gapGameTop = 32; // menos margen arriba
+  double gapHistoryTop = 8;
+  double historyBottomSafe = 80;
+  double gameBottomSafe = 120; // <-- NUEVO
+
+  Future<void> _showReserveSuccessDialog({required bool completed}) async {
+    if (!mounted) return;
+    final formatted = _ctrl.numbers.toTriplePadded();
+    final title = '¡Reserva confirmada!';
+    final message = completed
+        ? 'Tus números se han reservado:\n$formatted\n\nEl juego se completó y se abrió uno nuevo automáticamente.'
+        : 'Tus números se han reservado:\n$formatted';
+
+    await _showSuccess(message, title: title);
+
+    // 👇 Si el juego se cerró, deja la pestaña en estado inicial (botón JUGAR)
+    if (completed && mounted) {
+      _ctrl.resetToInitial();
+      setState(() {});
+    }
+  }
+
+  void _showHelp() {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => const HelpBottomSheet(),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final session = SessionManager();
+    final gamesApi = GamesApi(baseUrl: Env.apiBaseUrl);
+    final authApi = AuthApi(baseUrl: Env.apiBaseUrl);
+    final authRepo = AuthRepository(api: authApi, session: session);
+
+    _ctrl = DashboardController(
+      gamesApi: gamesApi,
+      authRepo: authRepo,
+      session: session,
+    );
+
+    // 👇 todo lo que abre diálogos, después del primer frame
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _ctrl.initSession();
+      if (!_ctrl.sessionReady) return;
+      await _ctrl.loadReferralCode();
+      // 👇 Cargar historial primero
+      await _ctrl.loadHistory();
+
+      // Luego restaura selección (si la hay)
+      await _ctrl.restoreSelectionIfAny();
+
+      // 1) Peek de juego programado (solo una vez)
+      await _safeShow(() async {
+        await _checkScheduleNotice();
+      });
+
+      // 2) Notificaciones normales (ganador, etc.)
+      await _ctrl.loadNotifications();
+      await _safeShow(() async {
+        await _checkNotifications();
+      });
+
+      // 3) Polling cada 5s (evita correr si hay diálogo abierto)
+      _notifTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+        if (_dialogBusy) return;
+
+        await _ctrl.loadNotifications();
+        await _safeShow(() async {
+          await _checkNotifications();
+        });
+
+        if (!_scheduleShownOnce) {
+          await _safeShow(() async {
+            await _checkScheduleNotice();
+          });
+        }
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _notifTimer?.cancel(); // 👈 cancela el timer al cerrar la pantalla
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) {
+        return Scaffold(
+          appBar: DashboardAppBar(
+            onHelp: _showHelp,
+            isLoggedIn: _ctrl.authToken?.isNotEmpty == true,
+            onLogout: () async {
+              final ctx = context;
+              await _ctrl.logout();
+              if (!ctx.mounted) return;
+              Navigator.of(ctx).pushNamedAndRemoveUntil('/login', (_) => false);
+            },
+            ctrl: _ctrl, // 👈 pasa el controlador
+            onBellTap: _openNotifications,
+          ),
+
+          body: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFFFF7E6), Color(0xFFFFE7BA)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+            child: Stack(
+              children: [
+                // ======= COLUMNA PRINCIPAL: tubo + tabs + contenido =======
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(height: gapTop), // <-- usa variable
+                    // 👇 Banner de referido (nuevo)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+                      child: _ReferralBanner(code: _ctrl.referralCode),
+                    ),
+                    Column(
+                      children: [
+                        BallTube(
+                          numbers: _ctrl.numbers,
+                          animating: _ctrl.animating,
+                        ),
+                        const SizedBox(
+                          height: 8,
+                        ), // 👈 AQUÍ controlas el espacio real
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: tabs.SelectionTabs(
+                            index: _tabIndex,
+                            onChanged: (i) async {
+                              setState(() => _tabIndex = i);
+                              if (i == 1) {
+                                await _ctrl.loadHistory();
+                              } else if (i == 0) {
+                                // cuando vuelvas a "Juego Actual", por si el admin marcó ganador mientras estabas en Historial
+                                await _ctrl.loadHistory();
+                                setState(
+                                  () {},
+                                ); // forzar rebuild con historial fresco
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    if (_tabIndex == 0) ...[
+                      // Pestaña: Juego Actual
+                      SizedBox(height: gapGameTop),
+                      Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            bottom: gameBottomSafe,
+                          ), // <- sin const
+                          child: Center(
+                            child: (_ctrl.hasAdded && !_isCurrentGameClosed())
+                                ? Padding(
+                                    padding: const EdgeInsets.only(top: 6),
+                                    child: SelectionRow(
+                                      balls: _ctrl.displayedBalls,
+                                      showActions: _ctrl.showActionIcons,
+                                      onClear: _ctrl.clearSelection,
+                                    ),
+                                  )
+                                : const EmptySelectionPlaceholder(),
+                          ),
+                        ),
+                      ),
+                    ] else ...[
+                      // Pestaña: Historial
+                      SizedBox(height: gapHistoryTop),
+                      Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            16,
+                            0,
+                            16,
+                            historyBottomSafe,
+                          ),
+                          child: hist.HistoryPanel(
+                            items: _ctrl.history,
+                            onRefresh: () => _ctrl.loadHistory(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+
+                // ======= OVERLAY: Balota grande =======
+                BigBallOverlay(number: _ctrl.currentBigBall),
+
+                // ======= OVERLAY: Botones inferiores =======
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 24),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 500),
+                      switchInCurve: Curves.easeOut,
+                      switchOutCurve: Curves.easeIn,
+                      transitionBuilder: (child, animation) {
+                        final offsetAnimation =
+                            Tween<Offset>(
+                              begin: const Offset(0.0, 0.3),
+                              end: Offset.zero,
+                            ).animate(
+                              CurvedAnimation(
+                                parent: animation,
+                                curve: Curves.easeOut,
+                              ),
+                            );
+                        return FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(
+                            position: offsetAnimation,
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: _buildBottomButtons(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBottomButtons() {
+    // si está en Historial, no mostramos botones de juego
+    if (_tabIndex == 1) {
+      return const SizedBox.shrink();
+    }
+    if (_ctrl.showFinalButtons) {
+      // Oculta mientras se está reservando (animación + commit)
+      if (_ctrl.reserving) {
+        return const SizedBox.shrink();
+      }
+
+      // Reserva completada: SOLO “VOLVER A INTENTAR”
+      if (_ctrl.hasAddedFinal) {
+        // Ya reservó: no mostrar ningún botón
+        return const SizedBox.shrink();
+      }
+
+      // Números listos (aún no reservados): mostrar AMBOS
+      return ActionButtons(
+        onAdd: () async {
+          final out = await _ctrl.add();
+          if (!mounted) return; // ✅ chequeo correcto
+
+          if (out.ok) {
+            if (out.code == 'REPLACED' && out.message != null) {
+              await _showInfo(out.message!);
+            } else {
+              await _showReserveSuccessDialog(completed: out.gameCompleted);
+            }
+          } else {
+            final code = out.code ?? '';
+            final msg = out.message ?? 'No se pudo guardar la selección.';
+
+            if (code == 'CONFLICT' || code == 'GAME_SWITCHED') {
+              await _showWarn(msg);
+              if (!mounted) return;
+
+              // 1) Reset visual y “despegar” del juego viejo
+              _ctrl.resetToInitial();
+              setState(() {}); // muestra el botón JUGAR
+
+              // 2) Abrir un juego NUEVO evitando el anterior (usa el helper del controller)
+              await _ctrl.openFreshGame();
+
+              return; // ← importante: no continúes en este onAdd()
+            } else if (code == 'UNAUTHORIZED' || code == 'UNAUTHENTICATED') {
+              await _showError(msg);
+              if (!mounted) return;
+              Navigator.of(
+                context,
+              ).pushNamedAndRemoveUntil('/login', (_) => false);
+            } else {
+              await _showError(msg);
+            }
+          }
+        },
+
+        onRetry: () async => _ctrl.retry(),
+        isSaving: _ctrl.saving,
+        key: const ValueKey('reserve-or-retry'),
+      );
+    }
+
+    // Estado inicial: solo "JUGAR"
+    if (!_ctrl.hasPlayedOnce) {
+      return PlayButton(
+        onPressed: () async {
+          if (!_ctrl.animating && !_ctrl.saving) {
+            await _ctrl.openFreshGame();
+          }
+        },
+        key: const ValueKey('play'),
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  Future<void> _showError(String msg) async {
+    if (!mounted) {
+      return;
+    }
+    await AppDialogs.error(context: context, title: 'Error', message: msg);
+  }
+
+  Future<void> _showSuccess(String msg, {String title = '¡Listo!'}) async {
+    if (!mounted) return;
+    await AppDialogs.success(
+      context: context,
+      title: title,
+      message: msg,
+      okText: 'OK',
+    );
+  }
+
+  // ignore: unused_element
+  Future<void> _showInfo(String msg) async {
+    if (!mounted) return;
+    await AppDialogs.success(
+      context: context,
+      title: 'Información',
+      message: msg,
+      okText: 'OK',
+    );
+  }
+
+  Future<void> _showWarn(String msg) async {
+    if (!mounted) return;
+    await AppDialogs.warning(context: context, title: 'Aviso', message: msg);
+  }
+
+  Future<void> _checkNotifications() async {
+    final notifs = await _ctrl.fetchWinnerNotificationsOnce();
+    if (!mounted || notifs.isEmpty) return;
+
+    final shownIds = <int>[];
+
+    for (final n in notifs) {
+      if (!mounted) return;
+
+      final id = n['id'] as int?;
+      final gameId = n['game_id'];
+      final numStr = (n['winning_number'] ?? '').toString().padLeft(3, '0');
+      final kind = (n['kind'] ?? '').toString();
+
+      if (kind == 'you_won') {
+        await AppDialogs.success(
+          context: context,
+          title: '🏆 ¡Fuiste el ganador del juego #$gameId!',
+          message: 'Ganaste con el número $numStr',
+          okText: '¡Genial!',
+        );
+      } else {
+        await AppDialogs.success(
+          context: context,
+          title: '🎉 ¡Resultado del juego #$gameId!',
+          message: 'El número ganador es $numStr',
+          okText: 'OK',
+        );
+      }
+
+      // 👇 Al anunciarse el ganador, dejamos el "Juego actual" en estado inicial
+      if (mounted) {
+        _ctrl.resetToInitial(); // limpia flags y deja visible el botón "JUGAR"
+        setState(() {}); // fuerza el rebuild de la pantalla
+      }
+
+      if (id != null) shownIds.add(id);
+    }
+
+    // (Opcional) marcar como leídas en backend:
+    // await _gamesApi.markNotificationsRead(ids: shownIds, token: _ctrl.authToken);
+  }
+
+  Future<void> _checkScheduleNotice() async {
+    // 1) Intenta desde listado (notifs normales)
+    var item = await _ctrl.fetchScheduleFromListOnce();
+
+    // 2) Si no hay, intenta el peek (programación “silenciosa”)
+    item ??= await _ctrl.peekScheduleOnce();
+
+    if (!mounted || item == null) return;
+
+    // Construimos una clave única de esta programación.
+    // Preferimos ID; si no viene, usamos game_id + fecha/hora + título/cuerpo.
+    final scheduleKey = [
+      (item['id'] ?? '').toString(),
+      (item['game_id'] ?? '').toString(),
+      (item['scheduled_at'] ?? item['when'] ?? '').toString(),
+      (item['title'] ?? '').toString(),
+      (item['body'] ?? '').toString(),
+    ].join('|');
+
+    // Si ya se mostró esta programación, no la muestres de nuevo.
+    final lastKey = await _getLastScheduleKey();
+    if (lastKey == scheduleKey) {
+      _scheduleShownOnce = true; // evita reintentos en este ciclo
+      // (opcional) si vino con id, márcala leída en backend
+      final nid = int.tryParse((item['id'] ?? '').toString());
+      if (nid != null) {
+        await _ctrl.markReadIds([nid]);
+      }
+      return;
+    }
+
+    // Mostrar alerta
+    final title = (item['title'] ?? '¡Juego programado!').toString();
+    final body = (item['body'] ?? '').toString();
+    if (!mounted) return;
+    await AppDialogs.success(
+      context: context,
+      title: title,
+      message: body,
+      okText: 'OK',
+    );
+
+    // Marcar como mostrada (en memoria y persistente)
+    _scheduleShownOnce = true;
+    await _setLastScheduleKey(scheduleKey);
+
+    // Si la notificación tiene id, márcala como leída
+    final nid = int.tryParse((item['id'] ?? '').toString());
+    if (nid != null) {
+      await _ctrl.markReadIds([nid]);
+    }
+  }
+
+  Future<void> _openNotifications() async {
+    if (!mounted) return;
+
+    _dialogBusy = true;
+    try {
+      // 1) Carga
+      await _ctrl.loadNotifications();
+
+      // 2) Marca TODAS las no leídas como leídas
+      await _ctrl.markUnreadAsRead();
+
+      // 👇 chequeo extra ANTES de usar context
+      if (!mounted) return;
+
+      // 3) Muestra tu UI de notificaciones (sheet o pantalla)
+      await showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (_) {
+          final items = _ctrl.notifications;
+          return SizedBox(
+            height: MediaQuery.of(context).size.height * 0.75,
+            child: ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const Divider(height: 16),
+              itemBuilder: (_, i) {
+                final n = items[i];
+                return ListTile(
+                  title: Text('${n['title'] ?? ''}'),
+                  subtitle: Text('${n['body'] ?? ''}'),
+                  trailing: (n['read'] == true)
+                      ? const Icon(Icons.mark_email_read_outlined)
+                      : const Icon(Icons.mark_email_unread_outlined),
+                );
+              },
+            ),
+          );
+        },
+      );
+    } finally {
+      _dialogBusy = false;
+    }
+  }
+
+  bool _isCurrentGameClosed() {
+    final gid = _ctrl.gameId;
+    if (gid == null) return false;
+
+    for (final m in _ctrl.history) {
+      final mid = (m['game_id'] as num?)?.toInt();
+      if (mid != gid) continue;
+
+      final status = (m['status'] ?? m['result'] ?? '')
+          .toString()
+          .toLowerCase();
+      final hasWinner =
+          m['winning_number'] != null ||
+          status.contains('closed') ||
+          status.contains('completed') ||
+          status.contains('perdido') ||
+          status.contains('ganado');
+
+      return hasWinner;
+    }
+    return false;
+  }
+
+  Future<String?> _getLastScheduleKey() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('last_schedule_key');
+  }
+
+  Future<void> _setLastScheduleKey(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('last_schedule_key', key);
+  }
+
+}
+// 👇 declara el widget a nivel de archivo (fuera de la clase de arriba)
+class _ReferralBanner extends StatelessWidget {
+  final String? code;
+  const _ReferralBanner({required this.code});
+
+  @override
+  Widget build(BuildContext context) {
+    if (code == null || code!.trim().isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final titleStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+      fontWeight: FontWeight.w800,
+      letterSpacing: 0.2,
+    );
+    final codeStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+      fontFeatures: const [FontFeature.tabularFigures()],
+      fontFamily: 'monospace',
+      fontWeight: FontWeight.w700,
+    );
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 2))],
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.card_giftcard, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Código de referidos', style: titleStyle),
+                const SizedBox(height: 2),
+                SelectableText(code!, style: codeStyle),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Copiar',
+            icon: const Icon(Icons.copy_rounded),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: code!));
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Código copiado')),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "cSpell.words": [
+    "jsonify",
+    "montserrat"
+  ],
+  "python.analysis.extraPaths": [
+    "./backend/app"
+  ]
+}

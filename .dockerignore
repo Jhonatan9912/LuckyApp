@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+
+# Archivos locales
+.env
+*.log
+
+# Flutter / móvil / otros
+android/
+ios/
+build/
+lib/
+assets/
+test/
+.pub-cache/
+.flutter-plugins*
+.flutter-plugins-dependencies
+.dart_tool/
+.metadata
+pubspec.lock
+pubspec.yaml
+
+# VCS/IDE
+.git
+.gitignore
+.vscode
+.idea

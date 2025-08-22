@@ -1,0 +1,379 @@
+# backend/app/services/games/games_service.py
+from typing import List, Tuple
+from sqlalchemy import text
+from app.db.database import db
+from app.models.game_models import Game
+
+# ===== Utilidades =====
+def get_or_create_active_unscheduled_game_id() -> int:
+    """
+    Usa/crea el ÚNICO juego ABIERTO sin ganador.
+    (state_id = 1 y winning_number IS NULL). La programación (lotería/fecha/hora)
+    NO importa: se puede seguir llenando hasta 1000 o hasta que haya ganador.
+    """
+    row = db.session.execute(text("""
+        SELECT id
+        FROM games
+        WHERE state_id = 1
+          AND winning_number IS NULL
+        ORDER BY id DESC
+        LIMIT 1
+        FOR UPDATE
+    """)).first()
+
+    if row:
+        return int(row[0])
+
+    new_id = db.session.execute(text("""
+        INSERT INTO games (state_id, played_at)
+        VALUES (1, NOW())
+        RETURNING id
+    """)).scalar()
+
+    return int(new_id)
+
+
+def _get_or_create_current_game(user_id: int | None, avoid_game_id: int | None = None) -> int:
+    """
+    Devuelve el id del juego actual (último ABIERTO: sin winning_number y state_id != 2)
+    y con cupo (<1000). Si no existe, crea uno nuevo.
+    """
+    params = {}
+    where = "WHERE winning_number IS NULL AND (state_id IS NULL OR state_id <> 2)"
+    if avoid_game_id:
+        where += " AND id <> :avoid"
+        params["avoid"] = avoid_game_id
+
+    last_id = db.session.execute(text(f"""
+        SELECT id
+        FROM games
+        {where}
+        ORDER BY id DESC
+        LIMIT 1
+    """), params).scalar()
+
+    if last_id is not None:
+        used = db.session.execute(text("""
+            SELECT COUNT(*) FROM game_numbers WHERE game_id = :gid
+        """), {"gid": last_id}).scalar()
+        if used < 1000:
+            return last_id
+
+    # No hay juego abierto con cupo -> crea uno nuevo (estado abierto)
+    g = Game(user_id=user_id, state_id=1)
+    db.session.add(g)
+    db.session.flush()  # obtiene g.id sin commit
+    return g.id
+
+
+def generate_five_available(user_id: int | None, avoid_game_id: int | None = None) -> Tuple[int, List[int]]:
+    """
+    Devuelve 5 números libres del ÚNICO juego 'abierto y sin programar'.
+    - No crea juegos nuevos aquí (solo usa/crea en get_or_create_active_unscheduled_game_id()).
+    - Respeta tus reglas: un solo juego activo donde todos juegan,
+      y solo se abrirá otro al cerrarse (1000) o al tener ganador / estar programado.
+    """
+    # 1) Siempre trabajar sobre el juego abierto y sin programar
+    gid = get_or_create_active_unscheduled_game_id()
+
+    # 2) Tomar 5 números disponibles en ese juego
+    rows = db.session.execute(text("""
+        WITH taken AS (
+            SELECT number FROM game_numbers WHERE game_id = :gid
+        )
+        SELECT n AS number
+        FROM generate_series(0, 999) n
+        WHERE NOT EXISTS (SELECT 1 FROM taken t WHERE t.number = n)
+        ORDER BY random()
+        LIMIT 5;
+    """), {"gid": gid}).fetchall()
+
+    numbers = [int(r[0]) for r in rows]
+
+    # 3) Salvaguarda: si por alguna razón hubiera < 5 libres (no debería con tu flujo),
+    #    devolvemos lo que haya; el commit luego decidirá si debe "cambiar de juego".
+    #    En tu caso (200 jugadores * 5 = 1000) esto no debería ocurrir.
+    return gid, numbers
+
+def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
+    """
+    Intenta guardar exactamente 5 números para el juego dado.
+    - Si otro jugador tomó alguno, devuelve conflicto.
+    - Si el juego cambió (se llenó en el camino), obliga a volver a jugar.
+    """
+    # Sanitizar entrada
+    if len(numbers) != 5:
+        return {"ok": False, "error": "Debes enviar exactamente 5 números."}
+    if len(set(numbers)) != 5:
+        return {"ok": False, "error": "Los 5 números deben ser distintos."}
+    if any((n < 0 or n > 999) for n in numbers):
+        return {"ok": False, "error": "Cada número debe estar entre 0 y 999."}
+    
+        # --- BLOQUE NUEVO: no permitir confirmar en juegos cerrados o llenos ---
+    # --- BLOQUE NUEVO: no permitir confirmar en juegos cerrados, con ganador o programados ---
+    row = db.session.execute(text("""
+        SELECT
+            winning_number,
+            state_id,
+            (SELECT COUNT(*) FROM game_numbers WHERE game_id = :gid) AS used,
+            lottery_id,
+            lottery_name,
+            scheduled_date,
+            scheduled_time
+        FROM games
+        WHERE id = :gid
+    """), {"gid": game_id}).fetchone()
+
+    if row is None:
+        db.session.rollback()
+        return {"ok": False, "code": "NOT_FOUND", "error": "Juego inexistente."}
+
+    winning_number, state_id, used = row[0], row[1], int(row[2])
+    lottery_id, lottery_name, scheduled_date, scheduled_time = row[3], row[4], row[5], row[6]
+
+    # 1) Cerrado por el admin o ya con ganador
+    if winning_number is not None or (state_id == 2):
+        db.session.rollback()
+        return {"ok": False, "code": "GAME_SWITCHED",
+                "error": "El juego ya fue cerrado. Vuelve a jugar."}
+    
+    # 3) Lleno por cupo
+    if used >= 1000:
+        db.session.rollback()
+        return {"ok": False, "code": "GAME_SWITCHED",
+                "error": "El juego cambió (se completó). Vuelve a jugar."}
+
+    # Intento de inserción atómica con 'ON CONFLICT DO NOTHING'
+    # Usamos RETURNING para saber cuántos se insertaron realmente.
+    sql = text("""
+        WITH ins AS (
+          INSERT INTO game_numbers (game_id, number, position, taken_by)
+          VALUES
+            (:gid, :n1, 1, :uid),
+            (:gid, :n2, 2, :uid),
+            (:gid, :n3, 3, :uid),
+            (:gid, :n4, 4, :uid),
+            (:gid, :n5, 5, :uid)
+          ON CONFLICT (game_id, number) DO NOTHING
+          RETURNING id
+        )
+        SELECT COUNT(*) FROM ins;
+    """)
+
+    res = db.session.execute(sql, {
+        "gid": game_id,
+        "uid": user_id,
+        "n1": numbers[0], "n2": numbers[1], "n3": numbers[2],
+        "n4": numbers[3], "n5": numbers[4],
+    }).scalar()
+
+    if res == 5:
+        db.session.commit()
+
+        used = db.session.execute(text("""
+            SELECT COUNT(*) FROM game_numbers WHERE game_id = :gid
+        """), {"gid": game_id}).scalar()
+        completed = (used >= 1000)
+
+        if completed:
+            # Marca el juego como cerrado y deja listo el siguiente “abierto y sin programar”
+            db.session.execute(text("""
+                UPDATE games
+                SET state_id = 2, played_at = NOW()
+                WHERE id = :gid AND state_id = 1
+            """), {"gid": game_id})
+            # Garantiza que exista el siguiente juego abierto y sin programar
+            _ = get_or_create_active_unscheduled_game_id()
+            db.session.commit()
+
+        return {
+            "ok": True,
+            "game_completed": completed,
+            "user_id_used": user_id
+        }
+
+    # Si no insertó los 5, deshacer y avisar conflicto
+    db.session.rollback()
+    return {"ok": False, "code": "CONFLICT",
+            "error": "Alguno(s) de los números ya no están disponibles. Vuelve a jugar."}
+
+# ===== Liberar selección anterior (reemplazo) =====
+
+def release_selection(user_id: int, game_id: int) -> dict:
+    """
+    Borra de game_numbers todas las filas reservadas por este usuario en ese juego.
+    Devuelve:
+      - {"ok": True, "released": N} si borró N filas (N puede ser 0..5)
+      - {"ok": False, "error": "..."} si algo falló
+    """
+    try:
+        res = db.session.execute(text("""
+            DELETE FROM game_numbers
+            WHERE game_id = :gid
+              AND taken_by = :uid
+            RETURNING id;
+        """), {"gid": game_id, "uid": user_id})
+
+        released = len(res.fetchall())  # cuántas filas borró
+        db.session.commit()
+
+        return {"ok": True, "released": released}
+
+    except Exception as e:
+        db.session.rollback()
+        return {"ok": False, "error": f"release_failed: {e}"}
+
+def get_last_selection(user_id: int) -> dict:
+    """
+    Devuelve la última selección COMPLETA (5 números) del usuario.
+    Si no hay, retorna {"ok": False, "code": "NOT_FOUND"}.
+    """
+    try:
+        row = db.session.execute(text("""
+            SELECT g.id AS game_id
+            FROM games g
+            JOIN game_numbers gn ON gn.game_id = g.id
+            WHERE gn.taken_by = :uid
+            GROUP BY g.id
+            HAVING COUNT(*) >= 5
+            ORDER BY g.id DESC
+            LIMIT 1
+        """), {"uid": user_id}).fetchone()
+
+        if row is None:
+            return {"ok": False, "code": "NOT_FOUND", "message": "Sin selección previa"}
+
+        gid = int(row[0])
+
+        nums = db.session.execute(text("""
+            SELECT number
+            FROM game_numbers
+            WHERE game_id = :gid AND taken_by = :uid
+            ORDER BY position ASC
+        """), {"gid": gid, "uid": user_id}).fetchall()
+
+        numbers = [int(r[0]) for r in nums]
+        if len(numbers) < 5:
+            return {"ok": False, "code": "NOT_FOUND", "message": "Sin selección previa"}
+
+        return {"ok": True, "data": {"game_id": gid, "numbers": numbers, "user_id_used": user_id}}
+    except Exception as e:
+        return {"ok": False, "code": "ERROR", "message": f"{e}"}
+
+def set_winner(game_id: int, winning_number: int) -> tuple[bool, str | None]:
+    try:
+        db.session.execute(text("""
+            UPDATE games
+            SET winning_number = :num,
+                state_id = 2
+            WHERE id = :gid
+        """), {"gid": game_id, "num": winning_number})
+
+        db.session.commit()
+        return True, None
+    except Exception as e:
+        db.session.rollback()
+        return False, str(e)
+
+def list_user_history(conn, user_id: int, page: int, per_page: int) -> dict:
+    """
+    Devuelve el historial paginado de juegos en los que el usuario participó.
+    - conn: raw_connection() (ya lo abres/cierra la ruta)
+    - user_id: id del usuario
+    - page / per_page: paginación
+
+    Retorna:
+    {
+      "ok": True,
+      "page": <int>,
+      "per_page": <int>,
+      "total": <int>,
+      "items": [
+        {
+          "game_id": <int>,
+          "numbers": [n1, n2, n3, n4, n5],  # según los que ese usuario reservó en ese juego
+          "state_id": <int|null>,
+          "winning_number": <int|null>
+        },
+        ...
+      ]
+    }
+    """
+    try:
+        offset = max(0, (int(page) - 1) * int(per_page))
+        limit = max(1, int(per_page))
+        cur = conn.cursor()
+
+        # Total de juegos en los que el usuario tiene al menos 1 número
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM (
+              SELECT gn.game_id
+              FROM game_numbers gn
+              WHERE gn.taken_by = %s
+              GROUP BY gn.game_id
+            ) t;
+            """,
+            (user_id,),
+        )
+        total = int(cur.fetchone()[0])
+
+        cur.execute(
+            """
+            SELECT
+            g.id AS game_id,                 -- r[0]
+            g.state_id,                      -- r[1]
+            g.winning_number,                -- r[2]
+            COALESCE(g.lottery_name, l.name) AS lottery_name,  -- r[3]
+            g.scheduled_date,                -- r[4]
+            g.scheduled_time,                -- r[5]
+            g.played_at,                     -- r[6]
+            ARRAY_AGG(gn.number ORDER BY gn.position) AS numbers  -- r[7]
+            FROM games g
+            JOIN game_numbers gn ON gn.game_id = g.id
+            LEFT JOIN lotteries l ON l.id = g.lottery_id
+            WHERE gn.taken_by = %s
+            GROUP BY
+            g.id, g.state_id, g.winning_number,
+            COALESCE(g.lottery_name, l.name),
+            g.scheduled_date, g.scheduled_time, g.played_at
+            ORDER BY g.id DESC
+            LIMIT %s OFFSET %s;
+            """,
+            (user_id, limit, offset),
+        )
+
+        rows = cur.fetchall()
+        cur.close()
+
+        items = []
+        for r in rows:
+            # r[0]..r[7] según el SELECT que te pasé:
+            # 0 game_id, 1 state_id, 2 winning_number, 3 lottery_name (COALESCE),
+            # 4 scheduled_date, 5 scheduled_time, 6 played_at, 7 numbers[]
+            items.append({
+                "game_id": int(r[0]),
+                "state_id": int(r[1]) if r[1] is not None else None,
+                "winning_number": int(r[2]) if r[2] is not None else None,
+                "lottery_name": r[3],
+                "scheduled_date": r[4].isoformat() if r[4] else None,
+                "scheduled_time": str(r[5]) if r[5] else None,
+                "played_at": r[6].isoformat() if r[6] else None,
+                "numbers": [int(n) for n in (r[7] or [])],
+            })
+
+
+        return {
+            "ok": True,
+            "page": int(page),
+            "per_page": int(per_page),
+            "total": total,
+            "items": items,
+        }
+
+    except Exception as e:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        return {"ok": False, "message": f"history_error: {e}"}
