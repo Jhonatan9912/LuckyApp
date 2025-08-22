@@ -1,21 +1,27 @@
 # backend/wsgi.py
-try:
-    # Caso común: tienes una factory create_app() en app/__init__.py
-    from app import create_app
-    app = create_app()
-except Exception:
-    # Plan B: quizás ya tienes una instancia 'app' en algún módulo
+import os
+
+def _make_fallback():
+    from flask import Flask, jsonify
+    f = Flask(__name__)
+
+    @f.get("/health")
+    def _health():
+        return jsonify(ok=True, fallback=True), 200
+
+    @f.get("/")
+    def _root():
+        return "WSGI fallback running", 200
+
+    return f
+
+# Permite forzar el fallback con una variable de entorno en Railway
+if os.getenv("FORCE_WSGI_FALLBACK", "").lower() in {"1", "true", "yes"}:
+    app = _make_fallback()
+else:
     try:
-        from app import app  # e.g., app = Flask(__name__)
-    except Exception as e:
-        # Último recurso: app mínima para que Gunicorn levante y podamos ver logs
-        from flask import Flask, jsonify
-        app = Flask(__name__)
-
-        @app.route("/health")
-        def _health():
-            return jsonify(ok=True), 200
-
-        @app.route("/")
-        def _root():
-            return "WSGI fallback running", 200
+        from app import create_app  # app/__init__.py
+        app = create_app()
+    except Exception as _e:
+        # Si tu factory rompe por DB u otra cosa, igual levantamos
+        app = _make_fallback()
