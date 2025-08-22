@@ -19,9 +19,6 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Copiar el código del backend (carpeta backend/)
 COPY backend/ /app/
 
-# Copiar wsgi.py (está en la raíz del repo)
-COPY wsgi.py /app/wsgi.py
-
 # Variables por defecto (puedes sobreescribirlas en runtime)
 ENV PORT=8000 \
     FLASK_ENV=production
