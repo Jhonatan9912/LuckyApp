@@ -16,8 +16,11 @@ WORKDIR /app
 COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copiar el código del backend (solo la carpeta backend/)
+# Copiar el código del backend (carpeta backend/)
 COPY backend/ /app/
+
+# Copiar wsgi.py (está en la raíz del repo)
+COPY wsgi.py /app/wsgi.py
 
 # Variables por defecto (puedes sobreescribirlas en runtime)
 ENV PORT=8000 \
@@ -25,6 +28,5 @@ ENV PORT=8000 \
 
 EXPOSE 8000
 
-# Arranque con Gunicorn (wsgi.py está ahora en /app)
+# Arranque con Gunicorn (wsgi.py está en /app y expone 'app')
 CMD gunicorn -w 3 -b 0.0.0.0:$PORT wsgi:app
-
