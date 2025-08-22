@@ -26,4 +26,5 @@ ENV PORT=8000 \
 EXPOSE 8000
 
 # Arranque con Gunicorn (wsgi.py está ahora en /app)
-CMD ["gunicorn", "-w", "3", "-b", "0.0.0.0:8000", "wsgi:app"]
+CMD gunicorn -w 3 -b 0.0.0.0:$PORT wsgi:app
+

@@ -11,7 +11,7 @@ Esta Política describe cómo recolectamos, usamos, almacenamos y protegemos los
 
 ## 1. Principios
 - **Legalidad y finalidad:** tratamos datos con **autorización previa, expresa e informada**, para fines legítimos y específicos (p. ej., organización de grupos, envío de números, gestión de referidos).
-- **Seguridad y confidencialidad:** aplicamos medidas **técnicas y administrativas** (p. ej., encriptación, firewalls, controles de acceso) para proteger los datos.
+- **Seguridad y confidencialidad:** aplicamos medidas **técnicas y administrativas** y controles de acceso para proteger los datos.
 - **Transparencia:** garantizamos que el Titular pueda **acceder** a la información sobre el tratamiento de sus datos.
 - **Acceso y circulación restringida:** los datos solo son accedidos por **personal y proveedores autorizados**.
 - **Conservación limitada:** conservamos datos **solo por el tiempo necesario** para las finalidades y por plazos legales aplicables.
@@ -45,8 +45,7 @@ No compartimos datos con terceros, **salvo**:
 ---
 
 ## 4. Base legal y autorización
-El **registro** en la aplicación implica la **autorización** del Titular para el tratamiento de sus datos conforme a estas finalidades, incluyendo datos vinculados a referidos.  
-El Titular puede **revocar** su autorización; sin embargo, esto puede **limitar** el uso de la aplicación y la participación en el programa de referidos.
+La autorización para el tratamiento de datos se obtiene por medios idóneos y verificables (p. ej., aceptación de la Política en la App o formularios), conforme a la Ley 1581 de 2012 y normas complementarias.
 
 ---
 
@@ -60,7 +59,7 @@ El Titular puede:
 ---
 
 ## 6. Procedimiento de consultas y reclamos
-- **Contacto:** [carloscamo_1981@yahoo.com](mailto:carloscamo_1981@yahoo.com)  
+- **Contacto:** [luckyapp25@gmail.com](mailto:luckyapp25@gmail.com)  
   Incluya su nombre completo, número de identificación y la solicitud específica.
 - **Tiempos de respuesta (hábiles):**  
   - **Consultas:** hasta **10 días**, prorrogables **5** más si es necesario.  
@@ -71,8 +70,7 @@ Le informaremos si se requiere información adicional para atender su solicitud.
 ---
 
 ## 7. Seguridad de la información
-Implementamos medidas de seguridad como **encriptación** y **firewalls**.  
-En caso de incidentes que comprometan datos personales, se **notificará** a la **SIC** y a los **Titulares** afectados, conforme a la regulación.
+Implementamos medidas razonables de seguridad acordes con la naturaleza de los datos y los riesgos identificados.
 
 ---
 
@@ -108,4 +106,4 @@ Al registrarte, aceptas nuestros **Términos y Condiciones** y esta **Política 
 
 ---
 
-Para dudas o ejercicio de derechos: [carloscamo_1981@yahoo.com](mailto:carloscamo_1981@yahoo.com)
+Para dudas o ejercicio de derechos: [luckyapp25@gmail.com](mailto:luckyapp25@gmail.com)

@@ -2,7 +2,6 @@
 _Última actualización: 20 de agosto de 2025_
 
 **Propietario/Operador:** Carlos Andrés Muñoz Ordóñez (NIT 80180047-8)  
-**Domicilio:** calle 66c # 60-65, Colombia  
 **Ámbito:** Usuarios en Colombia  
 **Documentos vinculados:** [Política de Tratamiento de Datos Personales](data_policy_es.md)
 
@@ -47,7 +46,15 @@ Incluye:
 La Aplicación está destinada **exclusivamente** a usuarios en **Colombia**. El acceso desde el exterior puede ser restringido. (A futuro se podría habilitar uso internacional).
 
 ## 5. Registro y cuenta
-El Usuario debe registrarse con **nombre, correo, teléfono y contraseña**. El Usuario es responsable de la **confidencialidad** de su cuenta y de reportar usos no autorizados. Podemos **suspender** o **cancelar** cuentas por incumplimiento.
+El Usuario debe registrarse con:
+- Nombre completo
+- Correo electrónico
+- Número de teléfono
+- Número de identificación
+- Fecha de nacimiento
+- Contraseña
+
+El Usuario es responsable de la **confidencialidad** de su cuenta y de reportar usos no autorizados. Podemos **suspender** o **cancelar** cuentas por incumplimiento.
 
 ## 6. Conducta del Usuario
 El Usuario se compromete a:
@@ -80,5 +87,5 @@ Podemos **suspender** el acceso por incumplimientos (incluidos fraudes en referi
 Estos Términos se rigen por las **leyes de Colombia**. Las disputas se resolverán ante tribunales de **Bogotá** o mediante **conciliación** ante la **SIC** o **Coljuegos**.
 
 ## 14. Contacto
-**Correo:** [carloscamo_1981@yahoo.com](mailto:carloscamo_1981@yahoo.com)  
+**Correo:** [luckyapp25@gmail.com](mailto:luckyapp25@gmail.com)  
 **Teléfono:** [+57 321 859 7037](tel:+573218597037)
