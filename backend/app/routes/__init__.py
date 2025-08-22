@@ -8,6 +8,7 @@ from app.routes.admin.games_routes import admin_games_bp
 from app.routes.admin.players_routes import admin_players_bp
 from app.routes.notify.notifications_routes import notifications_bp
 from app.routes.admin.games_routes import admin_games_bp, me_notifications_bp
+from app.routes.health import health_bp
 
 def register_routes(app):
     app.register_blueprint(identification_bp)
@@ -20,3 +21,4 @@ def register_routes(app):
     app.register_blueprint(admin_players_bp)
     app.register_blueprint(notifications_bp)
     app.register_blueprint(me_notifications_bp)
+    app.register_blueprint(health_bp)
