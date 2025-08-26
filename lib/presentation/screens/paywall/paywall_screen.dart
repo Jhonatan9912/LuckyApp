@@ -4,6 +4,7 @@ import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:provider/provider.dart';
 
 import 'package:base_app/presentation/providers/subscription_provider.dart';
+const String kEntitlementId = 'Pro';
 
 class PaywallScreen extends StatefulWidget {
   const PaywallScreen({super.key});
@@ -27,10 +28,10 @@ class _PaywallScreenState extends State<PaywallScreen> {
     _loadCustomerInfo();
 
     // Escucha cambios de entitlements (p.ej., si RC actualiza en caliente)
-    Purchases.addCustomerInfoUpdateListener((info) {
-      final isPro = info.entitlements.active.containsKey('pro');
-      if (mounted) setState(() => _isPro = isPro);
-    });
+Purchases.addCustomerInfoUpdateListener((info) {
+  final isPro = info.entitlements.active.containsKey(kEntitlementId);
+  if (mounted) setState(() => _isPro = isPro);
+});
   }
 
   Future<void> _loadOfferings() async {
@@ -82,8 +83,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
   Future<void> _loadCustomerInfo() async {
     try {
-      final info = await Purchases.getCustomerInfo();
-      final isPro = info.entitlements.active.containsKey('pro');
+final info = await Purchases.getCustomerInfo();
+final isPro = info.entitlements.active.containsKey(kEntitlementId);
       if (mounted) setState(() => _isPro = isPro);
     } catch (_) {
       // Ignora error inicial
@@ -111,7 +112,7 @@ Future<void> _purchaseMonthly() async {
       info = (pr as dynamic).customerInfo as CustomerInfo;
     }
 
-    final hasPro = info.entitlements.active.containsKey('pro');
+    final hasPro = info.entitlements.active.containsKey(kEntitlementId);
 
     await subs.refresh(force: true);
 
@@ -153,7 +154,7 @@ Future<void> _purchaseMonthly() async {
 
     try {
       final info = await Purchases.restorePurchases();
-      final hasPro = info.entitlements.active.containsKey('pro');
+      final hasPro = info.entitlements.active.containsKey(kEntitlementId);
 
       // 🚀 Refresca backend → provider
       await subs.refresh(force: true);
