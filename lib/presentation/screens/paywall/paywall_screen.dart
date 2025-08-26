@@ -2,13 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:provider/provider.dart';
-
 import 'package:base_app/presentation/providers/subscription_provider.dart';
-const String kEntitlementId = 'Pro';
+
+const String kEntitlementId = 'Pro'; // 👈 debe coincidir EXACTO con RC
 
 class PaywallScreen extends StatefulWidget {
   const PaywallScreen({super.key});
-
   @override
   State<PaywallScreen> createState() => _PaywallScreenState();
 }
@@ -21,17 +20,22 @@ class _PaywallScreenState extends State<PaywallScreen> {
   bool _isPro = false;
   String? _message;
 
+  // Evita agregar múltiples listeners si se reconstruye el widget
+  static bool _customerInfoListenerAdded = false;
+
   @override
   void initState() {
     super.initState();
     _loadOfferings();
     _loadCustomerInfo();
 
-    // Escucha cambios de entitlements (p.ej., si RC actualiza en caliente)
-Purchases.addCustomerInfoUpdateListener((info) {
-  final isPro = info.entitlements.active.containsKey(kEntitlementId);
-  if (mounted) setState(() => _isPro = isPro);
-});
+    if (!_customerInfoListenerAdded) {
+      Purchases.addCustomerInfoUpdateListener((info) {
+        final isPro = info.entitlements.active.containsKey(kEntitlementId);
+        if (mounted) setState(() => _isPro = isPro);
+      });
+      _customerInfoListenerAdded = true;
+    }
   }
 
   Future<void> _loadOfferings() async {
@@ -41,25 +45,24 @@ Purchases.addCustomerInfoUpdateListener((info) {
 
       Package? monthly;
       if (current != null && current.availablePackages.isNotEmpty) {
-        // 1) intenta por el id estándar de RC
+        // 1) PRIORIDAD: productId real con base plan
         monthly = current.availablePackages.firstWhere(
-          (p) => p.identifier == r'$rc_monthly',
+          (p) => p.storeProduct.identifier == 'cm_suscripcion:monthly',
           orElse: () => current.availablePackages.first,
         );
 
-        // 2) fallback adicional: por si quieres matchear por productId de Play
+        // 2) (opcional) intenta por id estándar del paquete en el offering
         if (monthly.storeProduct.identifier != 'cm_suscripcion:monthly') {
-          final byProduct = current.availablePackages.where(
-            (p) => p.storeProduct.identifier == 'cm_suscripcion:monthly',
-          );
-          if (byProduct.isNotEmpty) monthly = byProduct.first;
+          try {
+            final byPkgId = current.availablePackages.firstWhere(
+              (p) => p.identifier == r'$rc_monthly',
+            );
+            monthly = byPkgId;
+          } catch (_) {/* no-op */}
         }
       }
 
-      String? price;
-      if (monthly != null) {
-        price = monthly.storeProduct.priceString;
-      }
+      final price = monthly?.storeProduct.priceString;
 
       if (mounted) {
         setState(() {
@@ -83,71 +86,66 @@ Purchases.addCustomerInfoUpdateListener((info) {
 
   Future<void> _loadCustomerInfo() async {
     try {
-final info = await Purchases.getCustomerInfo();
-final isPro = info.entitlements.active.containsKey(kEntitlementId);
+      final info = await Purchases.getCustomerInfo();
+      final isPro = info.entitlements.active.containsKey(kEntitlementId);
       if (mounted) setState(() => _isPro = isPro);
-    } catch (_) {
-      // Ignora error inicial
-    }
+    } catch (_) {/* noop */}
   }
 
-Future<void> _purchaseMonthly() async {
-  if (_monthly == null) return;
+  Future<void> _purchaseMonthly() async {
+    if (_monthly == null) return;
 
-  final subs = context.read<SubscriptionProvider>();
-  final nav = Navigator.of(context);
-  final messenger = ScaffoldMessenger.of(context);
+    final subs = context.read<SubscriptionProvider>();
+    final nav = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
 
-  setState(() { _purchasing = true; _message = null; });
+    setState(() { _purchasing = true; _message = null; });
 
-  try {
-    // Usa dynamic para evitar problemas de tipo entre versiones del SDK
-    final dynamic pr = await Purchases.purchasePackage(_monthly!);
+    try {
+      final dynamic pr = await Purchases.purchasePackage(_monthly!);
 
-    // Extrae CustomerInfo, ya sea que pr SEA CustomerInfo o un objeto con .customerInfo
-    late final CustomerInfo info;
-    if (pr is CustomerInfo) {
-      info = pr;
-    } else {
-      info = (pr as dynamic).customerInfo as CustomerInfo;
+      late final CustomerInfo info;
+      if (pr is CustomerInfo) {
+        info = pr;
+      } else {
+        info = (pr as dynamic).customerInfo as CustomerInfo; // compat SDK
+      }
+
+      final hasPro = info.entitlements.active.containsKey(kEntitlementId);
+
+      // Refresca provider (RC + backend)
+      await subs.refresh(force: true);
+
+      if (!mounted) return;
+      setState(() {
+        _isPro = hasPro;
+        _message = hasPro
+            ? '¡Compra exitosa! PRO activado.'
+            : 'Compra realizada, pero PRO aún no aparece activo.';
+      });
+
+      if (hasPro) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Suscripción PRO activada')),
+        );
+        nav.maybePop();
+      }
+    } on PlatformException catch (e) {
+      final code = PurchasesErrorHelper.getErrorCode(e);
+      if (!mounted) return;
+      setState(() {
+        _message = code == PurchasesErrorCode.purchaseCancelledError
+            ? 'Compra cancelada.'
+            : 'Error de compra: $code';
+      });
+    } catch (e) {
+      if (mounted) setState(() => _message = 'Error de compra: $e');
+    } finally {
+      if (mounted) setState(() => _purchasing = false);
     }
-
-    final hasPro = info.entitlements.active.containsKey(kEntitlementId);
-
-    await subs.refresh(force: true);
-
-    if (!mounted) return;
-    setState(() {
-      _isPro = hasPro;
-      _message = hasPro
-          ? '¡Compra exitosa! PRO activado.'
-          : 'Compra realizada, pero PRO aún no aparece activo.';
-    });
-
-    if (hasPro) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Suscripción PRO activada')),
-      );
-      nav.maybePop();
-    }
-  } on PlatformException catch (e) {
-    final code = PurchasesErrorHelper.getErrorCode(e);
-    if (!mounted) return;
-    setState(() {
-      _message = code == PurchasesErrorCode.purchaseCancelledError
-          ? 'Compra cancelada.'
-          : 'Error de compra: $code';
-    });
-  } catch (e) {
-    if (mounted) setState(() => _message = 'Error de compra: $e');
-  } finally {
-    if (mounted) setState(() => _purchasing = false);
   }
-}
-
 
   Future<void> _restore() async {
-    // Captura dependencias ANTES de await
     final subs = context.read<SubscriptionProvider>();
     final nav = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
@@ -155,8 +153,6 @@ Future<void> _purchaseMonthly() async {
     try {
       final info = await Purchases.restorePurchases();
       final hasPro = info.entitlements.active.containsKey(kEntitlementId);
-
-      // 🚀 Refresca backend → provider
       await subs.refresh(force: true);
 
       if (mounted) {
@@ -185,8 +181,8 @@ Future<void> _purchaseMonthly() async {
     final subtitle = _isPro
         ? 'Gracias por tu suscripción.'
         : (_price != null
-              ? 'Accede a PRO por $_price / mes'
-              : 'Selecciona tu plan');
+            ? 'Accede a PRO por $_price / mes'
+            : 'Selecciona tu plan');
 
     return Scaffold(
       appBar: AppBar(title: const Text('Pro')),

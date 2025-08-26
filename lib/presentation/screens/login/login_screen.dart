@@ -29,7 +29,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool obscureText = true;
   bool _loading = false;
 
-final _authApi = AuthApi(baseUrl: Env.apiBaseUrl);
+  final _authApi = AuthApi(baseUrl: Env.apiBaseUrl);
   final _session = SessionManager();
 
   @override
@@ -175,20 +175,18 @@ final _authApi = AuthApi(baseUrl: Env.apiBaseUrl);
                           }
 
                           // Tareas no críticas en paralelo (NO bloquean la navegación)
-                          unawaited(() async {
-                            try {
-                              await Purchases.logIn(
-                                'cm_apuestas:$userId',
-                              ).timeout(const Duration(seconds: 3));
-                            } catch (_) {}
-                          }());
-                          unawaited(() async {
-                            try {
-                              await subs
-                                  .refresh(force: true)
-                                  .timeout(const Duration(seconds: 3));
-                            } catch (_) {}
-                          }());
+                          try {
+                            await Purchases.logIn('cm_apuestas:$userId');
+                          } catch (e) {
+                            debugPrint('[LOGIN] Purchases.logIn error: $e');
+                          }
+
+                          try {
+                            await subs.refresh(force: true);
+                          } catch (e) {
+                            debugPrint('[LOGIN] subs.refresh error: $e');
+                          }
+
                           unawaited(() async {
                             if (!ctx.mounted) return;
                             try {

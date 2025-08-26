@@ -3,6 +3,7 @@ import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
+
 import 'presentation/screens/paywall/paywall_screen.dart';
 
 import 'data/api/api_service.dart';
@@ -31,13 +32,11 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 // ⚙️ RevenueCat
 const _rcAndroidSdkKey = 'goog_UeszbzWntJSeRevMPKysmcHGrlA';
-const _appUserNamespace =
-    'cm_apuestas'; // ← tu namespace (debe coincidir con el backend)
+const _appUserNamespace = 'cm_apuestas'; // debe coincidir con tu backend
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized(); // necesario para llamadas async antes de runApp
+  WidgetsFlutterBinding.ensureInitialized();
   _setupLogging();
-  await _initRevenueCat(); // inicializa RevenueCat una sola vez
 
   runApp(
     MultiProvider(
@@ -60,6 +59,19 @@ Future<void> main() async {
       child: const BaseApp(),
     ),
   );
+
+  // 🔧 Configura RevenueCat a través del provider y hace un refresh inicial
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    final subs = navigatorKey.currentContext!.read<SubscriptionProvider>();
+    await Purchases.setLogLevel(LogLevel.debug); // logs en debug
+    await subs.configureRC(apiKey: _rcAndroidSdkKey); // SIN appUserId aún
+    await subs.refresh(force: true);
+
+    // 🔔 Listener para actualizar cuando cambie CustomerInfo (compras/restauraciones)
+    Purchases.addCustomerInfoUpdateListener((ci) async {
+      await subs.refresh(force: true);
+    });
+  });
 }
 
 void _setupLogging() {
@@ -71,24 +83,20 @@ void _setupLogging() {
   });
 }
 
-Future<void> _initRevenueCat() async {
-  await Purchases.setLogLevel(LogLevel.debug);        // logs en debug
-  final configuration = PurchasesConfiguration(_rcAndroidSdkKey);
-  // En versiones nuevas, RevenueCat completa las compras por defecto.
-  // Si tu SDK soporta la API nueva y quieres ser explícito, puedes usar:
-  // configuration.purchasesAreCompletedBy = PurchasesAreCompletedBy.revenueCat;
-  await Purchases.configure(configuration);
-}
-
-
-/// Llama esto cuando YA tengas el userId (por ejemplo, justo después del login exitoso)
+/// Llama esto justo después del login exitoso (donde YA tienes el userId).
 Future<void> setRevenueCatUser(int userId) async {
-  await Purchases.logIn('$_appUserNamespace:$userId');
+  final appUserId = '$_appUserNamespace:$userId';
+  await Purchases.logIn(appUserId);
+  // Refresca el provider inmediatamente
+  final subs = navigatorKey.currentContext?.read<SubscriptionProvider>();
+  if (subs != null) await subs.refresh(force: true);
 }
 
-/// Llama esto cuando cierres sesión en tu app
+/// Llama esto cuando el usuario cierra sesión.
 Future<void> clearRevenueCatUser() async {
   await Purchases.logOut();
+  final subs = navigatorKey.currentContext?.read<SubscriptionProvider>();
+  if (subs != null) subs.clear();
 }
 
 class BaseApp extends StatelessWidget {
@@ -108,18 +116,13 @@ class BaseApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: Colors.grey[50],
       ),
-
-      // 👇 opcional: fuerza español Colombia en toda la app
       locale: const Locale('es', 'CO'),
-
-      // 👇 necesario para que showDatePicker tenga textos/formatos
       supportedLocales: const [Locale('es', 'CO'), Locale('es'), Locale('en')],
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-
       home: const SplashScreen(),
       routes: {
         '/login': (context) => const LoginScreen(),
