@@ -67,8 +67,16 @@ Future<void> main() async {
     await subs.configureRC(apiKey: _rcAndroidSdkKey); // SIN appUserId aún
     await subs.refresh(force: true);
 
-    // 🔔 Listener para actualizar cuando cambie CustomerInfo (compras/restauraciones)
+    // 🔔 Listener con debounce para evitar parpadeo
+    DateTime? lastUpdate;
     Purchases.addCustomerInfoUpdateListener((ci) async {
+      final now = DateTime.now();
+      if (lastUpdate != null &&
+          now.difference(lastUpdate!) < const Duration(seconds: 2)) {
+        return; // Ignora updates muy seguidos
+      }
+      lastUpdate = now;
+
       await subs.refresh(force: true);
     });
   });
