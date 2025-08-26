@@ -47,6 +47,7 @@ app.*.map.json
 # Env files
 .env
 
+<<<<<<< HEAD
 # 🔐 Android signing (NO subir nunca)
 android/key.properties
 *.jks
@@ -55,6 +56,17 @@ android/key.properties
 *.pem
 *.cer
 *.der
+=======
+# 🔒 Firmas / secretos (NO subir)
+android/key.properties
+key.properties
+**/*.jks
+**/*.keystore
+
+# Config local de Android Studio/SDK (autogenerado)
+android/local.properties
+local.properties
+>>>>>>> 91adb60 (Actualización del backend con nueva configuración de DB)
 
 
 # Python backend

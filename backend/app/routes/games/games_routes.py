@@ -2,6 +2,8 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.db.database import db
+from app.subscriptions.models import UserSubscription  # <-- NUEVO
+from sqlalchemy import or_                             # <-- NUEVO
 
 # Servicios
 from app.services.games import games_service
@@ -60,7 +62,18 @@ def commit():
         numbers_int = [int(n) for n in numbers]
     except Exception:
         return jsonify({"error": "numbers debe contener enteros"}), 400
-
+    
+    sub = (
+        UserSubscription.query
+        .filter_by(user_id=uid, entitlement="pro", is_active=True)
+        .filter(or_(UserSubscription.current_period_end == None,
+                    UserSubscription.current_period_end > db.func.now()))
+        .first()
+    )
+    if not sub:
+        return jsonify({"ok": False, "code": "NOT_PREMIUM",
+                        "message": "Necesitas la suscripción PRO para reservar."}), 403
+    
     res = commit_selection(uid, game_id, numbers_int)
 
     if res.get("ok"):
@@ -151,7 +164,19 @@ def api_history():
     uid = _resolve_user_id()
     if not uid:
         return jsonify({"error": "No autorizado"}), 403
+        # --- NUEVO: exigir PRO para ver historial ---
 
+    sub = (
+    UserSubscription.query
+    .filter_by(user_id=int(uid), entitlement="pro", is_active=True)
+    .filter(or_(UserSubscription.current_period_end == None,
+                UserSubscription.current_period_end > db.func.now()))
+    .first()
+    )
+    if not sub:
+        return jsonify({"ok": False, "code": "NOT_PREMIUM",
+                        "message": "El historial es solo para usuarios PRO."}), 403
+    
     page = int(request.args.get("page") or 1)
     per_page = int(request.args.get("per_page") or 20)
 

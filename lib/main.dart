@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:purchases_flutter/purchases_flutter.dart';
+import 'presentation/screens/paywall/paywall_screen.dart';
 
 import 'data/api/api_service.dart';
 import 'data/repositories/user_repository_impl.dart';
@@ -15,22 +17,44 @@ import 'presentation/screens/register/register_screen.dart';
 import 'presentation/screens/admin_dashboard/admin_dashboard_screen.dart';
 import 'presentation/screens/dashboard/dashboard_screen.dart';
 
-import 'presentation/screens/faq/faq_reset_password_screen.dart'; 
+import 'presentation/screens/faq/faq_reset_password_screen.dart';
 import 'presentation/screens/faq/faq_play_screen.dart';
+
+import 'package:base_app/data/api/subscriptions_api.dart';
+import 'package:base_app/presentation/providers/subscription_provider.dart';
+import 'package:base_app/core/config/env.dart';
+import 'package:base_app/data/session/session_manager.dart';
+import 'package:base_app/presentation/providers/referral_provider.dart';
+import 'package:base_app/data/api/referrals_api.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-void main() {
+// ⚙️ RevenueCat
+const _rcAndroidSdkKey = 'goog_UeszbzWntJSeRevMPKysmcHGrlA';
+const _appUserNamespace =
+    'cm_apuestas'; // ← tu namespace (debe coincidir con el backend)
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized(); // necesario para llamadas async antes de runApp
   _setupLogging();
+  await _initRevenueCat(); // inicializa RevenueCat una sola vez
+
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(
           create: (_) => RegisterProvider(
-            RegisterUserUseCase(
-              UserRepositoryImpl(ApiService()),
-            ),
+            RegisterUserUseCase(UserRepositoryImpl(ApiService())),
           ),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => SubscriptionProvider(
+            api: SubscriptionsApi(baseUrl: Env.apiBaseUrl),
+            session: SessionManager(),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => ReferralProvider(api: buildReferralsApi())..load(),
         ),
       ],
       child: const BaseApp(),
@@ -45,6 +69,23 @@ void _setupLogging() {
       '${record.level.name}: ${record.loggerName}: ${record.time}: ${record.message}',
     );
   });
+}
+
+/// Inicializa el SDK de RevenueCat (modo no observador: RC gestiona las compras)
+Future<void> _initRevenueCat() async {
+  final configuration = PurchasesConfiguration(_rcAndroidSdkKey);
+  await Purchases.configure(configuration);
+  await Purchases.setLogLevel(LogLevel.debug); // deja debug en pruebas
+}
+
+/// Llama esto cuando YA tengas el userId (por ejemplo, justo después del login exitoso)
+Future<void> setRevenueCatUser(int userId) async {
+  await Purchases.logIn('$_appUserNamespace:$userId');
+}
+
+/// Llama esto cuando cierres sesión en tu app
+Future<void> clearRevenueCatUser() async {
+  await Purchases.logOut();
 }
 
 class BaseApp extends StatelessWidget {
@@ -69,11 +110,7 @@ class BaseApp extends StatelessWidget {
       locale: const Locale('es', 'CO'),
 
       // 👇 necesario para que showDatePicker tenga textos/formatos
-      supportedLocales: const [
-        Locale('es', 'CO'),
-        Locale('es'),
-        Locale('en'),
-      ],
+      supportedLocales: const [Locale('es', 'CO'), Locale('es'), Locale('en')],
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
@@ -89,6 +126,7 @@ class BaseApp extends StatelessWidget {
         '/dashboard': (_) => const DashboardScreen(),
         '/faq/restablecer': (_) => const FaqResetPasswordScreen(),
         '/faq/juego': (_) => const FaqPlayScreen(),
+        '/pro': (_) => const PaywallScreen(),
       },
     );
   }

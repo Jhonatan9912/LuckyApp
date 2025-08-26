@@ -19,7 +19,14 @@ import 'dart:async';
 import 'widgets/selection_tabs.dart' as tabs;
 import 'widgets/history_panel.dart' as hist;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/services.dart';
+import 'package:provider/provider.dart'; // (si aún no lo tienes)
+import 'package:base_app/presentation/providers/subscription_provider.dart';
+import 'package:base_app/presentation/widgets/premium_gate.dart';
+import 'package:base_app/presentation/widgets/subscription/subscription_sheet.dart';
+import 'package:base_app/main.dart' show clearRevenueCatUser;
+import 'package:base_app/presentation/providers/referral_provider.dart';
+import 'package:base_app/presentation/widgets/referrals/referral_payout_tile.dart';
+import 'package:base_app/presentation/screens/referrals/referrals_tab.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -52,8 +59,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   double gapGameTop = 32; // menos margen arriba
   double gapHistoryTop = 8;
-  double historyBottomSafe = 80;
-  double gameBottomSafe = 120; // <-- NUEVO
+
+  // === espacio inferior dinámico para que nada quede debajo del FAB/JUGAR ===
+  double get _contentBottomSafe {
+    const double buttonsHeight = 72; // alto aprox del botón + sombra
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    return bottomInset + buttonsHeight + 16; // margen extra
+  }
 
   Future<void> _showReserveSuccessDialog({required bool completed}) async {
     if (!mounted) return;
@@ -101,6 +113,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // 👇 todo lo que abre diálogos, después del primer frame
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _ctrl.initSession();
+      if (!mounted) return;
+      await context.read<SubscriptionProvider>().refresh(force: true);
       if (!_ctrl.sessionReady) return;
       await _ctrl.loadReferralCode();
       // 👇 Cargar historial primero
@@ -149,150 +163,263 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _ctrl,
-      builder: (_, __) {
+      builder: (context, __) {
+        final isPro = context.select<SubscriptionProvider, bool>(
+          (p) => p.isPremium,
+        );
         return Scaffold(
           appBar: DashboardAppBar(
             onHelp: _showHelp,
             isLoggedIn: _ctrl.authToken?.isNotEmpty == true,
             onLogout: () async {
-              final ctx = context;
-              await _ctrl.logout();
-              if (!ctx.mounted) return;
-              Navigator.of(ctx).pushNamedAndRemoveUntil('/login', (_) => false);
+              if (!mounted) return;
+              if (_dialogBusy) return;
+              _dialogBusy = true;
+
+              // Captura todo lo que depende de context ANTES de await:
+              final navigator = Navigator.of(context, rootNavigator: true);
+              final messenger = ScaffoldMessenger.maybeOf(context);
+              final subs = context.read<SubscriptionProvider>();
+
+              try {
+                // Cancela timers
+                _notifTimer?.cancel();
+                _notifTimer = null;
+
+                // Loading (usa navigator ya capturado)
+                showDialog(
+                  context: navigator.context, // <- evita reconsultar context
+                  barrierDismissible: false,
+                  builder: (_) =>
+                      const Center(child: CircularProgressIndicator()),
+                );
+
+                // Limpieza externa (no bloquear si falla)
+                await clearRevenueCatUser()
+                    .timeout(const Duration(seconds: 3), onTimeout: () => null)
+                    .catchError((_) {});
+
+                // Limpia estado/app
+                subs.clear();
+                await _ctrl.logout(); // ya borra sesión local
+
+                // Cierra overlays y navega (sin volver a usar context)
+                while (navigator.canPop()) {
+                  navigator.pop();
+                }
+                navigator.pushNamedAndRemoveUntil('/login', (_) => false);
+              } catch (e) {
+                // Cierra loading si quedó abierto
+                if (navigator.canPop()) navigator.pop();
+                messenger?.showSnackBar(
+                  SnackBar(content: Text('No se pudo cerrar sesión: $e')),
+                );
+              } finally {
+                _dialogBusy = false;
+              }
             },
+
             ctrl: _ctrl, // 👈 pasa el controlador
             onBellTap: _openNotifications,
           ),
 
-          body: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFFFFF7E6), Color(0xFFFFE7BA)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
+          floatingActionButton: isPro
+              ? null
+              : FloatingActionButton.extended(
+                  onPressed: () => Navigator.pushNamed(context, '/pro'),
+                  icon: const Icon(Icons.workspace_premium),
+                  label: const Text('Pro'),
+                ),
+
+          body: SafeArea(
+            top: false,
+            bottom: true,
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFFFFF7E6), Color(0xFFFFE7BA)],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                ),
               ),
-            ),
-            child: Stack(
-              children: [
-                // ======= COLUMNA PRINCIPAL: tubo + tabs + contenido =======
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    SizedBox(height: gapTop), // <-- usa variable
-                    // 👇 Banner de referido (nuevo)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-                      child: _ReferralBanner(code: _ctrl.referralCode),
-                    ),
-                    Column(
-                      children: [
-                        BallTube(
-                          numbers: _ctrl.numbers,
-                          animating: _ctrl.animating,
+              child: Stack(
+                children: [
+                  // ======= COLUMNA PRINCIPAL: tubo + tabs + contenido =======
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(height: gapTop), // <-- usa variable
+                      // 👇 Banner de referido (nuevo)
+                      Consumer<ReferralProvider>(
+                        builder: (_, p, __) => ReferralPayoutTile(
+                          code: _ctrl.referralCode,
+                          pending: p.comisionPendiente,
+                          onWithdraw: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Solicitud de retiro enviada'),
+                              ),
+                            );
+                          },
                         ),
-                        const SizedBox(
-                          height: 8,
-                        ), // 👈 AQUÍ controlas el espacio real
+                      ),
+
+                      if (isPro)
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: tabs.SelectionTabs(
-                            index: _tabIndex,
-                            onChanged: (i) async {
-                              setState(() => _tabIndex = i);
-                              if (i == 1) {
-                                await _ctrl.loadHistory();
-                              } else if (i == 0) {
-                                // cuando vuelvas a "Juego Actual", por si el admin marcó ganador mientras estabas en Historial
-                                await _ctrl.loadHistory();
-                                setState(
-                                  () {},
-                                ); // forzar rebuild con historial fresco
-                              }
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                          child: _ProBadge(onTap: _openSubscriptionSheet),
+                        ),
+
+                      Column(
+                        children: [
+                          BallTube(
+                            numbers: _ctrl.numbers,
+                            animating: _ctrl.animating,
+                          ),
+                          const SizedBox(
+                            height: 8,
+                          ), // 👈 AQUÍ controlas el espacio real
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: tabs.SelectionTabs(
+                              index: _tabIndex,
+                              onChanged: (i) async {
+                                setState(() => _tabIndex = i);
+
+                                if (i == 1) {
+                                  // Historial
+                                  await _ctrl.loadHistory();
+                                } else if (i == 0) {
+                                  // Juego Actual
+                                  await _ctrl
+                                      .loadHistory(); // por si hubo ganador
+                                  setState(() {});
+                                } else if (i == 2) {
+                                  // Mis referidos
+                                  await context.read<ReferralProvider>().load();
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      if (_tabIndex == 0) ...[
+                        // ===== Juego Actual =====
+                        SizedBox(height: gapGameTop),
+                        Expanded(
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              return SingleChildScrollView(
+                                padding: EdgeInsets.fromLTRB(
+                                  16,
+                                  0,
+                                  16,
+                                  _contentBottomSafe,
+                                ),
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    minHeight: constraints.maxHeight,
+                                  ),
+                                  child: PremiumGate(
+                                    onGoPro: () =>
+                                        Navigator.pushNamed(context, '/pro'),
+                                    child: Center(
+                                      child:
+                                          (_ctrl.hasAdded &&
+                                              !_isCurrentGameClosed())
+                                          ? Padding(
+                                              padding: const EdgeInsets.only(
+                                                top: 6,
+                                              ),
+                                              child: SelectionRow(
+                                                balls: _ctrl.displayedBalls,
+                                                showActions:
+                                                    _ctrl.showActionIcons,
+                                                onClear: _ctrl.clearSelection,
+                                              ),
+                                            )
+                                          : const EmptySelectionPlaceholder(),
+                                    ),
+                                  ),
+                                ),
+                              );
                             },
                           ),
                         ),
+                      ] else if (_tabIndex == 1) ...[
+                        // ===== Historial =====
+                        SizedBox(height: gapHistoryTop),
+                        Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.fromLTRB(
+                              16,
+                              0,
+                              16,
+                              _contentBottomSafe,
+                            ),
+
+                            child: hist.HistoryPanel(
+                              items: _ctrl.history,
+                              onRefresh: () => _ctrl.loadHistory(),
+                            ),
+                          ),
+                        ),
+                      ] else ...[
+                        // ===== Mis referidos =====
+                        SizedBox(height: gapHistoryTop),
+                        Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.fromLTRB(
+                              0,
+                              0,
+                              0,
+                              _contentBottomSafe,
+                            ),
+                            child: const ReferralsTab(),
+                          ),
+                        ),
                       ],
-                    ),
-
-                    if (_tabIndex == 0) ...[
-                      // Pestaña: Juego Actual
-                      SizedBox(height: gapGameTop),
-                      Expanded(
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            bottom: gameBottomSafe,
-                          ), // <- sin const
-                          child: Center(
-                            child: (_ctrl.hasAdded && !_isCurrentGameClosed())
-                                ? Padding(
-                                    padding: const EdgeInsets.only(top: 6),
-                                    child: SelectionRow(
-                                      balls: _ctrl.displayedBalls,
-                                      showActions: _ctrl.showActionIcons,
-                                      onClear: _ctrl.clearSelection,
-                                    ),
-                                  )
-                                : const EmptySelectionPlaceholder(),
-                          ),
-                        ),
-                      ),
-                    ] else ...[
-                      // Pestaña: Historial
-                      SizedBox(height: gapHistoryTop),
-                      Expanded(
-                        child: Padding(
-                          padding: EdgeInsets.fromLTRB(
-                            16,
-                            0,
-                            16,
-                            historyBottomSafe,
-                          ),
-                          child: hist.HistoryPanel(
-                            items: _ctrl.history,
-                            onRefresh: () => _ctrl.loadHistory(),
-                          ),
-                        ),
-                      ),
                     ],
-                  ],
-                ),
+                  ),
 
-                // ======= OVERLAY: Balota grande =======
-                BigBallOverlay(number: _ctrl.currentBigBall),
+                  // ======= OVERLAY: Balota grande =======
+                  BigBallOverlay(number: _ctrl.currentBigBall),
 
-                // ======= OVERLAY: Botones inferiores =======
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 24),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 500),
-                      switchInCurve: Curves.easeOut,
-                      switchOutCurve: Curves.easeIn,
-                      transitionBuilder: (child, animation) {
-                        final offsetAnimation =
-                            Tween<Offset>(
-                              begin: const Offset(0.0, 0.3),
-                              end: Offset.zero,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: animation,
-                                curve: Curves.easeOut,
-                              ),
-                            );
-                        return FadeTransition(
-                          opacity: animation,
-                          child: SlideTransition(
-                            position: offsetAnimation,
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: _buildBottomButtons(),
+                  // ======= OVERLAY: Botones inferiores =======
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 24),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 500),
+                        switchInCurve: Curves.easeOut,
+                        switchOutCurve: Curves.easeIn,
+                        transitionBuilder: (child, animation) {
+                          final offsetAnimation =
+                              Tween<Offset>(
+                                begin: const Offset(0.0, 0.3),
+                                end: Offset.zero,
+                              ).animate(
+                                CurvedAnimation(
+                                  parent: animation,
+                                  curve: Curves.easeOut,
+                                ),
+                              );
+                          return FadeTransition(
+                            opacity: animation,
+                            child: SlideTransition(
+                              position: offsetAnimation,
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: _buildBottomButtons(),
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -301,10 +428,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildBottomButtons() {
-    // si está en Historial, no mostramos botones de juego
-    if (_tabIndex == 1) {
+    // si NO está en Juego Actual, no mostramos botones de juego
+    if (_tabIndex != 0) {
       return const SizedBox.shrink();
     }
+
+    // 1) Forzar botón JUGAR para usuarios FREE
+    final isPremium = context.read<SubscriptionProvider>().isPremium;
+    if (!isPremium) {
+      // Mientras no sea premium, damos siempre acceso al JUGAR gratuito,
+      // independientemente del estado interno del controlador.
+      return PlayButton(
+        onPressed: () async {
+          if (!_ctrl.animating && !_ctrl.saving) {
+            await _ctrl.openFreshGame();
+          }
+        },
+        key: const ValueKey('play_free'),
+      );
+    }
+
+    // 2) Lógica normal para PRO
     if (_ctrl.showFinalButtons) {
       // Oculta mientras se está reservando (animación + commit)
       if (_ctrl.reserving) {
@@ -313,57 +457,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       // Reserva completada: SOLO “VOLVER A INTENTAR”
       if (_ctrl.hasAddedFinal) {
-        // Ya reservó: no mostrar ningún botón
         return const SizedBox.shrink();
       }
 
-      // Números listos (aún no reservados): mostrar AMBOS
-      return ActionButtons(
-        onAdd: () async {
-          final out = await _ctrl.add();
-          if (!mounted) return; // ✅ chequeo correcto
-
-          if (out.ok) {
-            if (out.code == 'REPLACED' && out.message != null) {
-              await _showInfo(out.message!);
-            } else {
-              await _showReserveSuccessDialog(completed: out.gameCompleted);
-            }
-          } else {
-            final code = out.code ?? '';
-            final msg = out.message ?? 'No se pudo guardar la selección.';
-
-            if (code == 'CONFLICT' || code == 'GAME_SWITCHED') {
-              await _showWarn(msg);
+      // ⬇️ Lee isPremium usando Selector (aunque ya sabemos que es true)
+      return Selector<SubscriptionProvider, bool>(
+        selector: (_, p) => p.isPremium,
+        builder: (context, isPremiumSelector, _) {
+          return ActionButtons(
+            onAdd: () async {
+              final out = await _ctrl.add();
               if (!mounted) return;
 
-              // 1) Reset visual y “despegar” del juego viejo
-              _ctrl.resetToInitial();
-              setState(() {}); // muestra el botón JUGAR
+              if (out.ok) {
+                if (out.code == 'REPLACED' && out.message != null) {
+                  await _showInfo(out.message!);
+                } else {
+                  await _showReserveSuccessDialog(completed: out.gameCompleted);
+                }
+              } else {
+                final code = out.code ?? '';
+                final msg = out.message ?? 'No se pudo guardar la selección.';
 
-              // 2) Abrir un juego NUEVO evitando el anterior (usa el helper del controller)
-              await _ctrl.openFreshGame();
-
-              return; // ← importante: no continúes en este onAdd()
-            } else if (code == 'UNAUTHORIZED' || code == 'UNAUTHENTICATED') {
-              await _showError(msg);
-              if (!mounted) return;
-              Navigator.of(
-                context,
-              ).pushNamedAndRemoveUntil('/login', (_) => false);
-            } else {
-              await _showError(msg);
-            }
-          }
+                if (code == 'CONFLICT' || code == 'GAME_SWITCHED') {
+                  await _showWarn(msg);
+                  if (!mounted) return;
+                  _ctrl.resetToInitial();
+                  setState(() {});
+                  await _ctrl.openFreshGame();
+                  return;
+                } else if (code == 'UNAUTHORIZED' ||
+                    code == 'UNAUTHENTICATED') {
+                  await _showError(msg);
+                  if (!context.mounted) return;
+                  Navigator.of(
+                    context,
+                  ).pushNamedAndRemoveUntil('/login', (_) => false);
+                } else {
+                  await _showError(msg);
+                }
+              }
+            },
+            onRetry: () async => _ctrl.retry(),
+            isSaving: _ctrl.saving,
+            isPremium: isPremiumSelector,
+            onGoPro: () => Navigator.pushNamed(context, '/pro'),
+          );
         },
-
-        onRetry: () async => _ctrl.retry(),
-        isSaving: _ctrl.saving,
-        key: const ValueKey('reserve-or-retry'),
       );
     }
 
-    // Estado inicial: solo "JUGAR"
+    // Estado inicial: solo "JUGAR" (para PRO)
     if (!_ctrl.hasPlayedOnce) {
       return PlayButton(
         onPressed: () async {
@@ -371,7 +515,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             await _ctrl.openFreshGame();
           }
         },
-        key: const ValueKey('play'),
+        key: const ValueKey('play_pro'),
       );
     }
 
@@ -507,6 +651,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  Future<void> _openSubscriptionSheet() async {
+    if (!mounted) return;
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => const SubscriptionSheet(), // 👈 AQUÍ EL CAMBIO
+    );
+  }
+
   Future<void> _openNotifications() async {
     if (!mounted) return;
 
@@ -587,63 +744,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('last_schedule_key', key);
   }
-
 }
-// 👇 declara el widget a nivel de archivo (fuera de la clase de arriba)
-class _ReferralBanner extends StatelessWidget {
-  final String? code;
-  const _ReferralBanner({required this.code});
+
+class _ProBadge extends StatelessWidget {
+  final VoidCallback? onTap;
+  const _ProBadge({this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    if (code == null || code!.trim().isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    final titleStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
-      fontWeight: FontWeight.w800,
-      letterSpacing: 0.2,
-    );
-    final codeStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
-      fontFeatures: const [FontFeature.tabularFigures()],
-      fontFamily: 'monospace',
-      fontWeight: FontWeight.w700,
-    );
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 2))],
-        border: Border.all(color: Colors.black12),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.card_giftcard, size: 22),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Código de referidos', style: titleStyle),
-                const SizedBox(height: 2),
-                SelectableText(code!, style: codeStyle),
-              ],
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFFFFD700), // dorado
+              Color(0xFFB57EDC), // púrpura suave
+            ],
+          ),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 10,
+              offset: Offset(0, 3),
             ),
-          ),
-          IconButton(
-            tooltip: 'Copiar',
-            icon: const Icon(Icons.copy_rounded),
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: code!));
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Código copiado')),
-              );
-            },
-          ),
-        ],
+          ],
+          border: Border.all(color: Colors.black12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.workspace_premium, size: 20, color: Colors.white),
+            SizedBox(width: 8),
+            Text(
+              'PRO activo',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -4,11 +4,13 @@ from app.routes.auth.auth_routes import auth_bp
 from app.routes.reset.password_reset_routes import password_reset_bp
 from app.routes.games.games_routes import games_bp
 from app.routes.admin import bp as admin_bp
-from app.routes.admin.games_routes import admin_games_bp  
 from app.routes.admin.players_routes import admin_players_bp
 from app.routes.notify.notifications_routes import notifications_bp
 from app.routes.admin.games_routes import admin_games_bp, me_notifications_bp
 from app.routes.health import health_bp
+from app.subscriptions.routes import subscriptions_bp
+from app.subscriptions.webhooks import webhooks_bp
+from app.routes.referrals.referrals_routes import referrals_bp
 
 def register_routes(app):
     app.register_blueprint(identification_bp)
@@ -22,3 +24,6 @@ def register_routes(app):
     app.register_blueprint(notifications_bp)
     app.register_blueprint(me_notifications_bp)
     app.register_blueprint(health_bp)
+    app.register_blueprint(subscriptions_bp)
+    app.register_blueprint(webhooks_bp)
+    app.register_blueprint(referrals_bp)

@@ -198,28 +198,27 @@ class DashboardController extends ChangeNotifier {
     _setSessionReady(true);
   }
 
-Future<void> loadReferralCode() async {
-  // ✅ opción 2: factoriza la condición
-  final needsInit = !_sessionReady || (_authToken?.isEmpty ?? true);
-  if (needsInit) {
-    await initSession();
-    if (!_sessionReady) {
-      referralCode = null;
-      notifyListeners();
-      return;
+  Future<void> loadReferralCode() async {
+    // ✅ opción 2: factoriza la condición
+    final needsInit = !_sessionReady || (_authToken?.isEmpty ?? true);
+    if (needsInit) {
+      await initSession();
+      if (!_sessionReady) {
+        referralCode = null;
+        notifyListeners();
+        return;
+      }
     }
-  }
 
-  try {
-    final profile = await _authRepo.getProfile();
-    final code = profile?['public_code']?.toString().trim();
-    referralCode = (code != null && code.isNotEmpty) ? code : null;
-  } catch (_) {
-    referralCode = null;
+    try {
+      final profile = await _authRepo.getProfile();
+      final code = profile?['public_code']?.toString().trim();
+      referralCode = (code != null && code.isNotEmpty) ? code : null;
+    } catch (_) {
+      referralCode = null;
+    }
+    notifyListeners();
   }
-  notifyListeners();
-}
-
 
   Future<void> restoreSelectionIfAny() async {
     // requiere sesión válida
@@ -287,15 +286,35 @@ Future<void> loadReferralCode() async {
     notifyListeners();
   }
 
-  Future<void> logout() async {
-    await _authRepo.logout();
-    _authToken = null;
-    referralCode = null; // ← limpia el banner
-    _lastReservedGameId = null;
-    _history = [];
-    _setSessionReady(false);
-    notifyListeners();
+Future<void> logout() async {
+  try {
+    // Revoca en backend si aplica, pero no bloquees el flujo si falla
+    await _authRepo.logout().catchError((_) {});
+
+    // 🔑 Borra SIEMPRE la sesión local (token, userId, roleId)
+    await _session.clear();
+  } catch (_) {
+    // Ignora errores locales para no trabar la UI
   }
+
+  // Limpieza de estado en memoria
+  _authToken = null;
+  referralCode = null;
+  _lastReservedGameId = null;
+  _lastReservedNumbers = null;
+  _lastReservedUserId = null;
+  _lastClosedGameId = null;
+
+  _notifications = [];
+  _unreadCount = 0;
+  _history = [];
+  _shownNotifIds.clear();
+
+  // Deja la UI en estado inicial
+  resetToInitial();
+  _setSessionReady(false);
+  notifyListeners();
+}
 
   Future<GenerateState> generateAnimatedNumbers({
     int? avoidGameId, // <- NUEVO: evita generar con este id
@@ -367,11 +386,11 @@ Future<void> loadReferralCode() async {
     }
   }
 
-Future<GenerateState> openFreshGame({int attempts = 3}) async {
-  // Antes: final avoid = _lastClosedGameId ?? _lastReservedGameId;
-  // Ahora: no evites nada; el backend ya no te devolverá juegos cerrados
-  return generateAnimatedNumbers(avoidGameId: null, attempts: attempts);
-}
+  Future<GenerateState> openFreshGame({int attempts = 3}) async {
+    // Antes: final avoid = _lastClosedGameId ?? _lastReservedGameId;
+    // Ahora: no evites nada; el backend ya no te devolverá juegos cerrados
+    return generateAnimatedNumbers(avoidGameId: null, attempts: attempts);
+  }
 
   // ======= REINTENTAR =======
   Future<void> retry() async {

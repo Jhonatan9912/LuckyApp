@@ -1,15 +1,15 @@
+import java.util.Properties
+import java.io.File
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
-    id("kotlin-android")
-    // El plugin de Flutter debe ir después de los de Android y Kotlin.
+    id("org.jetbrains.kotlin.android") // id completo recomendado
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-import java.util.Properties
-import java.io.FileInputStream
-
 android {
-    namespace = "com.tuempresa.base_app" // ← deja tu namespace/paquete
+    namespace = "com.tuempresa.base_app" // Ajusta si tu paquete es diferente
     compileSdk = flutter.compileSdkVersion
     ndkVersion = "27.0.12077973"
 
@@ -17,21 +17,18 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
-    }
+    kotlinOptions { jvmTarget = JavaVersion.VERSION_11.toString() }
 
     defaultConfig {
-        // ApplicationId definitivo. Si ya publicaste, NO lo cambies después.
-        applicationId = "com.tuempresa.base_app"
-        minSdk = 23                  // Sube/baja si alguna lib lo requiere. (21 suele valer)
+        applicationId = "com.tuempresa.base_app" // NO cambiar si ya publicaste
+        minSdk = 23
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        multiDexEnabled = true
     }
 
-    // --- Firma de release leyendo android/key.properties ---
+    // --- Firma para release usando key.properties ---
     signingConfigs {
         create("release") {
             val keystoreProps = Properties()
@@ -43,30 +40,27 @@ android {
                 keyAlias = keystoreProps["keyAlias"] as String?
                 keyPassword = keystoreProps["keyPassword"] as String?
             } else {
-                println("WARNING: key.properties no encontrado; se usará debug keystore si ejecutas local.")
+                println("⚠️ WARNING: key.properties no encontrado; se usará debug keystore.")
             }
         }
     }
 
     buildTypes {
         getByName("debug") {
-            // sin cambios
+            // Configuración debug
         }
         getByName("release") {
-            // Firma de release (si no existe key.properties, Gradle fallará al firmar)
             signingConfig = signingConfigs.getByName("release")
-
-            // Optimización para Play
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            isMinifyEnabled = false // Cambia a true si usas ProGuard
+            // ProGuard opcional:
+            // proguardFiles(
+            //     getDefaultProguardFile("proguard-android-optimize.txt"),
+            //     "proguard-rules.pro"
+            // )
         }
     }
 
-    // (Opcional) Empaquetado determinista
+    // Excluir licencias duplicadas (buena práctica)
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

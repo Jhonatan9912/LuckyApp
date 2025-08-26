@@ -8,6 +8,13 @@ import 'package:base_app/data/api/auth_api.dart';
 import 'package:base_app/core/services/secure_storage.dart';
 import 'package:base_app/core/ui/dialogs.dart';
 import 'package:base_app/data/session/session_manager.dart';
+import 'dart:async';
+// RC ⬇
+import 'package:purchases_flutter/purchases_flutter.dart';
+
+// 👇 NUEVO: provider para refrescar estado premium
+import 'package:provider/provider.dart';
+import 'package:base_app/presentation/providers/subscription_provider.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -85,8 +92,14 @@ class _LoginScreenState extends State<LoginScreen> {
                       onPressed: () async {
                         final phone = phoneController.text.trim();
                         final pass = passwordController.text;
-                        final ctx = context;
-                        final navigator = Navigator.of(ctx);
+
+                        // Capturas ANTES de awaits
+                        final ctx = context; // BuildContext capturado
+                        final subs = ctx.read<SubscriptionProvider>();
+                        final navigator = Navigator.of(
+                          ctx,
+                          rootNavigator: true,
+                        );
 
                         FocusScope.of(ctx).unfocus();
 
@@ -102,58 +115,100 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         setState(() => _loading = true);
                         try {
-                          // 1) Llamada al backend
-                          final json = await _authApi.loginWithPhone(
-                            phone: phone,
-                            password: pass,
+                          debugPrint(
+                            '[LOGIN] 1. llamando API loginWithPhone...',
                           );
+                          final json = await _authApi
+                              .loginWithPhone(phone: phone, password: pass)
+                              .timeout(const Duration(seconds: 12));
 
-                          // 2) Token
-                          final token =
-                              (json['access_token'] ?? json['token'] ?? '')
-                                  .toString();
+                          // Token
+                          var token =
+                              (json['access_token'] ??
+                                      json['token'] ??
+                                      json['jwt'] ??
+                                      '')
+                                  .toString()
+                                  .trim();
+                          if (token.toLowerCase().startsWith('bearer ')) {
+                            token = token.substring(7).trim();
+                          }
                           if (token.isEmpty) {
-                            throw Exception('Token no recibido del servidor');
+                            throw AuthException(
+                              'Token no recibido del servidor',
+                            );
                           }
 
-                          // 3) Usuario (id y rol)
-                          int? userId;
-                          int? roleId;
+                          // Usuario
+                          int? userId, roleId;
                           if (json['user'] is Map) {
-                            final user = json['user'] as Map;
+                            final user = (json['user'] as Map)
+                                .cast<String, dynamic>();
                             userId = (user['id'] as num?)?.toInt();
-                            roleId = (user['role_id'] as num?)
-                                ?.toInt(); // 👈 rol
+                            roleId = (user['role_id'] as num?)?.toInt();
                           } else {
                             userId = (json['user_id'] as num?)?.toInt();
                             roleId = (json['role_id'] as num?)?.toInt();
                           }
+                          if (userId == null) {
+                            throw AuthException(
+                              'No se pudo obtener el ID de usuario',
+                            );
+                          }
 
-                          // 4) Guardar sesión
-                          await SecureStorage.saveToken(
-                            token,
-                          ); // cifrado (si lo usas)
+                          // Guardar sesión
+                          await SecureStorage.saveToken(token).catchError((e) {
+                            debugPrint('[LOGIN] SecureStorage error: $e');
+                          });
                           await _session.saveSession(
                             token: token,
                             userId: userId,
-                            roleId: roleId, // 👈 guardar rol
+                            roleId: roleId,
                           );
 
-                          // 5) Feedback
-                          if (!ctx.mounted) return;
-                          await AppDialogs.success(
-                            context: ctx,
-                            title: '¡Bienvenido!',
-                            message: 'Inicio de sesión exitoso.',
-                            okText: 'Continuar',
-                          );
+                          // Verifica persistencia ANTES de navegar
+                          final saved = await _session.getToken();
+                          if (saved == null || saved.isEmpty) {
+                            throw AuthException(
+                              'No se pudo persistir la sesión local',
+                            );
+                          }
 
-                          // 6) Navegación según rol
-                          if (!ctx.mounted) return;
+                          // Tareas no críticas en paralelo (NO bloquean la navegación)
+                          unawaited(() async {
+                            try {
+                              await Purchases.logIn(
+                                'cm_apuestas:$userId',
+                              ).timeout(const Duration(seconds: 3));
+                            } catch (_) {}
+                          }());
+                          unawaited(() async {
+                            try {
+                              await subs
+                                  .refresh(force: true)
+                                  .timeout(const Duration(seconds: 3));
+                            } catch (_) {}
+                          }());
+                          unawaited(() async {
+                            if (!ctx.mounted) return;
+                            try {
+                              await AppDialogs.success(
+                                context: ctx,
+                                title: '¡Bienvenido!',
+                                message: 'Inicio de sesión exitoso.',
+                                okText: 'Continuar',
+                              );
+                            } catch (_) {}
+                          }());
+
+                          // Navegación inmediata (una sola vez)
                           final target = (roleId == 1)
                               ? '/admin'
                               : '/dashboard';
-                          navigator.pushReplacementNamed(target);
+                          navigator.pushNamedAndRemoveUntil(
+                            target,
+                            (_) => false,
+                          );
                         } on AuthException catch (e) {
                           if (!ctx.mounted) return;
                           await AppDialogs.error(
@@ -161,7 +216,15 @@ class _LoginScreenState extends State<LoginScreen> {
                             title: 'Error de autenticación',
                             message: e.message,
                           );
-                        } catch (_) {
+                        } on TimeoutException {
+                          if (!ctx.mounted) return;
+                          await AppDialogs.error(
+                            context: ctx,
+                            title: 'Tiempo agotado',
+                            message:
+                                'El servidor tardó demasiado. Intenta de nuevo.',
+                          );
+                        } catch (e) {
                           if (!ctx.mounted) return;
                           await AppDialogs.error(
                             context: ctx,

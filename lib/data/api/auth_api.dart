@@ -10,69 +10,84 @@ class AuthApi {
   final http.Client _client;
 
   AuthApi({required this.baseUrl, http.Client? client})
-      : _client = client ?? http.Client();
+    : _client = client ?? http.Client();
 
-  Future<Map<String, dynamic>> loginWithPhone({
-    required String phone,
-    required String password,
-  }) async {
-    final uri = Uri.parse('$baseUrl/api/auth/login');
-    final maskedPhone = phone.isNotEmpty
-        ? '${phone.substring(0, phone.length > 4 ? phone.length - 4 : phone.length)}****'
-        : '';
+Future<Map<String, dynamic>> loginWithPhone({
+  required String phone,
+  required String password,
+}) async {
+  final uri = Uri.parse('$baseUrl/api/auth/login');
+  final maskedPhone = phone.isNotEmpty
+      ? '${phone.substring(0, phone.length > 4 ? phone.length - 4 : phone.length)}****'
+      : '';
 
-    try {
-      appLogger.i({
-        'event': 'login_request',
-        'url': uri.toString(),
-        'phone': maskedPhone,
+  try {
+    appLogger.i({
+      'event': 'login_request',
+      'url': uri.toString(),
+      'phone': maskedPhone,
+    });
+
+    final res = await _client
+        .post(
+          uri,
+          headers: const {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json', // 👈 asegura JSON real
+          },
+          body: jsonEncode({'phone': phone, 'password': password}),
+        )
+        .timeout(const Duration(seconds: 10));
+
+    if (kDebugMode) {
+      appLogger.d({
+        'event': 'login_response',
+        'status': res.statusCode,
+        'body': res.body,
       });
-
-      final res = await _client
-          .post(
-            uri,
-            headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode({'phone': phone, 'password': password}),
-          )
-          .timeout(const Duration(seconds: 10));
-
-      if (kDebugMode) {
-        appLogger.d({
-          'event': 'login_response',
-          'status': res.statusCode,
-          'body': res.body,
-        });
-      } else {
-        appLogger.d({'event': 'login_response', 'status': res.statusCode});
-      }
-
-      final body = jsonDecode(res.body.isEmpty ? '{}' : res.body);
-
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        return body as Map<String, dynamic>;
-      } else {
-        final msg = (body is Map && body['error'] != null)
-            ? body['error'].toString()
-            : 'Error de autenticación';
-        throw AuthException(msg, statusCode: res.statusCode);
-      }
-    } on SocketException {
-      throw AuthException('No hay conexión con el servidor');
-    } on TimeoutException {
-      throw AuthException('Tiempo de espera agotado');
-    } on FormatException {
-      throw AuthException('Respuesta inválida del servidor');
-    } on AuthException {
-      rethrow;
-    } catch (e, st) {
-      appLogger.e({
-        'event': 'login_unhandled',
-        'error': e.toString(),
-        'stack': st.toString(),
-      });
-      throw AuthException('Error inesperado al iniciar sesión');
+    } else {
+      appLogger.d({'event': 'login_response', 'status': res.statusCode});
     }
+
+    // 👇 Decodificación robusta: intenta doble decode si viene stringificado
+    dynamic body;
+    try {
+      body = jsonDecode(res.body.isEmpty ? '{}' : res.body);
+      if (body is String) body = jsonDecode(body);
+    } catch (_) {
+      final cleaned = res.body.trim();
+      body = jsonDecode(cleaned.isEmpty ? '{}' : cleaned);
+      if (body is String) body = jsonDecode(body);
+    }
+
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      if (body is! Map) {
+        throw const FormatException('Payload inesperado (no es objeto JSON)');
+      }
+      return Map<String, dynamic>.from(body);
+    } else {
+      final msg = (body is Map && body['error'] != null)
+          ? body['error'].toString()
+          : 'Error de autenticación';
+      throw AuthException(msg, statusCode: res.statusCode);
+    }
+  } on SocketException {
+    throw AuthException('No hay conexión con el servidor');
+  } on TimeoutException {
+    throw AuthException('Tiempo de espera agotado');
+  } on FormatException {
+    throw AuthException('Respuesta inválida del servidor');
+  } on AuthException {
+    rethrow;
+  } catch (e, st) {
+    appLogger.e({
+      'event': 'login_unhandled',
+      'error': e.toString(),
+      'stack': st.toString(),
+    });
+    throw AuthException('Error inesperado al iniciar sesión');
   }
+}
 
   Future<Map<String, dynamic>> me(String token) async {
     final uri = Uri.parse('$baseUrl/api/auth/me');
@@ -494,5 +509,5 @@ class AuthException implements Exception {
   AuthException(this.message, {this.statusCode});
 
   @override
-  String toString() => 'AuthException(${statusCode ?? '-' }): $message';
+  String toString() => 'AuthException(${statusCode ?? '-'}): $message';
 }

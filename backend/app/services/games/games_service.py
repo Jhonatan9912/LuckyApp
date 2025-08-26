@@ -3,6 +3,28 @@ from typing import List, Tuple
 from sqlalchemy import text
 from app.db.database import db
 from app.models.game_models import Game
+from app.subscriptions.models import UserSubscription
+from sqlalchemy import or_
+
+def _is_user_pro(user_id: int) -> bool:
+    """
+    Devuelve True si el usuario tiene la suscripción PRO activa (no expirada).
+    """
+    try:
+        sub = (
+            UserSubscription.query
+            .filter_by(user_id=int(user_id), entitlement="pro", is_active=True)
+            .filter(
+                or_(
+                    UserSubscription.current_period_end == None,
+                    UserSubscription.current_period_end > db.func.now()
+                )
+            )
+            .first()
+        )
+        return sub is not None
+    except Exception:
+        return False
 
 # ===== Utilidades =====
 def get_or_create_active_unscheduled_game_id() -> int:
@@ -108,8 +130,14 @@ def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
         return {"ok": False, "error": "Los 5 números deben ser distintos."}
     if any((n < 0 or n > 999) for n in numbers):
         return {"ok": False, "error": "Cada número debe estar entre 0 y 999."}
-    
-        # --- BLOQUE NUEVO: no permitir confirmar en juegos cerrados o llenos ---
+    # --- PREMIUM guard: solo PRO pueden reservar ---
+    if not _is_user_pro(user_id):
+        return {
+            "ok": False,
+            "code": "NOT_PREMIUM",
+            "error": "Necesitas la suscripción PRO para reservar."
+        }
+
     # --- BLOQUE NUEVO: no permitir confirmar en juegos cerrados, con ganador o programados ---
     row = db.session.execute(text("""
         SELECT
@@ -299,6 +327,14 @@ def list_user_history(conn, user_id: int, page: int, per_page: int) -> dict:
       ]
     }
     """
+    # --- PREMIUM guard: historial solo para PRO ---
+    if not _is_user_pro(user_id):
+        return {
+            "ok": False,
+            "code": "NOT_PREMIUM",
+            "message": "El historial es solo para usuarios PRO."
+        }
+
     try:
         offset = max(0, (int(page) - 1) * int(per_page))
         limit = max(1, int(per_page))
