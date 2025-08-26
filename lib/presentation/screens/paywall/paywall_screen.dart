@@ -39,15 +39,20 @@ class _PaywallScreenState extends State<PaywallScreen> {
       final current = offerings.current;
 
       Package? monthly;
-      if (current != null) {
-        // Intenta por id 'monthly', si no existe toma el primero
-        monthly = current.availablePackages
-            .where((p) => p.identifier == 'monthly')
-            .cast<Package?>()
-            .firstOrNull;
-        monthly ??= current.availablePackages.isNotEmpty
-            ? current.availablePackages.first
-            : null;
+      if (current != null && current.availablePackages.isNotEmpty) {
+        // 1) intenta por el id estándar de RC
+        monthly = current.availablePackages.firstWhere(
+          (p) => p.identifier == r'$rc_monthly',
+          orElse: () => current.availablePackages.first,
+        );
+
+        // 2) fallback adicional: por si quieres matchear por productId de Play
+        if (monthly.storeProduct.identifier != 'cm_suscripcion:monthly') {
+          final byProduct = current.availablePackages.where(
+            (p) => p.storeProduct.identifier == 'cm_suscripcion:monthly',
+          );
+          if (byProduct.isNotEmpty) monthly = byProduct.first;
+        }
       }
 
       String? price;
@@ -85,59 +90,60 @@ class _PaywallScreenState extends State<PaywallScreen> {
     }
   }
 
-  Future<void> _purchaseMonthly() async {
-    if (_monthly == null) return;
+Future<void> _purchaseMonthly() async {
+  if (_monthly == null) return;
 
-    // Captura dependencias ANTES de await (buenas prácticas)
-    final subs = context.read<SubscriptionProvider>();
-    final nav = Navigator.of(context);
-    final messenger = ScaffoldMessenger.of(context);
+  final subs = context.read<SubscriptionProvider>();
+  final nav = Navigator.of(context);
+  final messenger = ScaffoldMessenger.of(context);
 
+  setState(() { _purchasing = true; _message = null; });
+
+  try {
+    // Usa dynamic para evitar problemas de tipo entre versiones del SDK
+    final dynamic pr = await Purchases.purchasePackage(_monthly!);
+
+    // Extrae CustomerInfo, ya sea que pr SEA CustomerInfo o un objeto con .customerInfo
+    late final CustomerInfo info;
+    if (pr is CustomerInfo) {
+      info = pr;
+    } else {
+      info = (pr as dynamic).customerInfo as CustomerInfo;
+    }
+
+    final hasPro = info.entitlements.active.containsKey('pro');
+
+    await subs.refresh(force: true);
+
+    if (!mounted) return;
     setState(() {
-      _purchasing = true;
-      _message = null;
+      _isPro = hasPro;
+      _message = hasPro
+          ? '¡Compra exitosa! PRO activado.'
+          : 'Compra realizada, pero PRO aún no aparece activo.';
     });
 
-    try {
-      // v9: PurchaseResult con customerInfo
-      final result = await Purchases.purchasePackage(_monthly!);
-      final info = result.customerInfo;
-      final hasPro = info.entitlements.active.containsKey('pro');
-
-      // 🚀 Sincroniza con tu backend y refresca UI
-      await subs.refresh(force: true);
-
-      if (mounted) {
-        setState(() {
-          _isPro = hasPro;
-          _message = hasPro
-              ? '¡Compra exitosa! PRO activado.'
-              : 'Compra realizada, pero PRO aún no aparece activo.';
-        });
-      }
-
-      // Si quedaste PRO, cierra el paywall (opcional)
-      if (hasPro) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Suscripción PRO activada')),
-        );
-        if (mounted) nav.maybePop();
-      }
-    } on PlatformException catch (e) {
-      final code = PurchasesErrorHelper.getErrorCode(e);
-      if (mounted) {
-        setState(() {
-          _message = code == PurchasesErrorCode.purchaseCancelledError
-              ? 'Compra cancelada.'
-              : 'Error de compra: $code';
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _message = 'Error de compra: $e');
-    } finally {
-      if (mounted) setState(() => _purchasing = false);
+    if (hasPro) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Suscripción PRO activada')),
+      );
+      nav.maybePop();
     }
+  } on PlatformException catch (e) {
+    final code = PurchasesErrorHelper.getErrorCode(e);
+    if (!mounted) return;
+    setState(() {
+      _message = code == PurchasesErrorCode.purchaseCancelledError
+          ? 'Compra cancelada.'
+          : 'Error de compra: $code';
+    });
+  } catch (e) {
+    if (mounted) setState(() => _message = 'Error de compra: $e');
+  } finally {
+    if (mounted) setState(() => _purchasing = false);
   }
+}
+
 
   Future<void> _restore() async {
     // Captura dependencias ANTES de await
@@ -178,8 +184,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
     final subtitle = _isPro
         ? 'Gracias por tu suscripción.'
         : (_price != null
-            ? 'Accede a PRO por $_price / mes'
-            : 'Selecciona tu plan');
+              ? 'Accede a PRO por $_price / mes'
+              : 'Selecciona tu plan');
 
     return Scaffold(
       appBar: AppBar(title: const Text('Pro')),
@@ -238,9 +244,4 @@ class _PaywallScreenState extends State<PaywallScreen> {
       ),
     );
   }
-}
-
-// helper para firstOrNull sin deps extra
-extension _IterableX<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
 }

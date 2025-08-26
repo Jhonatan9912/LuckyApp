@@ -5,10 +5,8 @@ from .routes import register_routes
 from .db.database import init_db
 from dotenv import load_dotenv
 import os
-from app.routes.health import health_bp
 
 def create_app():
-    # Cargar variables del .env si existen (en local)
     load_dotenv()
 
     app = Flask(__name__)
@@ -59,12 +57,9 @@ def create_app():
         app.logger.error("❌ init_db() falló al arrancar: %s", e)
 
     JWTManager(app)
-    register_routes(app)
 
-    # =========================
-    # Endpoints de salud
-    # =========================
-    app.register_blueprint(health_bp)
+    # Registra TODOS los blueprints desde routes/__init__.py
+    register_routes(app)
 
     @app.get("/healthz")
     def healthz():

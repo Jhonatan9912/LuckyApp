@@ -71,12 +71,15 @@ void _setupLogging() {
   });
 }
 
-/// Inicializa el SDK de RevenueCat (modo no observador: RC gestiona las compras)
 Future<void> _initRevenueCat() async {
+  await Purchases.setLogLevel(LogLevel.debug);        // logs en debug
   final configuration = PurchasesConfiguration(_rcAndroidSdkKey);
+  // En versiones nuevas, RevenueCat completa las compras por defecto.
+  // Si tu SDK soporta la API nueva y quieres ser explícito, puedes usar:
+  // configuration.purchasesAreCompletedBy = PurchasesAreCompletedBy.revenueCat;
   await Purchases.configure(configuration);
-  await Purchases.setLogLevel(LogLevel.debug); // deja debug en pruebas
 }
+
 
 /// Llama esto cuando YA tengas el userId (por ejemplo, justo después del login exitoso)
 Future<void> setRevenueCatUser(int userId) async {

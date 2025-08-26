@@ -45,20 +45,30 @@ android {
         }
     }
 
-    buildTypes {
-        getByName("debug") {
-            // Configuración debug
-        }
-        getByName("release") {
-            signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = false // Cambia a true si usas ProGuard
-            // ProGuard opcional:
-            // proguardFiles(
-            //     getDefaultProguardFile("proguard-android-optimize.txt"),
-            //     "proguard-rules.pro"
-            // )
-        }
+buildTypes {
+    getByName("debug") {
+        isMinifyEnabled = false
+        isShrinkResources = false
     }
+    // Flutter usa "profile"; a veces hereda config que activa shrink
+    maybeCreate("profile").apply {
+        // si no existe, lo crea; si existe, lo modifica
+        initWith(getByName("debug"))
+        isMinifyEnabled = false
+        isShrinkResources = false
+        signingConfig = signingConfigs.getByName("release")
+    }
+    getByName("release") {
+        signingConfig = signingConfigs.getByName("release")
+        // Si no quieres optimizar todavía, pon ambos en false.
+        isMinifyEnabled = true
+        isShrinkResources = true
+        proguardFiles(
+            getDefaultProguardFile("proguard-android-optimize.txt"),
+            "proguard-rules.pro"
+        )
+    }
+}
 
     // Excluir licencias duplicadas (buena práctica)
     packaging {
