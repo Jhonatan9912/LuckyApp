@@ -1,6 +1,6 @@
 class Env {
   static const apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:8000',
+    defaultValue: 'https://luckyapp-production-ca29.up.railway.app',
   );
 }

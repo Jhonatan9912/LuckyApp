@@ -11,7 +11,7 @@ import 'package:base_app/data/session/session_manager.dart';
 import 'dart:async';
 // RC ⬇
 import 'package:purchases_flutter/purchases_flutter.dart';
-
+import 'package:base_app/core/config/env.dart';
 // 👇 NUEVO: provider para refrescar estado premium
 import 'package:provider/provider.dart';
 import 'package:base_app/presentation/providers/subscription_provider.dart';
@@ -29,7 +29,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool obscureText = true;
   bool _loading = false;
 
-  final _authApi = AuthApi(baseUrl: 'http://10.0.2.2:8000');
+final _authApi = AuthApi(baseUrl: Env.apiBaseUrl);
   final _session = SessionManager();
 
   @override

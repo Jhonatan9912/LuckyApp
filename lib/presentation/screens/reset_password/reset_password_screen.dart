@@ -8,6 +8,7 @@ import 'package:base_app/presentation/screens/register/widgets/email_input.dart'
 import 'package:base_app/data/api/auth_api.dart';
 import 'package:base_app/core/ui/dialogs.dart';
 import 'package:base_app/core/validation/validators.dart';
+import 'package:base_app/core/config/env.dart';
 
 class ResetPasswordScreen extends StatefulWidget {
   const ResetPasswordScreen({super.key});
@@ -20,7 +21,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   final TextEditingController emailController = TextEditingController();
   final TextEditingController codeController = TextEditingController();
 
-  final _api = AuthApi(baseUrl: 'http://10.0.2.2:8000');
+  final _api = AuthApi(baseUrl: Env.apiBaseUrl);
 
   bool codeSent = false;
   bool _loadingSend = false;

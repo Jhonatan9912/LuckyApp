@@ -1,21 +1,26 @@
-// lib/data/repositories/user_repository_impl.dart
-import 'package:base_app/data/api/api_service.dart' show ApiService, ApiException;
+import 'package:base_app/data/api/api_service.dart'; // 👈 sin "show"
 import 'package:base_app/domain/models/user.dart';
 import 'package:base_app/domain/repositories/user_repository.dart';
 
 class UserRepositoryImpl implements UserRepository {
-  final ApiService _apiService;
+  final ApiService _api;
 
-  UserRepositoryImpl(this._apiService);
+  // Permite inyectar ApiService, o crea uno con Env.apiBaseUrl por defecto
+  UserRepositoryImpl({ApiService? api}) : _api = api ?? ApiService();
 
   @override
   Future<bool> register(User user) async {
     try {
-      return await _apiService.registerUser(user); // true en 200/201
+      // Ajusta el endpoint si en tu backend es otro (por ejemplo /api/users)
+      final res = await _api.post('/api/auth/register', body: user.toJson());
+      // Si tu API devuelve { ok: true, ... }
+      if (res is Map<String, dynamic> && res['ok'] == true) return true;
+      // Si llega aquí, la API respondió 2xx pero sin ok:true
+      throw ApiException(500, 'Respuesta inválida del servidor');
     } on ApiException {
-      rethrow; // 👈 deja pasar el mensaje real del backend
+      rethrow; // deja pasar el detalle (status y body) del backend
     } catch (_) {
-      throw ApiException('Error inesperado al registrar');
+      throw ApiException(500, 'Error inesperado al registrar'); // 👈 requiere (code, body)
     }
   }
 }

@@ -6,6 +6,7 @@ import 'package:base_app/data/api/auth_api.dart';
 
 import 'package:provider/provider.dart';
 import 'package:base_app/presentation/providers/subscription_provider.dart';
+import 'package:base_app/core/config/env.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -15,7 +16,7 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  final _authApi = AuthApi(baseUrl: 'http://10.0.2.2:8000');
+  final _authApi = AuthApi(baseUrl: Env.apiBaseUrl);
 
   @override
   void initState() {

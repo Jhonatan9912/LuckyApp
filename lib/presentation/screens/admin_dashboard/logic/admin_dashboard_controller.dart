@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:base_app/data/session/session_manager.dart';
 import '../widgets/games_bottom_sheet.dart' show GameEdit, GameRow, LotteryItem;
+import 'package:base_app/core/config/env.dart';
 
 class AdminDashboardController extends ChangeNotifier {
   bool loading = false;
@@ -17,7 +18,7 @@ class AdminDashboardController extends ChangeNotifier {
   List<Map<String, dynamic>> latestPayments = [];
 
   final String baseUrl;
-  AdminDashboardController({this.baseUrl = 'http://10.0.2.2:8000'});
+AdminDashboardController({String? baseUrl}) : baseUrl = baseUrl ?? Env.apiBaseUrl;
 
   Future<void> load() async {
     loading = true;

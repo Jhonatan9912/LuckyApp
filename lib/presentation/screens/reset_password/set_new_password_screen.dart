@@ -5,6 +5,7 @@ import '../login/login_screen.dart';
 import 'package:base_app/data/api/auth_api.dart';
 import 'package:base_app/core/ui/dialogs.dart';
 import 'package:base_app/core/validation/validators.dart';
+import 'package:base_app/core/config/env.dart';
 
 class SetNewPasswordScreen extends StatefulWidget {
   const SetNewPasswordScreen({super.key});
@@ -23,7 +24,7 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen> {
   bool _loading = false;
 
   // Api
-  final _api = AuthApi(baseUrl: 'http://10.0.2.2:8000');
+  final _api = AuthApi(baseUrl: Env.apiBaseUrl);
 
   String? _resetToken; // viene desde ResetPasswordScreen
   String? _phone; // opcional, por si quieres mostrarlo en UI

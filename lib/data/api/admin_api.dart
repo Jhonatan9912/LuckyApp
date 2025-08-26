@@ -1,10 +1,11 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:base_app/data/session/session_manager.dart';
+import 'package:base_app/core/config/env.dart';
 
 class AdminApi {
   final String baseUrl;
-  AdminApi({this.baseUrl = 'http://10.0.2.2:8000'});
+  AdminApi({String? baseUrl}) : baseUrl = baseUrl ?? Env.apiBaseUrl;
 
   Future<Map<String, dynamic>> fetchDashboardSummary() async {
     final token = await SessionManager().getToken();
@@ -16,7 +17,6 @@ class AdminApi {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': token != null ? 'Bearer $token' : '',
-        // Para el guard simple del backend demo (si no usas sesión):
         'X-User-Id': userId?.toString() ?? '',
       },
     );
@@ -25,7 +25,7 @@ class AdminApi {
       throw Exception('Error ${res.statusCode}: ${res.body}');
     }
     final data = json.decode(res.body) as Map<String, dynamic>;
-    if (!(data['ok'] == true)) {
+    if (data['ok'] != true) {
       throw Exception(data['error'] ?? 'Error en respuesta');
     }
     return data;

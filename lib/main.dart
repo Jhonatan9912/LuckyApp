@@ -44,7 +44,7 @@ Future<void> main() async {
       providers: [
         ChangeNotifierProvider(
           create: (_) => RegisterProvider(
-            RegisterUserUseCase(UserRepositoryImpl(ApiService())),
+            RegisterUserUseCase(UserRepositoryImpl(api: ApiService())),
           ),
         ),
         ChangeNotifierProvider(
