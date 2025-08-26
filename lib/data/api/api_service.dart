@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:base_app/core/config/env.dart';
 import 'package:base_app/data/session/session_manager.dart';
+import 'package:base_app/domain/models/user.dart';
 
 class ApiException implements Exception {
   final int statusCode;
@@ -96,12 +97,25 @@ class ApiService {
     }
   }
 
-  // ==== Endpoints específicos (helpers opcionales) ====
+  // =======================
+  // Helpers específicos
+  // =======================
 
-  /// Lista los tipos de identificación.
-  /// Ajusta la ruta si en tu backend es diferente.
+  /// Compatibilidad con tu código antiguo:
+  /// - Primero intenta `/identification-types`
+  /// - Si no existe (404), intenta `/api/identification-types`
   Future<List<Map<String, dynamic>>> fetchIdentificationTypes() async {
-    final res = await get('/api/identification-types');
+    dynamic res;
+    try {
+      res = await get('/identification-types');
+    } on ApiException catch (e) {
+      if (e.statusCode == 404) {
+        res = await get('/api/identification-types');
+      } else {
+        rethrow;
+      }
+    }
+
     if (res is List) {
       return List<Map<String, dynamic>>.from(res);
     }
@@ -109,5 +123,32 @@ class ApiService {
       return List<Map<String, dynamic>>.from(res['data'] as List);
     }
     throw ApiException(500, 'Formato inesperado en identification-types');
+  }
+
+  /// Helper de registro con *fallback* de rutas:
+  /// - intenta `/register`
+  /// - si no existe (404), intenta `/api/auth/register`
+  /// Devuelve `true` en 2xx; lanza `ApiException` en error.
+  Future<bool> registerUser(User user) async {
+    final paths = <String>['/register', '/api/auth/register'];
+    ApiException? lastError;
+
+    for (final p in paths) {
+      try {
+        await post(p, body: user.toJson());
+        return true; // si fue 2xx, listo
+      } on ApiException catch (e) {
+        // si es 404, probamos la siguiente ruta
+        if (e.statusCode == 404) {
+          lastError = e;
+          continue;
+        }
+        // para 4xx/5xx distintos de 404, propagamos el error real
+        rethrow;
+      }
+    }
+
+    // Si ninguna ruta existía, lanza el último 404 capturado
+    throw lastError ?? ApiException(404, 'Endpoint de registro no encontrado');
   }
 }
