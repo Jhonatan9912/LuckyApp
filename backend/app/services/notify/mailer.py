@@ -83,12 +83,16 @@ def send_html(to_email: str, subject: str, html: str) -> None:
 
 
 def send_html_async(to_email: str, subject: str, html: str) -> None:
-    """
-    Dispara el envío en un hilo aparte para no bloquear el request HTTP.
-    """
+    from flask import current_app
+    app = current_app._get_current_object()  # captura la app real
+
     def job():
         try:
-            send_html(to_email, subject, html)
+            with app.app_context():           # empuja el contexto en el hilo
+                send_html(to_email, subject, html)
         except Exception as e:
-            current_app.logger.error("Error en envío async a %s: %s", to_email, str(e))
+            # Usa logging seguro con app context
+            with app.app_context():
+                app.logger.error("Error en envío async a %s: %s", to_email, str(e))
+
     threading.Thread(target=job, daemon=True).start()
