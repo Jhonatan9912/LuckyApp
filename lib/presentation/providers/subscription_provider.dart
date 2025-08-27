@@ -159,6 +159,7 @@ void clear() {
       _isPremium = backendIsPremium;
       _status = backendIsPremium ? 'active' : backendStatus;
       _expiresAt = backendExpires;
+      await session.setIsPremium(_isPremium);
 
       _lastFetch = DateTime.now();
     } catch (e) {

@@ -427,9 +427,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_tabIndex != 0) {
       return const SizedBox.shrink();
     }
-
+    final subs = context.watch<SubscriptionProvider>();
+    if (subs.loading) {
+      // Mientras se verifica PRO/Free, no muestres nada para evitar parpadeo.
+      return const SizedBox.shrink();
+    }
     // 1) Forzar botón JUGAR para usuarios FREE
-    final isPremium = context.read<SubscriptionProvider>().isPremium;
+    final isPremium = context.select<SubscriptionProvider, bool>(
+      (p) => p.isPremium,
+    );
     if (!isPremium) {
       // independientemente del estado interno del controlador.
       return PlayButton(
