@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:purchases_flutter/purchases_flutter.dart';
 
 import 'presentation/screens/paywall/paywall_screen.dart';
 
@@ -30,10 +29,6 @@ import 'package:base_app/data/api/referrals_api.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-// ⚙️ RevenueCat
-const _rcAndroidSdkKey = 'goog_UeszbzWntJSeRevMPKysmcHGrlA';
-const _appUserNamespace = 'cm_apuestas'; // debe coincidir con tu backend
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   _setupLogging();
@@ -60,26 +55,12 @@ Future<void> main() async {
     ),
   );
 
-  // 🔧 Configura RevenueCat a través del provider y hace un refresh inicial
-  WidgetsBinding.instance.addPostFrameCallback((_) async {
-    final subs = navigatorKey.currentContext!.read<SubscriptionProvider>();
-    await Purchases.setLogLevel(LogLevel.debug); // logs en debug
-    await subs.configureRC(apiKey: _rcAndroidSdkKey); // SIN appUserId aún
-    await subs.refresh(force: true);
+WidgetsBinding.instance.addPostFrameCallback((_) async {
+  final subs = navigatorKey.currentContext!.read<SubscriptionProvider>();
+  await subs.configureBilling();
+  await subs.refresh(force: true);
+});
 
-    // 🔔 Listener con debounce para evitar parpadeo
-    DateTime? lastUpdate;
-    Purchases.addCustomerInfoUpdateListener((ci) async {
-      final now = DateTime.now();
-      if (lastUpdate != null &&
-          now.difference(lastUpdate!) < const Duration(seconds: 2)) {
-        return; // Ignora updates muy seguidos
-      }
-      lastUpdate = now;
-
-      await subs.refresh(force: true);
-    });
-  });
 }
 
 void _setupLogging() {
@@ -89,22 +70,6 @@ void _setupLogging() {
       '${record.level.name}: ${record.loggerName}: ${record.time}: ${record.message}',
     );
   });
-}
-
-/// Llama esto justo después del login exitoso (donde YA tienes el userId).
-Future<void> setRevenueCatUser(int userId) async {
-  final appUserId = '$_appUserNamespace:$userId';
-  await Purchases.logIn(appUserId);
-  // Refresca el provider inmediatamente
-  final subs = navigatorKey.currentContext?.read<SubscriptionProvider>();
-  if (subs != null) await subs.refresh(force: true);
-}
-
-/// Llama esto cuando el usuario cierra sesión.
-Future<void> clearRevenueCatUser() async {
-  await Purchases.logOut();
-  final subs = navigatorKey.currentContext?.read<SubscriptionProvider>();
-  if (subs != null) subs.clear();
 }
 
 class BaseApp extends StatelessWidget {

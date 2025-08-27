@@ -1,10 +1,11 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show PlatformException; // 👈 para PlatformException
+import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:base_app/data/api/subscriptions_api.dart';
 import 'package:base_app/data/session/session_manager.dart';
 import 'dart:developer' as dev;
-import 'package:purchases_flutter/purchases_flutter.dart';
 
+/// Provider de suscripción usando Google Play Billing (in_app_purchase)
 class SubscriptionProvider extends ChangeNotifier {
   final SubscriptionsApi api;
   final SessionManager session;
@@ -16,6 +17,7 @@ class SubscriptionProvider extends ChangeNotifier {
     this.ttl = const Duration(minutes: 5),
   });
 
+  // ========= Estado público =========
   bool _loading = false;
   bool get loading => _loading;
 
@@ -32,33 +34,48 @@ class SubscriptionProvider extends ChangeNotifier {
   String? _error;
   String? get error => _error;
 
-  bool _rcConfigured = false;
+  /// Getter para usar en Paywall
+  ProductDetails? get product => _product;
+  String? get priceString => _product?.price;
 
-  static const String _rcProductId = 'cm_suscripcion:monthly';
+  // ========= Internos Billing =========
+  final InAppPurchase _iap = InAppPurchase.instance;
+  bool _billingConfigured = false;
+  StreamSubscription<List<PurchaseDetails>>? _purchaseSub;
 
-  // ========= PUBLIC =========
+  // ⚠️ AJUSTA ESTO al productId EXACTO en Play Console (NO base plan)
+  static const String _gpProductId = 'cm_suscripcion';
+  ProductDetails? _product;
 
-  Future<void> configureRC({
-    required String apiKey,
-    String? appUserId,
-  }) async {
-    if (_rcConfigured) return;
+  // ========= Compat alias para no tocar tu app =========
+  Future<void> configureRC({required String apiKey, String? appUserId}) async {
+    await configureBilling();
+  }
 
-    final cfg = PurchasesConfiguration(apiKey);
-    await Purchases.configure(cfg);
-    _rcConfigured = true;
+  /// Nueva forma explícita
+  Future<void> configureBilling() async {
+    if (_billingConfigured) return;
 
-    if (appUserId != null && appUserId.isNotEmpty) {
-      try {
-        await Purchases.logIn(appUserId);
-      } catch (e) {
-        dev.log('RC logIn error: $e');
-      }
+    final available = await _iap.isAvailable();
+    if (!available) {
+      dev.log(
+        'Billing no disponible (¿Play Store instalada / app desde Play? )',
+      );
+      _billingConfigured = false;
+      return;
     }
 
-    try {
-      await _refreshFromRC();
-    } catch (_) {}
+    // Suscripción al stream de compras
+    _purchaseSub ??= _iap.purchaseStream.listen(
+      _onPurchaseUpdates,
+      onError: (e) => dev.log('purchaseStream error: $e'),
+      onDone: () => dev.log('purchaseStream done'),
+    );
+
+    // Cargar catálogo
+    await _queryProduct();
+
+    _billingConfigured = true;
   }
 
   void clear() {
@@ -68,18 +85,26 @@ class SubscriptionProvider extends ChangeNotifier {
     _expiresAt = null;
     _lastFetch = null;
     _error = null;
-    _rcConfigured = false;
+
+    _purchaseSub?.cancel();
+    _purchaseSub = null;
+    _billingConfigured = false;
+
     notifyListeners();
   }
 
   Future<void> refresh({bool force = false}) async {
     _error = null;
 
-    // 1) RC primero (no TTL)
+    // 1) Intentar restaurar compras (sandbox/testers)
     try {
-      await _refreshFromRC();
+      if (_billingConfigured) {
+        await _iap.restorePurchases();
+      } else {
+        await configureBilling();
+      }
     } catch (e) {
-      dev.log('subs.refresh() RC error: $e');
+      dev.log('subs.refresh() restore error: $e');
     }
 
     // 2) Backend con TTL
@@ -94,7 +119,9 @@ class SubscriptionProvider extends ChangeNotifier {
 
     try {
       final token = await session.getToken();
-      dev.log('subs.refresh() token presente? ${token != null && token.isNotEmpty}');
+      dev.log(
+        'subs.refresh() token presente? ${token != null && token.isNotEmpty}',
+      );
 
       if (token == null || token.isEmpty) {
         _isPremium = false;
@@ -112,10 +139,11 @@ class SubscriptionProvider extends ChangeNotifier {
 
       // Asegura string -> DateTime
       final String? expStr = json['expiresAt']?.toString();
-      final DateTime? fromBackendExpires =
-          (expStr != null && expStr.isNotEmpty) ? DateTime.tryParse(expStr) : null;
+      final DateTime? fromBackendExpires = (expStr != null && expStr.isNotEmpty)
+          ? DateTime.tryParse(expStr)
+          : null;
 
-      // Fusiona: si RC o backend dicen PRO, queda PRO
+      // Si backend dice PRO o ya quedó PRO por una compra restaurada, es PRO
       final mergedPremium = _isPremium || fromBackendIsPremium;
 
       _isPremium = mergedPremium;
@@ -123,7 +151,9 @@ class SubscriptionProvider extends ChangeNotifier {
       _expiresAt = _expiresAt ?? fromBackendExpires;
 
       _lastFetch = DateTime.now();
-      dev.log('subs.refresh() result -> isPremium=$_isPremium, status=$_status, expiresAt=$_expiresAt');
+      dev.log(
+        'subs.refresh() result -> isPremium=$_isPremium, status=$_status, expiresAt=$_expiresAt',
+      );
     } catch (e) {
       _error = e.toString();
       dev.log('subs.refresh() backend error: $_error');
@@ -135,43 +165,46 @@ class SubscriptionProvider extends ChangeNotifier {
 
   Future<bool> buyPro() async {
     try {
-      if (!_rcConfigured) {
-        throw Exception('RevenueCat no configurado. Llama configureRC() antes.');
+      if (!_billingConfigured) {
+        await configureBilling();
+        if (!_billingConfigured) {
+          throw Exception(
+            'Google Play Billing no disponible en este dispositivo.',
+          );
+        }
       }
 
-      final offerings = await Purchases.getOfferings();
-      final current = offerings.current ?? offerings.all.values.firstOrNull;
-      if (current == null) throw Exception('No hay offerings disponibles en RC');
+      if (_product == null) {
+        await _queryProduct();
+        if (_product == null) {
+          throw Exception(
+            'Producto $_gpProductId no encontrado en Play Console.',
+          );
+        }
+      }
 
-      final pkg = current.availablePackages.firstWhere(
-        (p) => p.storeProduct.identifier == _rcProductId,
-        orElse: () => current.availablePackages.first,
-      );
+      final product = _product!;
+      final params = PurchaseParam(productDetails: product); // API genérica
+      await _iap.buyNonConsumable(purchaseParam: params);
 
-      final dynamic result = await Purchases.purchasePackage(pkg);
-
-      final CustomerInfo info = _extractCustomerInfo(result);
-      dev.log('RC purchase ok. Activos: ${info.entitlements.active.keys}');
-
-      await _applyCustomerInfo(info);
-      notifyListeners();
-      return _isPremium;
-    } on PlatformException catch (e) {
-      final code = PurchasesErrorHelper.getErrorCode(e);
-      dev.log('RC PlatformException: $code');
-      return false;
+      // El resultado real llega por _onPurchaseUpdates
+      return true;
     } catch (e) {
-      dev.log('RC purchase error: $e');
+      dev.log('buyPro() error: $e');
       return false;
     }
   }
 
   Future<void> restore() async {
-    if (!_rcConfigured) return;
-    final info = await Purchases.restorePurchases();
-    await _applyCustomerInfo(info);
+    try {
+      await configureBilling();
+      await _iap.restorePurchases();
+    } catch (e) {
+      dev.log('restore() error: $e');
+    }
   }
 
+  /// Cancela desde tu backend (si tienes endpoint para anular / marcar no-PRO).
   Future<bool> cancel() async {
     if (_loading) return false;
 
@@ -188,7 +221,6 @@ class SubscriptionProvider extends ChangeNotifier {
       }
 
       await api.cancel(token: token);
-
       await refresh(force: true);
       return true;
     } catch (e) {
@@ -201,53 +233,73 @@ class SubscriptionProvider extends ChangeNotifier {
     }
   }
 
-  // ========= Internos RC =========
+  // ========= Internos =========
 
-  Future<void> _refreshFromRC() async {
-    if (!_rcConfigured) return;
-    final info = await Purchases.getCustomerInfo();
-    await _applyCustomerInfo(info);
-  }
-
-  CustomerInfo _extractCustomerInfo(dynamic result) {
-    if (result is CustomerInfo) return result;
+  Future<void> _queryProduct() async {
     try {
-      final ci = (result as dynamic).customerInfo;
-      if (ci is CustomerInfo) return ci;
-    } catch (_) {}
-    throw StateError('No se pudo extraer CustomerInfo del resultado de compra');
-  }
-
-  Future<void> _applyCustomerInfo(CustomerInfo info) async {
-    final ent = info.entitlements.all['Pro'];
-    final active = ent?.isActive ?? false;
-
-    // expirationDate puede ser DateTime o String
-    DateTime? exp;
-    final Object? raw = ent?.expirationDate; 
-    if (raw is DateTime) {
-      exp = raw;
-    } else if (raw is String) {
-      exp = DateTime.tryParse(raw);
-    } else {
-      exp = null;
+      final resp = await _iap.queryProductDetails({_gpProductId});
+      if (resp.error != null) {
+        dev.log('queryProduct error: ${resp.error}');
+      }
+      if (resp.productDetails.isEmpty) {
+        _product = null;
+        dev.log('queryProduct: no se encontró $_gpProductId');
+      } else {
+        _product = resp.productDetails.first;
+        dev.log('queryProduct OK: ${_product!.id}');
+      }
+    } catch (e) {
+      dev.log('queryProduct exception: $e');
+      _product = null;
     }
-
-    final changed = (_isPremium != active) ||
-        (_expiresAt?.millisecondsSinceEpoch != exp?.millisecondsSinceEpoch);
-
-    _isPremium = active;
-    _status = active ? 'active' : 'none';
-    _expiresAt = exp;
-
-    if (changed) notifyListeners();
-
-    dev.log('RC appUserId: ${info.originalAppUserId}');
-    dev.log('RC entitlements activos: ${info.entitlements.active.keys}');
   }
-}
 
-// helper
-extension _FirstOrNull<E> on Iterable<E> {
-  E? get firstOrNull => isEmpty ? null : first;
+  Future<void> _onPurchaseUpdates(List<PurchaseDetails> purchases) async {
+    for (final p in purchases) {
+      switch (p.status) {
+        case PurchaseStatus.pending:
+          dev.log('purchase pending...');
+          break;
+
+        case PurchaseStatus.purchased:
+          // En prod: verifica recibo en backend antes de marcar PRO
+          await _markPremium(true);
+          await _complete(p);
+          break;
+
+        case PurchaseStatus.restored:
+          await _markPremium(true);
+          await _complete(p);
+          break;
+
+        case PurchaseStatus.error:
+          dev.log('purchase error: ${p.error}');
+          break;
+
+        case PurchaseStatus.canceled:
+          dev.log('purchase canceled by user');
+          break;
+      }
+    }
+    notifyListeners();
+  }
+
+  Future<void> _complete(PurchaseDetails purchase) async {
+    if (purchase.pendingCompletePurchase) {
+      await _iap.completePurchase(purchase); // acknowledge/finish
+    }
+  }
+
+  Future<void> _markPremium(bool value) async {
+    final changed = _isPremium != value;
+    _isPremium = value;
+    _status = value ? 'active' : 'none';
+    if (changed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _purchaseSub?.cancel();
+    super.dispose();
+  }
 }

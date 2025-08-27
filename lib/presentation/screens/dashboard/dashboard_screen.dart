@@ -23,7 +23,6 @@ import 'package:provider/provider.dart'; // (si aún no lo tienes)
 import 'package:base_app/presentation/providers/subscription_provider.dart';
 import 'package:base_app/presentation/widgets/premium_gate.dart';
 import 'package:base_app/presentation/widgets/subscription/subscription_sheet.dart';
-import 'package:base_app/main.dart' show clearRevenueCatUser;
 import 'package:base_app/presentation/providers/referral_provider.dart';
 import 'package:base_app/presentation/widgets/referrals/referral_payout_tile.dart';
 import 'package:base_app/presentation/screens/referrals/referrals_tab.dart';
@@ -193,11 +192,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   builder: (_) =>
                       const Center(child: CircularProgressIndicator()),
                 );
-
-                // Limpieza externa (no bloquear si falla)
-                await clearRevenueCatUser()
-                    .timeout(const Duration(seconds: 3), onTimeout: () => null)
-                    .catchError((_) {});
 
                 // Limpia estado/app
                 subs.clear();

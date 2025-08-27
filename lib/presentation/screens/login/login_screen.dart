@@ -9,10 +9,8 @@ import 'package:base_app/core/services/secure_storage.dart';
 import 'package:base_app/core/ui/dialogs.dart';
 import 'package:base_app/data/session/session_manager.dart';
 import 'dart:async';
-// RC ⬇
-import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:base_app/core/config/env.dart';
-// 👇 NUEVO: provider para refrescar estado premium
+// 👇 Provider para refrescar estado premium
 import 'package:provider/provider.dart';
 import 'package:base_app/presentation/providers/subscription_provider.dart';
 
@@ -115,16 +113,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         setState(() => _loading = true);
                         try {
-                          debugPrint(
-                            '[LOGIN] 1. llamando API loginWithPhone...',
-                          );
+                          debugPrint('[LOGIN] 1. llamando API loginWithPhone...');
                           final json = await _authApi
                               .loginWithPhone(phone: phone, password: pass)
                               .timeout(const Duration(seconds: 12));
 
                           // Token
-                          var token =
-                              (json['access_token'] ??
+                          var token = (json['access_token'] ??
                                       json['token'] ??
                                       json['jwt'] ??
                                       '')
@@ -134,16 +129,13 @@ class _LoginScreenState extends State<LoginScreen> {
                             token = token.substring(7).trim();
                           }
                           if (token.isEmpty) {
-                            throw AuthException(
-                              'Token no recibido del servidor',
-                            );
+                            throw AuthException('Token no recibido del servidor');
                           }
 
                           // Usuario
                           int? userId, roleId;
                           if (json['user'] is Map) {
-                            final user = (json['user'] as Map)
-                                .cast<String, dynamic>();
+                            final user = (json['user'] as Map).cast<String, dynamic>();
                             userId = (user['id'] as num?)?.toInt();
                             roleId = (user['role_id'] as num?)?.toInt();
                           } else {
@@ -151,9 +143,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             roleId = (json['role_id'] as num?)?.toInt();
                           }
                           if (userId == null) {
-                            throw AuthException(
-                              'No se pudo obtener el ID de usuario',
-                            );
+                            throw AuthException('No se pudo obtener el ID de usuario');
                           }
 
                           // Guardar sesión
@@ -169,24 +159,17 @@ class _LoginScreenState extends State<LoginScreen> {
                           // Verifica persistencia ANTES de navegar
                           final saved = await _session.getToken();
                           if (saved == null || saved.isEmpty) {
-                            throw AuthException(
-                              'No se pudo persistir la sesión local',
-                            );
+                            throw AuthException('No se pudo persistir la sesión local');
                           }
 
-                          // Tareas no críticas en paralelo (NO bloquean la navegación)
-                          try {
-                            await Purchases.logIn('cm_apuestas:$userId');
-                          } catch (e) {
-                            debugPrint('[LOGIN] Purchases.logIn error: $e');
-                          }
-
+                          // 🔁 Refresca suscripción (ya sin RevenueCat)
                           try {
                             await subs.refresh(force: true);
                           } catch (e) {
                             debugPrint('[LOGIN] subs.refresh error: $e');
                           }
 
+                          // Mensaje amigable (no bloquea navegación)
                           unawaited(() async {
                             if (!ctx.mounted) return;
                             try {
@@ -199,14 +182,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             } catch (_) {}
                           }());
 
-                          // Navegación inmediata (una sola vez)
-                          final target = (roleId == 1)
-                              ? '/admin'
-                              : '/dashboard';
-                          navigator.pushNamedAndRemoveUntil(
-                            target,
-                            (_) => false,
-                          );
+                          // Navegación inmediata
+                          final target = (roleId == 1) ? '/admin' : '/dashboard';
+                          navigator.pushNamedAndRemoveUntil(target, (_) => false);
                         } on AuthException catch (e) {
                           if (!ctx.mounted) return;
                           await AppDialogs.error(

@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:base_app/presentation/providers/subscription_provider.dart';
-
-const String kEntitlementId = 'Pro'; // 👈 debe coincidir EXACTO con RC
 
 class PaywallScreen extends StatefulWidget {
   const PaywallScreen({super.key});
@@ -13,135 +9,54 @@ class PaywallScreen extends StatefulWidget {
 }
 
 class _PaywallScreenState extends State<PaywallScreen> {
-  bool _loading = true;
   bool _purchasing = false;
-  Package? _monthly;
-  String? _price;
-  bool _isPro = false;
   String? _message;
 
-  // Evita agregar múltiples listeners si se reconstruye el widget
-  static bool _customerInfoListenerAdded = false;
+  late final SubscriptionProvider _subs; // 👈 declara en la clase
 
   @override
   void initState() {
     super.initState();
-    _loadOfferings();
-    _loadCustomerInfo();
-
-    if (!_customerInfoListenerAdded) {
-      Purchases.addCustomerInfoUpdateListener((info) {
-        final isPro = info.entitlements.active.containsKey(kEntitlementId);
-        if (mounted) setState(() => _isPro = isPro);
-      });
-      _customerInfoListenerAdded = true;
-    }
+    // Provider se puede leer en initState con listen:false
+    _subs = Provider.of<SubscriptionProvider>(context, listen: false);
+    _bootstrapPaywall(); // corre tareas async sin usar `context`
   }
 
-  Future<void> _loadOfferings() async {
-    try {
-      final offerings = await Purchases.getOfferings();
-      final current = offerings.current;
-
-      Package? monthly;
-      if (current != null && current.availablePackages.isNotEmpty) {
-        // 1) PRIORIDAD: productId real con base plan
-        monthly = current.availablePackages.firstWhere(
-          (p) => p.storeProduct.identifier == 'cm_suscripcion:monthly',
-          orElse: () => current.availablePackages.first,
-        );
-
-        // 2) (opcional) intenta por id estándar del paquete en el offering
-        if (monthly.storeProduct.identifier != 'cm_suscripcion:monthly') {
-          try {
-            final byPkgId = current.availablePackages.firstWhere(
-              (p) => p.identifier == r'$rc_monthly',
-            );
-            monthly = byPkgId;
-          } catch (_) {/* no-op */}
-        }
-      }
-
-      final price = monthly?.storeProduct.priceString;
-
-      if (mounted) {
-        setState(() {
-          _monthly = monthly;
-          _price = price;
-          _loading = false;
-          _message = monthly == null
-              ? 'No hay paquetes disponibles en el offering.'
-              : null;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _message = 'Error cargando offering: $e';
-        });
-      }
-    }
-  }
-
-  Future<void> _loadCustomerInfo() async {
-    try {
-      final info = await Purchases.getCustomerInfo();
-      final isPro = info.entitlements.active.containsKey(kEntitlementId);
-      if (mounted) setState(() => _isPro = isPro);
-    } catch (_) {/* noop */}
+  Future<void> _bootstrapPaywall() async {
+    await _subs.configureBilling();
+    await _subs.refresh(force: true);
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _purchaseMonthly() async {
-    if (_monthly == null) return;
-
     final subs = context.read<SubscriptionProvider>();
     final nav = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
 
-    setState(() { _purchasing = true; _message = null; });
+    setState(() {
+      _purchasing = true;
+      _message = null;
+    });
 
-    try {
-      final dynamic pr = await Purchases.purchasePackage(_monthly!);
+    final ok = await subs.buyPro(); // el resultado real llega por stream
+    await subs.refresh(force: true);
 
-      late final CustomerInfo info;
-      if (pr is CustomerInfo) {
-        info = pr;
-      } else {
-        info = (pr as dynamic).customerInfo as CustomerInfo; // compat SDK
-      }
+    setState(() {
+      _purchasing = false;
+    });
 
-      final hasPro = info.entitlements.active.containsKey(kEntitlementId);
-
-      // Refresca provider (RC + backend)
-      await subs.refresh(force: true);
-
-      if (!mounted) return;
+    if (subs.isPremium) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Suscripción PRO activada')),
+      );
+      nav.maybePop();
+    } else {
       setState(() {
-        _isPro = hasPro;
-        _message = hasPro
-            ? '¡Compra exitosa! PRO activado.'
-            : 'Compra realizada, pero PRO aún no aparece activo.';
+        _message = ok
+            ? 'Compra procesada, verificando activación…'
+            : 'No se pudo completar la compra.';
       });
-
-      if (hasPro) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Suscripción PRO activada')),
-        );
-        nav.maybePop();
-      }
-    } on PlatformException catch (e) {
-      final code = PurchasesErrorHelper.getErrorCode(e);
-      if (!mounted) return;
-      setState(() {
-        _message = code == PurchasesErrorCode.purchaseCancelledError
-            ? 'Compra cancelada.'
-            : 'Error de compra: $code';
-      });
-    } catch (e) {
-      if (mounted) setState(() => _message = 'Error de compra: $e');
-    } finally {
-      if (mounted) setState(() => _purchasing = false);
     }
   }
 
@@ -150,45 +65,40 @@ class _PaywallScreenState extends State<PaywallScreen> {
     final nav = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
 
-    try {
-      final info = await Purchases.restorePurchases();
-      final hasPro = info.entitlements.active.containsKey(kEntitlementId);
-      await subs.refresh(force: true);
+    await subs.restore();
+    await subs.refresh(force: true);
 
-      if (mounted) {
-        setState(() {
-          _isPro = hasPro;
-          _message = hasPro
-              ? 'Compras restauradas: PRO activo.'
-              : 'No se encontraron compras para restaurar.';
-        });
-      }
-
-      if (hasPro) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('PRO restaurado correctamente')),
-        );
-        if (mounted) nav.maybePop();
-      }
-    } catch (e) {
-      if (mounted) setState(() => _message = 'Error al restaurar: $e');
+    if (subs.isPremium) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('PRO restaurado correctamente')),
+      );
+      if (mounted) nav.maybePop();
+    } else {
+      setState(() {
+        _message = 'No se encontraron compras para restaurar.';
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final title = _isPro ? 'Tienes PRO activo' : 'Mejora a PRO';
-    final subtitle = _isPro
+    final subs = context.watch<SubscriptionProvider>();
+    final isPro = subs.isPremium;
+    final loading = subs.loading;
+    final price = subs.priceString;
+
+    final title = isPro ? 'Tienes PRO activo' : 'Mejora a PRO';
+    final subtitle = isPro
         ? 'Gracias por tu suscripción.'
-        : (_price != null
-            ? 'Accede a PRO por $_price / mes'
-            : 'Selecciona tu plan');
+        : (price != null
+              ? 'Accede a PRO por $price / mes'
+              : 'Selecciona tu plan');
 
     return Scaffold(
       appBar: AppBar(title: const Text('Pro')),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: _loading
+        child: loading
             ? const Center(child: CircularProgressIndicator())
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -198,7 +108,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   Text(subtitle),
                   const SizedBox(height: 24),
 
-                  if (!_isPro && _monthly != null)
+                  if (!isPro)
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton(
@@ -206,12 +116,12 @@ class _PaywallScreenState extends State<PaywallScreen> {
                         child: Text(
                           _purchasing
                               ? 'Procesando...'
-                              : 'Comprar PRO (${_price ?? 'mensual'})',
+                              : 'Comprar PRO (${price ?? 'mensual'})',
                         ),
                       ),
                     ),
 
-                  if (_isPro)
+                  if (isPro)
                     const Row(
                       children: [
                         Icon(Icons.check_circle, color: Colors.green),
