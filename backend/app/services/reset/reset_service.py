@@ -1,24 +1,22 @@
 # backend/app/services/reset/reset_service.py
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import secrets, string
+import secrets, string, threading              # 👈 añade threading
 from app.db.database import db
 from app.models.user import User
 from werkzeug.security import generate_password_hash
 from sqlalchemy import text
 from app.services.notify.mailer import send_html
-# Asumimos una tabla reset_tokens (ver SQL más abajo).
-# Campos: id, user_id, code, token, expires_at, used, created_at
-from flask import current_app  # 👈 lo usaremos para leer TTL desde config
+from flask import current_app
 
 @dataclass
 class ResetError(Exception):
     message: str
     def __str__(self): return self.message
 
-CODE_TTL_MIN = 10          # minutos
-TOKEN_TTL_MIN = 30         # minutos
-CODE_LEN = 6               # 6 dígitos
+CODE_TTL_MIN = 10
+TOKEN_TTL_MIN = 30
+CODE_LEN = 6
 
 def _gen_code() -> str:
     return ''.join(secrets.choice(string.digits) for _ in range(CODE_LEN))
@@ -26,15 +24,16 @@ def _gen_code() -> str:
 def _gen_token() -> str:
     return secrets.token_urlsafe(32)
 
-def _send_email(to_email: str, subject: str, html_body: str):
-    send_html(to_email, subject, html_body)
-
-    """
-    Implementa aquí tu función real de envío (tu backend de correo ya es funcional).
-    Por ejemplo: mailer.send(to=to_email, subject=subject, html=html_body)
-    """
-    # TODO: integra con tu mailer real
-    pass
+# ⬇️ NUEVO: envío asíncrono para no bloquear el request HTTP
+def _send_email_async(to_email: str, subject: str, html_body: str) -> None:
+    def job():
+        try:
+            send_html(to_email, subject, html_body)  # mailer debe tener timeout (p.ej. 10s)
+            current_app.logger.info("Correo enviado a %s", to_email)
+        except Exception as e:
+            current_app.logger.exception("Error enviando correo a %s: %s", to_email, e)
+            # NO relanzar: la respuesta HTTP ya se devolvió
+    threading.Thread(target=job, daemon=True).start()
 
 def request_password_reset_by_email(email: str) -> None:
     user: User | None = db.session.query(User).filter(User.email == email).first()
@@ -58,14 +57,20 @@ def request_password_reset_by_email(email: str) -> None:
     """), {"uid": user.id, "code": code, "exp": expires_at})
     db.session.commit()
 
+    # (Opcional) en modo debug, deja el código en logs para pruebas sin depender del mail
+    if current_app.debug:
+        current_app.logger.warning("DEBUG RESET CODE for %s: %s", user.email, code)
+
     subject = "Tu código de restablecimiento"
     html = f"""
     <p>Hola {user.name},</p>
     <p>Tu código para restablecer la contraseña es: <b>{code}</b></p>
     <p>Expira en {ttl_code} minutos.</p>
     """
-    _send_email(user.email, subject, html)
 
+    # ⬇️ antes llamabas send_html() directo -> bloqueaba y causaba 502.
+    #    ahora lo mandamos en background para responder de inmediato.
+    _send_email_async(user.email, subject, html)
 
 def verify_reset_code_by_email(email: str, code: str) -> str:
     user: User | None = db.session.query(User).filter(User.email == email).first()
