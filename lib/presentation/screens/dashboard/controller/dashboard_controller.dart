@@ -71,6 +71,9 @@ class DashboardController extends ChangeNotifier {
   int? _lastClosedGameId; // id del último juego que quedó cerrado
   int? get lastClosedGameId => _lastClosedGameId;
 
+  int? _userId;
+  int? get userId => _userId;
+
   // ======= Getters públicos =======
   List<int> get numbers => List.unmodifiable(_numbers);
   bool get animating => _animating;
@@ -191,10 +194,12 @@ class DashboardController extends ChangeNotifier {
     final token = await _session.getToken();
     if (token == null || token.isEmpty) {
       _authToken = null;
+      _userId = null; // 👈
       _setSessionReady(false);
       return;
     }
     _authToken = token;
+    _userId = await _session.getUserId(); // 👈 guarda el id real
     _setSessionReady(true);
   }
 
@@ -286,35 +291,35 @@ class DashboardController extends ChangeNotifier {
     notifyListeners();
   }
 
-Future<void> logout() async {
-  try {
-    // Revoca en backend si aplica, pero no bloquees el flujo si falla
-    await _authRepo.logout().catchError((_) {});
+  Future<void> logout() async {
+    try {
+      // Revoca en backend si aplica, pero no bloquees el flujo si falla
+      await _authRepo.logout().catchError((_) {});
 
-    // 🔑 Borra SIEMPRE la sesión local (token, userId, roleId)
-    await _session.clear();
-  } catch (_) {
-    // Ignora errores locales para no trabar la UI
+      // 🔑 Borra SIEMPRE la sesión local (token, userId, roleId)
+      await _session.clear();
+    } catch (_) {
+      // Ignora errores locales para no trabar la UI
+    }
+
+    // Limpieza de estado en memoria
+    _authToken = null;
+    referralCode = null;
+    _lastReservedGameId = null;
+    _lastReservedNumbers = null;
+    _lastReservedUserId = null;
+    _lastClosedGameId = null;
+
+    _notifications = [];
+    _unreadCount = 0;
+    _history = [];
+    _shownNotifIds.clear();
+
+    // Deja la UI en estado inicial
+    resetToInitial();
+    _setSessionReady(false);
+    notifyListeners();
   }
-
-  // Limpieza de estado en memoria
-  _authToken = null;
-  referralCode = null;
-  _lastReservedGameId = null;
-  _lastReservedNumbers = null;
-  _lastReservedUserId = null;
-  _lastClosedGameId = null;
-
-  _notifications = [];
-  _unreadCount = 0;
-  _history = [];
-  _shownNotifIds.clear();
-
-  // Deja la UI en estado inicial
-  resetToInitial();
-  _setSessionReady(false);
-  notifyListeners();
-}
 
   Future<GenerateState> generateAnimatedNumbers({
     int? avoidGameId, // <- NUEVO: evita generar con este id
@@ -610,8 +615,8 @@ Future<void> logout() async {
     final res2 = await _gamesApi.commit(
       gameId: _gameId!,
       numbers: _numbers,
-      token: null, // sin Bearer
-      xUserId: _devUserId, // usa cabecera X-USER-ID (solo dev)
+      token: null,
+      xUserId: _userId ?? _devUserId,
     );
 
     if (res2['ok'] == true) {
