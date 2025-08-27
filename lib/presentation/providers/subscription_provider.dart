@@ -34,6 +34,9 @@ class SubscriptionProvider extends ChangeNotifier {
   String? _error;
   String? get error => _error;
 
+  bool _activating = false;
+  bool get activating => _activating;
+
   // Usuario al que pertenece el estado de esta instancia del provider
   int? _ownerUserId;
 
@@ -64,7 +67,9 @@ class SubscriptionProvider extends ChangeNotifier {
 
     final available = await _iap.isAvailable();
     if (!available) {
-      dev.log('Billing no disponible (¿Play Store instalada / app desde Play? )');
+      dev.log(
+        'Billing no disponible (¿Play Store instalada / app desde Play? )',
+      );
       _billingConfigured = false;
       return;
     }
@@ -101,7 +106,7 @@ class SubscriptionProvider extends ChangeNotifier {
   }
 
   Future<void> refresh({bool force = false}) async {
-    if (_refreshing) return;       // ← evita solapes
+    if (_refreshing) return; // ← evita solapes
     _refreshing = true;
     _loading = true;
     _error = null;
@@ -122,11 +127,10 @@ class SubscriptionProvider extends ChangeNotifier {
 
       // Intentar configurar billing (no cambia el estado premium por sí solo)
       try {
-        if (_billingConfigured) {
-          await _iap.restorePurchases(); // opcional en DEV
-        } else {
+        if (!_billingConfigured) {
           await configureBilling();
         }
+        // No hagas restorePurchases() aquí; hazlo bajo demanda (botón Restaurar).
       } catch (e) {
         dev.log('subs.refresh() restore error: $e');
       }
@@ -153,8 +157,9 @@ class SubscriptionProvider extends ChangeNotifier {
       final backendStatus = (json['status'] ?? 'none').toString();
 
       final String? expStr = json['expiresAt']?.toString();
-      final DateTime? backendExpires =
-          (expStr != null && expStr.isNotEmpty) ? DateTime.tryParse(expStr) : null;
+      final DateTime? backendExpires = (expStr != null && expStr.isNotEmpty)
+          ? DateTime.tryParse(expStr)
+          : null;
 
       // Confía en backend
       _isPremium = backendIsPremium;
@@ -171,7 +176,7 @@ class SubscriptionProvider extends ChangeNotifier {
       // No forzamos _reset() para no “brincar” de PRO a FREE ante un glitch.
     } finally {
       _loading = false;
-      _refreshing = false;         // ← libera el candado
+      _refreshing = false; // ← libera el candado
       notifyListeners();
     }
   }
@@ -181,14 +186,18 @@ class SubscriptionProvider extends ChangeNotifier {
       if (!_billingConfigured) {
         await configureBilling();
         if (!_billingConfigured) {
-          throw Exception('Google Play Billing no disponible en este dispositivo.');
+          throw Exception(
+            'Google Play Billing no disponible en este dispositivo.',
+          );
         }
       }
 
       if (_product == null) {
         await _queryProduct();
         if (_product == null) {
-          throw Exception('Producto $_gpProductId no encontrado en Play Console.');
+          throw Exception(
+            'Producto $_gpProductId no encontrado en Play Console.',
+          );
         }
       }
 
@@ -273,8 +282,10 @@ class SubscriptionProvider extends ChangeNotifier {
         case PurchaseStatus.purchased:
         case PurchaseStatus.restored:
           try {
+            _activating = true;
+            notifyListeners();
+
             final token = await session.getToken();
-            // Envía recibo al backend para validar y activar PRO
             await api.syncPurchase(
               token: token ?? '',
               productId: p.productID,
@@ -283,12 +294,14 @@ class SubscriptionProvider extends ChangeNotifier {
             );
           } catch (e) {
             dev.log('syncPurchase error: $e');
+          } finally {
+            await _complete(p);
+            // Breve espera por propagación en backend (ajústalo si quieres)
+            await Future.delayed(const Duration(seconds: 1));
+            await refresh(force: true);
+            _activating = false;
+            notifyListeners();
           }
-          await _complete(p);
-
-          // 🔑 IMPORTANTE: deja “respirar” al backend antes de refrescar
-          await Future.delayed(const Duration(milliseconds: 1500));
-          await refresh(force: true); // ← una sola vez, ya con candado
           break;
 
         case PurchaseStatus.error:

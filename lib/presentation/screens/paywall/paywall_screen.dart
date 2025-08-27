@@ -84,7 +84,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Widget build(BuildContext context) {
     final subs = context.watch<SubscriptionProvider>();
     final isPro = subs.isPremium;
-    final loading = subs.loading;
+    final loading = subs.loading || subs.activating; 
     final price = subs.priceString;
 
     final title = isPro ? 'Tienes PRO activo' : 'Mejora a PRO';

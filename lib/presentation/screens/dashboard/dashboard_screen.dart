@@ -421,99 +421,97 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildBottomButtons() {
-    // si NO está en Juego Actual, no mostramos botones de juego
-    if (_tabIndex != 0) {
-      return const SizedBox.shrink();
-    }
-    final subs = context.watch<SubscriptionProvider>();
-    if (subs.loading) {
-      // Mientras se verifica PRO/Free, no muestres nada para evitar parpadeo.
-      return const SizedBox.shrink();
-    }
-    // 1) Forzar botón JUGAR para usuarios FREE
-    if (!subs.isPremium) {
-      return PlayButton(
-        onPressed: () async {
-          if (!_ctrl.animating && !_ctrl.saving) {
-            await _ctrl.generateLocalPreview();
-          }
-        },
-        key: const ValueKey('play_free'),
-      );
-    }
-
-    // 2) Lógica normal para PRO
-    if (_ctrl.showFinalButtons) {
-      // Oculta mientras se está reservando (animación + commit)
-      if (_ctrl.reserving) {
-        return const SizedBox.shrink();
-      }
-
-      // Reserva completada: SOLO “VOLVER A INTENTAR”
-      if (_ctrl.hasAddedFinal) {
-        return const SizedBox.shrink();
-      }
-
-      // ⬇️ Lee isPremium usando Selector (aunque ya sabemos que es true)
-      return ActionButtons(
-        onAdd: () async {
-          final out = await _ctrl.add();
-          if (!mounted) return;
-
-          if (out.ok) {
-            if (out.code == 'REPLACED' && out.message != null) {
-              await _showInfo(out.message!);
-            } else {
-              await _showReserveSuccessDialog(completed: out.gameCompleted);
-            }
-          } else {
-            final code = out.code ?? '';
-            final msg = out.message ?? 'No se pudo guardar la selección.';
-
-            if (code == 'CONFLICT' || code == 'GAME_SWITCHED') {
-              await _showWarn(msg);
-              if (!mounted) return;
-              _ctrl.resetToInitial();
-              setState(() {});
-              await _ctrl.openFreshGame();
-              return;
-            } else if (code == 'UNAUTHORIZED' || code == 'UNAUTHENTICATED') {
-              // 👇 captura el navigator ANTES del await
-              final nav = Navigator.of(context, rootNavigator: true);
-
-              await _showError(msg);
-
-              // Por si este State se desmontó durante el await, comprobamos:
-              if (!mounted) return;
-
-              nav.pushNamedAndRemoveUntil('/login', (_) => false);
-            } else {
-              await _showError(msg);
-            }
-          }
-        },
-        onRetry: () async => _ctrl.retry(),
-        isSaving: _ctrl.saving,
-        isPremium: subs.isPremium, // <- usamos el mismo watch
-        onGoPro: () => Navigator.pushNamed(context, '/pro'),
-      );
-    }
-
-    // Estado inicial: solo "JUGAR" (para PRO)
-    if (!_ctrl.hasPlayedOnce) {
-      return PlayButton(
-        onPressed: () async {
-          if (!_ctrl.animating && !_ctrl.saving) {
-            await _ctrl.openFreshGame();
-          }
-        },
-        key: const ValueKey('play_pro'),
-      );
-    }
-
+Widget _buildBottomButtons() {
+  // si NO está en Juego Actual, no mostramos botones de juego
+  if (_tabIndex != 0) {
     return const SizedBox.shrink();
   }
+
+  // Lee el provider UNA vez aquí
+  final subs = context.watch<SubscriptionProvider>();
+
+  // Mientras se verifica PRO/Free o se está activando tras una compra,
+  // no mostramos nada para evitar parpadeo.
+  if (subs.loading || subs.activating) {
+    return const SizedBox.shrink();
+  }
+
+  final isPremium = subs.isPremium;
+
+  // 1) FREE: botón JUGAR local (sin backend)
+  if (!isPremium) {
+    return PlayButton(
+      onPressed: () async {
+        if (!_ctrl.animating && !_ctrl.saving) {
+          await _ctrl.generateLocalPreview(); // local ✅
+        }
+      },
+      key: const ValueKey('play_free'),
+    );
+  }
+
+  // 2) PRO: lógica normal
+  if (_ctrl.showFinalButtons) {
+    // Oculta mientras se está reservando (animación + commit)
+    if (_ctrl.reserving) return const SizedBox.shrink();
+
+    // Reserva completada: no mostramos botones
+    if (_ctrl.hasAddedFinal) return const SizedBox.shrink();
+
+    return ActionButtons(
+      onAdd: () async {
+        final out = await _ctrl.add();
+        if (!mounted) return;
+
+        if (out.ok) {
+          if (out.code == 'REPLACED' && out.message != null) {
+            await _showInfo(out.message!);
+          } else {
+            await _showReserveSuccessDialog(completed: out.gameCompleted);
+          }
+        } else {
+          final code = out.code ?? '';
+          final msg = out.message ?? 'No se pudo guardar la selección.';
+
+          if (code == 'CONFLICT' || code == 'GAME_SWITCHED') {
+            await _showWarn(msg);
+            if (!mounted) return;
+            _ctrl.resetToInitial();
+            setState(() {});
+            await _ctrl.openFreshGame();
+            return;
+          } else if (code == 'UNAUTHORIZED' || code == 'UNAUTHENTICATED') {
+            final nav = Navigator.of(context, rootNavigator: true);
+            await _showError(msg);
+            if (!mounted) return;
+            nav.pushNamedAndRemoveUntil('/login', (_) => false);
+          } else {
+            await _showError(msg);
+          }
+        }
+      },
+      onRetry: () async => _ctrl.retry(),
+      isSaving: _ctrl.saving,
+      isPremium: isPremium,                 // ← usa la variable local
+      onGoPro: () => Navigator.pushNamed(context, '/pro'),
+    );
+  }
+
+  // Estado inicial: solo "JUGAR" (para PRO)
+  if (!_ctrl.hasPlayedOnce) {
+    return PlayButton(
+      onPressed: () async {
+        if (!_ctrl.animating && !_ctrl.saving) {
+          await _ctrl.openFreshGame();
+        }
+      },
+      key: const ValueKey('play_pro'),
+    );
+  }
+
+  return const SizedBox.shrink();
+}
+
 
   Future<void> _showError(String msg) async {
     if (!mounted) {
