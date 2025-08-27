@@ -4,7 +4,7 @@ from app.services.register.register_service import register_user
 import traceback
 from datetime import datetime
 
-register_bp = Blueprint('register', __name__)
+register_bp = Blueprint('register', __name__, url_prefix="/api/auth")
 
 @register_bp.route('/register', methods=['POST'])
 def register():

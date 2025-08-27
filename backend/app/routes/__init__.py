@@ -11,6 +11,8 @@ from app.routes.health import health_bp
 from app.subscriptions.routes import subscriptions_bp
 from app.subscriptions.webhooks import webhooks_bp
 from app.routes.referrals.referrals_routes import referrals_bp
+from app.routes.dev_mock import dev_bp      
+
 
 def register_routes(app):
     app.register_blueprint(identification_bp)
@@ -27,3 +29,7 @@ def register_routes(app):
     app.register_blueprint(subscriptions_bp)
     app.register_blueprint(webhooks_bp)
     app.register_blueprint(referrals_bp)
+    app.register_blueprint(dev_bp)
+
+    print("✅ Blueprints registrados. Mapa de rutas:")
+    print(app.url_map)

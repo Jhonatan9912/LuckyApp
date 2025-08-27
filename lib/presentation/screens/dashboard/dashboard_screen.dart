@@ -107,7 +107,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       gamesApi: gamesApi,
       authRepo: authRepo,
       session: session,
-      devUserId: 8, 
+      devUserId: 8,
     );
 
     // 👇 todo lo que abre diálogos, después del primer frame
@@ -431,12 +431,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // 1) Forzar botón JUGAR para usuarios FREE
     final isPremium = context.read<SubscriptionProvider>().isPremium;
     if (!isPremium) {
-      // Mientras no sea premium, damos siempre acceso al JUGAR gratuito,
       // independientemente del estado interno del controlador.
       return PlayButton(
         onPressed: () async {
           if (!_ctrl.animating && !_ctrl.saving) {
-            await _ctrl.openFreshGame();
+            await _ctrl.generateLocalPreview(); // <- local, sin backend ✅
           }
         },
         key: const ValueKey('play_free'),

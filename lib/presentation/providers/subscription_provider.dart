@@ -33,10 +33,12 @@ class SubscriptionProvider extends ChangeNotifier {
   DateTime? _lastFetch;
   String? _error;
   String? get error => _error;
+  // Usuario al que pertenece el estado de esta instancia del provider
+  int? _ownerUserId;
 
   /// Getter para usar en Paywall
-ProductDetails? get product => _product;
-String? get priceString => _product?.price;
+  ProductDetails? get product => _product;
+  String? get priceString => _product?.price;
 
   // ========= Internos Billing =========
   final InAppPurchase _iap = InAppPurchase.instance;
@@ -58,7 +60,9 @@ String? get priceString => _product?.price;
 
     final available = await _iap.isAvailable();
     if (!available) {
-      dev.log('Billing no disponible (¿Play Store instalada / app desde Play? )');
+      dev.log(
+        'Billing no disponible (¿Play Store instalada / app desde Play? )',
+      );
       _billingConfigured = false;
       return;
     }
@@ -76,28 +80,42 @@ String? get priceString => _product?.price;
     _billingConfigured = true;
   }
 
-  void clear() {
+  void _reset() {
     _loading = false;
     _isPremium = false;
     _status = 'none';
     _expiresAt = null;
     _lastFetch = null;
     _error = null;
-
-    _purchaseSub?.cancel();
-    _purchaseSub = null;
-    _billingConfigured = false;
-
-    notifyListeners();
   }
+
+void clear() {
+  _reset(); // ← reutiliza la función que ya tienes para limpiar flags
+  _ownerUserId = null;
+  _purchaseSub?.cancel();
+  _purchaseSub = null;
+  _billingConfigured = false;
+  notifyListeners();
+}
+
 
   Future<void> refresh({bool force = false}) async {
     _error = null;
 
-    // 1) Intentar restaurar compras (sandbox/testers)
+    // Detectar usuario actual
+    final uidDyn = await session.getUserId();
+    final uid = uidDyn is int ? uidDyn : int.tryParse('$uidDyn');
+
+    // Si cambió el usuario, resetea el estado a FREE
+    if (_ownerUserId != uid) {
+      _ownerUserId = uid;
+      _reset();
+    }
+
+    // Intentar configurar billing (no cambia el estado premium por sí solo)
     try {
       if (_billingConfigured) {
-        await _iap.restorePurchases();
+        await _iap.restorePurchases(); // opcional en DEV
       } else {
         await configureBilling();
       }
@@ -105,7 +123,7 @@ String? get priceString => _product?.price;
       dev.log('subs.refresh() restore error: $e');
     }
 
-    // 2) Backend con TTL
+    // TTL por usuario
     if (!force &&
         _lastFetch != null &&
         DateTime.now().difference(_lastFetch!) < ttl) {
@@ -117,39 +135,37 @@ String? get priceString => _product?.price;
 
     try {
       final token = await session.getToken();
-      dev.log('subs.refresh() token presente? ${token != null && token.isNotEmpty}');
-
-      if (token == null || token.isEmpty) {
-        _isPremium = false;
+      if (token == null || token.isEmpty || uid == null) {
+        _reset();
         _status = 'not_authenticated';
-        _expiresAt = null;
         _lastFetch = DateTime.now();
+        _loading = false; // 👈 agrega esto
+        notifyListeners(); // 👈 y esto
         return;
       }
 
       final json = await api.getStatus(token: token);
       dev.log('subs.refresh() status payload: $json');
 
-      final fromBackendIsPremium = (json['isPremium'] == true);
-      final fromBackendStatus = (json['status'] ?? 'none').toString();
+      final backendIsPremium = (json['isPremium'] == true);
+      final backendStatus = (json['status'] ?? 'none').toString();
 
-      // Asegura string -> DateTime
       final String? expStr = json['expiresAt']?.toString();
-      final DateTime? fromBackendExpires =
-          (expStr != null && expStr.isNotEmpty) ? DateTime.tryParse(expStr) : null;
+      final DateTime? backendExpires = (expStr != null && expStr.isNotEmpty)
+          ? DateTime.tryParse(expStr)
+          : null;
 
-      // Si backend dice PRO o ya quedó PRO por una compra restaurada, es PRO
-      final mergedPremium = _isPremium || fromBackendIsPremium;
-
-      _isPremium = mergedPremium;
-      _status = mergedPremium ? 'active' : fromBackendStatus;
-      _expiresAt = _expiresAt ?? fromBackendExpires;
+      // ⚠️ No hagas OR con el estado previo: confía en backend.
+      _isPremium = backendIsPremium;
+      _status = backendIsPremium ? 'active' : backendStatus;
+      _expiresAt = backendExpires;
 
       _lastFetch = DateTime.now();
-      dev.log('subs.refresh() result -> isPremium=$_isPremium, status=$_status, expiresAt=$_expiresAt');
     } catch (e) {
       _error = e.toString();
       dev.log('subs.refresh() backend error: $_error');
+      // Ante error no “heredes” PRO. Mantén el estado tal cual (o fuerza FREE si prefieres):
+      // _reset();
     } finally {
       _loading = false;
       notifyListeners();
@@ -161,14 +177,18 @@ String? get priceString => _product?.price;
       if (!_billingConfigured) {
         await configureBilling();
         if (!_billingConfigured) {
-          throw Exception('Google Play Billing no disponible en este dispositivo.');
+          throw Exception(
+            'Google Play Billing no disponible en este dispositivo.',
+          );
         }
       }
 
       if (_product == null) {
         await _queryProduct();
         if (_product == null) {
-          throw Exception('Producto $_gpProductId no encontrado en Play Console.');
+          throw Exception(
+            'Producto $_gpProductId no encontrado en Play Console.',
+          );
         }
       }
 
@@ -251,14 +271,21 @@ String? get priceString => _product?.price;
           break;
 
         case PurchaseStatus.purchased:
-          // En prod: verifica recibo en backend antes de marcar PRO
-          await _markPremium(true);
-          await _complete(p);
-          break;
-
         case PurchaseStatus.restored:
-          await _markPremium(true);
+          try {
+            final token = await session.getToken();
+            // Envía recibo al backend para validar y activar PRO
+            await api.syncPurchase(
+              token: token ?? '',
+              productId: p.productID,
+              purchaseId: p.purchaseID ?? '',
+              verificationData: p.verificationData.serverVerificationData,
+            );
+          } catch (e) {
+            dev.log('syncPurchase error: $e');
+          }
           await _complete(p);
+          await refresh(force: true); // ← backend manda la verdad
           break;
 
         case PurchaseStatus.error:
@@ -270,7 +297,6 @@ String? get priceString => _product?.price;
           break;
       }
     }
-    notifyListeners();
   }
 
   Future<void> _complete(PurchaseDetails purchase) async {
@@ -279,12 +305,6 @@ String? get priceString => _product?.price;
     }
   }
 
-  Future<void> _markPremium(bool value) async {
-    final changed = _isPremium != value;
-    _isPremium = value;
-    _status = value ? 'active' : 'none';
-    if (changed) notifyListeners();
-  }
 
   @override
   void dispose() {

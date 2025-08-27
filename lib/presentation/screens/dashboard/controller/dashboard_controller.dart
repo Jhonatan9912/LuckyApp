@@ -5,6 +5,7 @@ import 'package:base_app/presentation/screens/dashboard/logic/sound_helper.dart'
 import 'package:base_app/data/api/games_api.dart';
 import 'package:base_app/data/session/session_manager.dart';
 import 'package:base_app/domain/auth/auth_repository.dart';
+import 'dart:math';
 
 /// Estados/Resultados para operaciones clave del tablero
 enum GenerateState { ok, error }
@@ -419,6 +420,33 @@ class DashboardController extends ChangeNotifier {
     await generateAnimatedNumbers();
   }
 
+  Future<GenerateState> generateLocalPreview() async {
+    if (_animating || _saving || _reserving) return GenerateState.error;
+
+    // Modo demo (FREE): no tocar backend ni asignar gameId
+    _gameId = null;
+    _setAnimating(true);
+    _setShowFinalButtons(false);
+    _setHasPlayedOnce(true);
+
+    final rnd = Random();
+    _generated = List<int>.generate(5, (_) => rnd.nextInt(1000));
+
+    final result = <int>[];
+    for (final n in _generated) {
+      result.add(n);
+      _setNumbers(
+        List<int>.from(result)..addAll(List.filled(5 - result.length, 0)),
+      );
+      await Future.delayed(const Duration(seconds: 1));
+    }
+
+    await Future.delayed(const Duration(milliseconds: 300));
+    _setAnimating(false);
+    _setShowFinalButtons(true);
+    return GenerateState.ok;
+  }
+
   // ======= RESERVAR/CONFIRMAR =======
   Future<ReserveOutcome> add() async {
     if (_authToken == null || _authToken!.isEmpty) {
@@ -429,14 +457,23 @@ class DashboardController extends ChangeNotifier {
       );
     }
 
-    final stillRevealing = _animating || !_showFinalButtons;
-    if (_gameId == null || stillRevealing) {
-      return const ReserveOutcome(
-        ok: false,
-        code: 'INVALID_STATE',
-        message: 'Aún no hay selección lista.',
-      );
-    }
+final stillRevealing = _animating || !_showFinalButtons;
+if (_gameId == null) {
+  return const ReserveOutcome(
+    ok: false,
+    code: 'PREVIEW_ONLY',
+    message: 'Necesitas PRO para reservar.',
+    status: 403,
+  );
+}
+if (stillRevealing) {
+  return const ReserveOutcome(
+    ok: false,
+    code: 'INVALID_STATE',
+    message: 'Aún no hay selección lista.',
+  );
+}
+
 
     final isValid =
         _numbers.length == 5 && _numbers.every((n) => n >= 0 && n <= 999);
