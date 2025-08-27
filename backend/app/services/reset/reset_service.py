@@ -1,18 +1,15 @@
 # backend/app/services/reset/reset_service.py
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import secrets, string, threading
+import secrets, string
 from app.db.database import db
 from app.models.user import User
 from werkzeug.security import generate_password_hash
 from sqlalchemy import text
-from flask import current_app
-
-# IMPORTA EL MAILER SEGÚN TU PATH REAL:
-# Si usas app/services/notify/mailer.py:
-from app.services.notify.mailer import send_html_async
-# Si tu archivo está en app/services/mailer.py, usa en su lugar:
-# from app.services.mailer import send_html_async
+from app.services.notify.mailer import send_html
+# Asumimos una tabla reset_tokens (ver SQL más abajo).
+# Campos: id, user_id, code, token, expires_at, used, created_at
+from flask import current_app  # 👈 lo usaremos para leer TTL desde config
 
 @dataclass
 class ResetError(Exception):
@@ -29,14 +26,23 @@ def _gen_code() -> str:
 def _gen_token() -> str:
     return secrets.token_urlsafe(32)
 
+def _send_email(to_email: str, subject: str, html_body: str):
+    send_html(to_email, subject, html_body)
+
+    """
+    Implementa aquí tu función real de envío (tu backend de correo ya es funcional).
+    Por ejemplo: mailer.send(to=to_email, subject=subject, html=html_body)
+    """
+    # TODO: integra con tu mailer real
+    pass
+
 def request_password_reset_by_email(email: str) -> None:
     user: User | None = db.session.query(User).filter(User.email == email).first()
     if not user:
-        # Mantiene semántica actual (no revelar existencia)
         raise ResetError("No existe un usuario con ese correo")
 
     code = _gen_code()
-    ttl_code = current_app.config.get('RESET_CODE_TTL_MIN', CODE_TTL_MIN)
+    ttl_code = current_app.config.get('RESET_CODE_TTL_MIN', 10)
     expires_at = datetime.utcnow() + timedelta(minutes=ttl_code)
 
     # invalida códigos previos no usados (opcional)
@@ -52,19 +58,14 @@ def request_password_reset_by_email(email: str) -> None:
     """), {"uid": user.id, "code": code, "exp": expires_at})
     db.session.commit()
 
-    # En DEBUG, loguea el código para probar sin depender del correo
-    if current_app.debug:
-        current_app.logger.warning("DEBUG RESET CODE for %s: %s", user.email, code)
-
     subject = "Tu código de restablecimiento"
     html = f"""
     <p>Hola {user.name},</p>
     <p>Tu código para restablecer la contraseña es: <b>{code}</b></p>
     <p>Expira en {ttl_code} minutos.</p>
     """
+    _send_email(user.email, subject, html)
 
-    # ⬇️ Envío asíncrono: no bloquea el request → evita 502 en Railway
-    send_html_async(user.email, subject, html)
 
 def verify_reset_code_by_email(email: str, code: str) -> str:
     user: User | None = db.session.query(User).filter(User.email == email).first()
@@ -87,15 +88,15 @@ def verify_reset_code_by_email(email: str, code: str) -> str:
         raise ResetError("Código expirado")
 
     token = _gen_token()
-    ttl_token = current_app.config.get('RESET_TOKEN_TTL_MIN', TOKEN_TTL_MIN)
+    ttl_token = current_app.config.get('RESET_TOKEN_TTL_MIN', 30)
     token_exp = datetime.utcnow() + timedelta(minutes=ttl_token)
 
-    # Invalida el código y fija token + nueva expiración
+    # 👇 NO marcar used=TRUE aquí. Solo invalidamos el código para que no se pueda reutilizar.
     db.session.execute(text("""
         UPDATE reset_tokens
            SET token = :token,
                expires_at = :texp,
-               code = NULL
+               code = NULL     -- invalida el código para que no se reuse
          WHERE id = :rid
     """), {"token": token, "texp": token_exp, "rid": row["id"]})
 

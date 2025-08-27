@@ -274,6 +274,66 @@ Future<Map<String, dynamic>> loginWithPhone({
     }
   }
 
+  Future<void> confirmPasswordReset({
+    required String resetToken,
+    required String newPassword,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/reset/confirm');
+
+    try {
+      appLogger.i({'event': 'pwd_reset_confirm', 'url': uri.toString()});
+
+      final res = await _client
+          .post(
+            uri,
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'reset_token': resetToken,
+              'new_password': newPassword,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (kDebugMode) {
+        appLogger.d({
+          'event': 'pwd_reset_confirm_res',
+          'status': res.statusCode,
+          'body': res.body,
+        });
+      } else {
+        appLogger.d({
+          'event': 'pwd_reset_confirm_res',
+          'status': res.statusCode,
+        });
+      }
+
+      final body = jsonDecode(res.body.isEmpty ? '{}' : res.body);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        return;
+      } else {
+        final msg = (body is Map && body['error'] != null)
+            ? body['error'].toString()
+            : 'No se pudo actualizar la contraseña';
+        throw AuthException(msg, statusCode: res.statusCode);
+      }
+    } on SocketException {
+      throw AuthException('No hay conexión con el servidor');
+    } on TimeoutException {
+      throw AuthException('Tiempo de espera agotado');
+    } on FormatException {
+      throw AuthException('Respuesta inválida del servidor');
+    } on AuthException {
+      rethrow;
+    } catch (e, st) {
+      appLogger.e({
+        'event': 'pwd_reset_confirm_unhandled',
+        'error': e.toString(),
+        'stack': st.toString(),
+      });
+      throw AuthException('Error inesperado al actualizar la contraseña');
+    }
+  }
+
   // --- Logout ---
   Future<void> logout({required String token}) async {
     final uri = Uri.parse('$baseUrl/api/auth/logout');
@@ -315,222 +375,132 @@ Future<Map<String, dynamic>> loginWithPhone({
     return '$visible****$domain';
   }
 
-  // === RESET POR EMAIL ===
+  /// Paso 1 (por EMAIL): solicitar envío de código
+  Future<void> requestPasswordResetByEmail({required String email}) async {
+    final uri = Uri.parse('$baseUrl/api/reset/request');
 
-/// Paso 1: solicitar envío de código (EMAIL)
-Future<void> requestPasswordResetByEmail({required String email}) async {
-  final uri = Uri.parse('$baseUrl/api/reset/request');
-
-  try {
-    final masked = _maskEmail(email);
-    appLogger.i({
-      'event': 'pwd_reset_request_email',
-      'url': uri.toString(),
-      'email': masked,
-    });
-
-    final res = await _client
-        .post(
-          uri,
-          headers: const {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-          body: jsonEncode({'email': email}),
-        )
-        // ⬇️ da un poco más de aire
-        .timeout(const Duration(seconds: 25));
-
-    if (kDebugMode) {
-      appLogger.d({
-        'event': 'pwd_reset_request_email_res',
-        'status': res.statusCode,
-        'body': res.body,
-      });
-    } else {
-      appLogger.d({
-        'event': 'pwd_reset_request_email_res',
-        'status': res.statusCode,
-      });
-    }
-
-    // éxito si 200 ó 202
-    if (res.statusCode == 200 || res.statusCode == 202) return;
-
-    // intenta leer error del backend
-    dynamic body;
     try {
-      body = jsonDecode(res.body.isEmpty ? '{}' : res.body);
-    } catch (_) {
-      body = {};
-    }
-    final msg = (body is Map && body['error'] != null)
-        ? body['error'].toString()
-        : 'No se pudo enviar el código';
-    throw AuthException(msg, statusCode: res.statusCode);
-  } on SocketException {
-    throw AuthException('No hay conexión con el servidor');
-  } on TimeoutException {
-    throw AuthException('Tiempo de espera agotado');
-  } on FormatException {
-    throw AuthException('Respuesta inválida del servidor');
-  } on AuthException {
-    rethrow;
-  } catch (e, st) {
-    appLogger.e({
-      'event': 'pwd_reset_request_email_unhandled',
-      'error': e.toString(),
-      'stack': st.toString(),
-    });
-    throw AuthException('Error inesperado solicitando el código');
-  }
-}
-
-/// Paso 2: verificar código (EMAIL) y obtener reset_token
-Future<String> verifyResetCodeByEmail({
-  required String email,
-  required String code,
-}) async {
-  final uri = Uri.parse('$baseUrl/api/reset/verify');
-
-  try {
-    final masked = _maskEmail(email);
-    appLogger.i({
-      'event': 'pwd_reset_verify_email',
-      'url': uri.toString(),
-      'email': masked,
-    });
-
-    final res = await _client
-        .post(
-          uri,
-          headers: const {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-          body: jsonEncode({'email': email, 'code': code}),
-        )
-        .timeout(const Duration(seconds: 25));
-
-    if (kDebugMode) {
-      appLogger.d({
-        'event': 'pwd_reset_verify_email_res',
-        'status': res.statusCode,
-        'body': res.body,
+      final masked = _maskEmail(email);
+      appLogger.i({
+        'event': 'pwd_reset_request_email',
+        'url': uri.toString(),
+        'email': masked,
       });
-    } else {
-      appLogger.d({
-        'event': 'pwd_reset_verify_email_res',
-        'status': res.statusCode,
-      });
-    }
 
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      dynamic body;
-      try {
-        body = jsonDecode(res.body.isEmpty ? '{}' : res.body);
-      } catch (_) {
-        body = {};
+      final res = await _client
+          .post(
+            uri,
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'email': email}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (kDebugMode) {
+        appLogger.d({
+          'event': 'pwd_reset_request_email_res',
+          'status': res.statusCode,
+          'body': res.body,
+        });
+      } else {
+        appLogger.d({
+          'event': 'pwd_reset_request_email_res',
+          'status': res.statusCode,
+        });
       }
-      final msg = (body is Map && body['error'] != null)
-          ? body['error'].toString()
-          : 'Código inválido';
-      throw AuthException(msg, statusCode: res.statusCode);
-    }
 
-    // acepta snake_case o camelCase
-    final data = jsonDecode(res.body.isEmpty ? '{}' : res.body);
-    final token = (data['reset_token'] ?? data['resetToken'])?.toString();
-    if (token == null || token.isEmpty) {
-      throw AuthException('Token de restablecimiento no recibido');
-    }
-    return token;
-  } on SocketException {
-    throw AuthException('No hay conexión con el servidor');
-  } on TimeoutException {
-    throw AuthException('Tiempo de espera agotado');
-  } on FormatException {
-    throw AuthException('Respuesta inválida del servidor');
-  } on AuthException {
-    rethrow;
-  } catch (e, st) {
-    appLogger.e({
-      'event': 'pwd_reset_verify_email_unhandled',
-      'error': e.toString(),
-      'stack': st.toString(),
-    });
-    throw AuthException('Error inesperado verificando el código');
-  }
-}
-
-/// Paso 3: confirmar nueva contraseña (EMAIL)
-Future<void> confirmPasswordReset({
-  required String resetToken,
-  required String newPassword,
-}) async {
-  final uri = Uri.parse('$baseUrl/api/reset/confirm');
-
-  try {
-    appLogger.i({'event': 'pwd_reset_confirm', 'url': uri.toString()});
-
-    final res = await _client
-        .post(
-          uri,
-          headers: const {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-          body: jsonEncode({
-            // backend original espera snake_case
-            'reset_token': resetToken,
-            'new_password': newPassword,
-          }),
-        )
-        .timeout(const Duration(seconds: 25));
-
-    if (kDebugMode) {
-      appLogger.d({
-        'event': 'pwd_reset_confirm_res',
-        'status': res.statusCode,
-        'body': res.body,
-      });
-    } else {
-      appLogger.d({
-        'event': 'pwd_reset_confirm_res',
-        'status': res.statusCode,
-      });
-    }
-
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      dynamic body;
-      try {
-        body = jsonDecode(res.body.isEmpty ? '{}' : res.body);
-      } catch (_) {
-        body = {};
+      final body = jsonDecode(res.body.isEmpty ? '{}' : res.body);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        return;
+      } else {
+        final msg = (body is Map && body['error'] != null)
+            ? body['error'].toString()
+            : 'No se pudo enviar el código';
+        throw AuthException(msg, statusCode: res.statusCode);
       }
-      final msg = (body is Map && body['error'] != null)
-          ? body['error'].toString()
-          : 'No se pudo actualizar la contraseña';
-      throw AuthException(msg, statusCode: res.statusCode);
+    } on SocketException {
+      throw AuthException('No hay conexión con el servidor');
+    } on TimeoutException {
+      throw AuthException('Tiempo de espera agotado');
+    } on FormatException {
+      throw AuthException('Respuesta inválida del servidor');
+    } on AuthException {
+      rethrow;
+    } catch (e, st) {
+      appLogger.e({
+        'event': 'pwd_reset_request_email_unhandled',
+        'error': e.toString(),
+        'stack': st.toString(),
+      });
+      throw AuthException('Error inesperado solicitando el código');
     }
-  } on SocketException {
-    throw AuthException('No hay conexión con el servidor');
-  } on TimeoutException {
-    throw AuthException('Tiempo de espera agotado');
-  } on FormatException {
-    throw AuthException('Respuesta inválida del servidor');
-  } on AuthException {
-    rethrow;
-  } catch (e, st) {
-    appLogger.e({
-      'event': 'pwd_reset_confirm_unhandled',
-      'error': e.toString(),
-      'stack': st.toString(),
-    });
-    throw AuthException('Error inesperado al actualizar la contraseña');
   }
-}
 
+  /// Paso 2 (por EMAIL): verificar código y obtener reset_token
+  Future<String> verifyResetCodeByEmail({
+    required String email,
+    required String code,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/reset/verify');
+
+    try {
+      final masked = _maskEmail(email);
+      appLogger.i({
+        'event': 'pwd_reset_verify_email',
+        'url': uri.toString(),
+        'email': masked,
+      });
+
+      final res = await _client
+          .post(
+            uri,
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'email': email, 'code': code}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (kDebugMode) {
+        appLogger.d({
+          'event': 'pwd_reset_verify_email_res',
+          'status': res.statusCode,
+          'body': res.body,
+        });
+      } else {
+        appLogger.d({
+          'event': 'pwd_reset_verify_email_res',
+          'status': res.statusCode,
+        });
+      }
+
+      final body = jsonDecode(res.body.isEmpty ? '{}' : res.body);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final token = (body is Map ? body['reset_token'] : null)?.toString();
+        if (token == null || token.isEmpty) {
+          throw AuthException('Token de restablecimiento no recibido');
+        }
+        return token;
+      } else {
+        final msg = (body is Map && body['error'] != null)
+            ? body['error'].toString()
+            : 'Código inválido';
+        throw AuthException(msg, statusCode: res.statusCode);
+      }
+    } on SocketException {
+      throw AuthException('No hay conexión con el servidor');
+    } on TimeoutException {
+      throw AuthException('Tiempo de espera agotado');
+    } on FormatException {
+      throw AuthException('Respuesta inválida del servidor');
+    } on AuthException {
+      rethrow;
+    } catch (e, st) {
+      appLogger.e({
+        'event': 'pwd_reset_verify_email_unhandled',
+        'error': e.toString(),
+        'stack': st.toString(),
+      });
+      throw AuthException('Error inesperado verificando el código');
+    }
+  }
 }
 
 class AuthException implements Exception {
