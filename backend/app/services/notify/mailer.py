@@ -82,17 +82,23 @@ def send_html(to_email: str, subject: str, html: str) -> None:
         raise
 
 
+# ... imports arriba ...
+from flask import current_app
+
 def send_html_async(to_email: str, subject: str, html: str) -> None:
-    from flask import current_app
-    app = current_app._get_current_object()  # captura la app real
+    """
+    Dispara el envío en un hilo aparte sin perder el application context.
+    """
+    # Captura el objeto app real (no el proxy)
+    app = current_app._get_current_object()
 
     def job():
-        try:
-            with app.app_context():           # empuja el contexto en el hilo
+        # Empuja el contexto DENTRO del hilo
+        with app.app_context():
+            try:
                 send_html(to_email, subject, html)
-        except Exception as e:
-            # Usa logging seguro con app context
-            with app.app_context():
-                app.logger.error("Error en envío async a %s: %s", to_email, str(e))
+            except Exception as e:
+                # Ahora sí puedes loggear con current_app/app
+                app.logger.error("Error en envío async a %s: %s", to_email, str(e), exc_info=True)
 
-    threading.Thread(target=job, daemon=True).start()
+    threading.Thread(target=job, daemon=True, name="mail-send").start()
