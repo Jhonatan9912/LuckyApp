@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from app.db.database import db
 from app.subscriptions.models import UserSubscription
 
+from datetime import datetime, timezone, timedelta
 
 @dataclass
 class SubscriptionStatus:
@@ -86,7 +87,12 @@ def get_status(user_id: Optional[int]) -> SubscriptionStatus:
     # - cancelado pero aún dentro del periodo pagado
     status_str = getattr(sub, "status", "none") or "none"
     is_active_flag = bool(getattr(sub, "is_active", False))
-    is_premium = bool(is_active_flag or (status_str == "canceled" and period_active))
+    is_premium = bool(
+        is_active_flag
+        or status_str == "active"
+        or (status_str == "canceled" and period_active)
+    )
+
 
     expires_iso = end_at_utc.isoformat() if end_at_utc else None
 
@@ -128,3 +134,43 @@ def cancel(user_id: int) -> Dict[str, Any]:
     db.session.add(sub)
     db.session.commit()
     return {"ok": True}
+
+def sync_purchase(
+    user_id: int,
+    product_id: str,
+    purchase_id: str,
+    verification_data: str,
+) -> Dict[str, Any]:
+    """
+    Valida/acepta la compra y activa/renueva la suscripción PRO.
+    TODO: aquí deberías verificar con la Play Developer API y usar su expiry real.
+    Por ahora, para DEV, damos 30 días desde ahora.
+    """
+    now = _now_utc()
+    expiry_dt = now + timedelta(days=30)  # DEMO: reemplaza con expiry real
+
+    sub: Optional[UserSubscription] = (
+        UserSubscription.query
+        .filter_by(user_id=int(user_id), entitlement="pro")
+        .first()
+    )
+    if not sub:
+        sub = UserSubscription(user_id=int(user_id), entitlement="pro")
+
+    sub.status = "active"
+    sub.is_active = True
+    sub.current_period_end = expiry_dt
+    sub.last_purchase_id = purchase_id or getattr(sub, "last_purchase_id", None)
+    sub.last_product_id  = product_id  or getattr(sub, "last_product_id", None)
+
+    db.session.add(sub)
+    db.session.commit()
+
+    return {
+        "ok": True,
+        "userId": int(user_id),
+        "entitlement": "pro",
+        "isPremium": True,
+        "status": "active",
+        "expiresAt": expiry_dt.isoformat(),
+    }
