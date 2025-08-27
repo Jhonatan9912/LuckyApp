@@ -5,6 +5,7 @@ import 'package:base_app/presentation/providers/subscription_provider.dart';
 /// Gate sencillo para bloquear contenido PRO.
 /// - Si el usuario es premium: muestra [child].
 /// - Si NO es premium: muestra [fallback] o un teaser con botón a /pro.
+/// Importante: NO reacciona a `loading` para evitar parpadeos mientras se refresca.
 class PremiumGate extends StatelessWidget {
   final Widget child;
   final Widget? fallback;
@@ -19,21 +20,13 @@ class PremiumGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final subs = context.watch<SubscriptionProvider>();
-
-    // Mientras carga, mostramos un placeholder no intrusivo
-    if (subs.loading) {
-      return const Center(child: Padding(
-        padding: EdgeInsets.all(12),
-        child: CircularProgressIndicator(strokeWidth: 2),
-      ));
-    }
-
-    // Si es premium, deja pasar
-    if (subs.isPremium) return child;
-
-    // Si no es premium, usa fallback o el teaser por defecto
-    return fallback ?? const _DefaultPaywallTeaser();
+    return Selector<SubscriptionProvider, bool>(
+      selector: (_, p) => p.isPremium,
+      builder: (context, isPremium, _) {
+        if (isPremium) return child;
+        return fallback ?? const _DefaultPaywallTeaser();
+      },
+    );
   }
 }
 
@@ -79,7 +72,8 @@ class _DefaultPaywallTeaser extends StatelessWidget {
               const SizedBox(width: 8),
               OutlinedButton(
                 onPressed: () async {
-                  await subs.refresh(force: true); // intenta restaurar desde backend
+                  // Forzamos refresh desde backend. El Gate ya no parpadea por `loading`.
+                  await subs.refresh(force: true);
                   if (context.mounted && subs.isPremium) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('Suscripción restaurada')),

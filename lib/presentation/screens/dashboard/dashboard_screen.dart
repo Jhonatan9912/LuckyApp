@@ -114,7 +114,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _ctrl.initSession();
       if (!mounted) return;
-      await context.read<SubscriptionProvider>().refresh(force: true);
       if (!_ctrl.sessionReady) return;
       await _ctrl.loadReferralCode();
       // 👇 Cargar historial primero
