@@ -1,58 +1,76 @@
 # backend/app/services/notify/mailer.py
-# Si tu path real es app/services/mailer.py, mueve este archivo allí y ajusta el import.
+# Requisitos:
+# - Gmail con 2FA habilitado y App Password (NO la contraseña normal).
+# - Variables .env (ejemplo al final).
 
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-import smtplib
+from typing import Optional
+import os
 import ssl
-from flask import current_app
+import smtplib
 import threading
+import traceback
+from flask import current_app
 
-def _build_message(to_email: str, subject: str, html: str) -> MIMEMultipart:
-    sender_name = current_app.config.get('MAIL_DEFAULT_SENDER_NAME', 'Mi App')
-    sender_email = current_app.config.get('MAIL_DEFAULT_SENDER_EMAIL') or current_app.config.get('MAIL_USERNAME')
 
-    if not sender_email:
-        raise RuntimeError("MAIL_DEFAULT_SENDER_EMAIL o MAIL_USERNAME no configurados")
+# =========================
+# Utilidades internas
+# =========================
+def _require(val: Optional[str], name: str):
+    if not val:
+        raise RuntimeError(f"Falta configurar {name}")
 
-    msg = MIMEMultipart('alternative')
-    msg['Subject'] = subject
-    msg['From'] = f"{sender_name} <{sender_email}>"
-    msg['To'] = to_email
 
-    html_part = MIMEText(html, 'html', 'utf-8')
-    msg.attach(html_part)
+def _build_message(cfg, to_email: str, subject: str, html: str) -> MIMEMultipart:
+    sender_name = cfg.get("MAIL_DEFAULT_SENDER_NAME", "Mi App")
+    sender_email = cfg.get("MAIL_DEFAULT_SENDER_EMAIL") or cfg.get("MAIL_USERNAME")
+    _require(sender_email, "MAIL_DEFAULT_SENDER_EMAIL o MAIL_USERNAME")
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f"{sender_name} <{sender_email}>"
+    msg["To"] = to_email
+    msg.attach(MIMEText(html, "html", "utf-8"))
     return msg
 
-def send_html(to_email: str, subject: str, html: str) -> None:
-    """
-    Envía correo HTML via SMTP (Gmail).
-    Requiere en app.config:
-      MAIL_SERVER, MAIL_PORT, MAIL_USE_TLS/SSL, MAIL_USERNAME, MAIL_PASSWORD,
-      MAIL_DEFAULT_SENDER_NAME, MAIL_DEFAULT_SENDER_EMAIL
-    """
-    cfg = current_app.config
-    server = (cfg.get('MAIL_SERVER') or 'smtp.gmail.com')
-    port = int(cfg.get('MAIL_PORT') or 587)
-    use_tls = bool(cfg.get('MAIL_USE_TLS') if cfg.get('MAIL_USE_TLS') is not None else True)
-    use_ssl = bool(cfg.get('MAIL_USE_SSL') if cfg.get('MAIL_USE_SSL') is not None else False)
-    username = cfg.get('MAIL_USERNAME') or ''
-    password = cfg.get('MAIL_PASSWORD') or ''
-    timeout = int(cfg.get('SMTP_TIMEOUT') or 12)  # segundos
 
-    # Log de config (seguro; no muestra pass)
-    current_app.logger.debug(
-        "SMTP cfg -> server=%s port=%d tls=%s ssl=%s user_tail=%s pass_len=%d timeout=%s",
-        server, port, use_tls, use_ssl, (username[-4:] if username else None), len(password), timeout
+def _log_cfg(app, cfg):
+    app.logger.debug(
+        "[MAIL cfg] mode=%s server=%s port=%s tls=%s ssl=%s user_tail=%s timeout=%s",
+        (cfg.get("MAIL_MODE") or os.getenv("MAIL_MODE") or "smtp"),
+        cfg.get("MAIL_SERVER", "smtp.gmail.com"),
+        cfg.get("MAIL_PORT", 587),
+        cfg.get("MAIL_USE_TLS", True),
+        cfg.get("MAIL_USE_SSL", False),
+        (cfg.get("MAIL_USERNAME")[-4:] if cfg.get("MAIL_USERNAME") else None),
+        cfg.get("SMTP_TIMEOUT", 12),
     )
 
-    # Fallback seguro: si no hay credenciales, no enviar (evita crash en dev)
-    if not username or not password:
-        current_app.logger.warning("Mailer deshabilitado: faltan MAIL_USERNAME/MAIL_PASSWORD. NO se envía el correo a %s", to_email)
-        current_app.logger.debug("Asunto: %s\nHTML:\n%s", subject, html)
-        return
 
-    msg = _build_message(to_email, subject, html)
+# =========================
+# Backends de envío
+# =========================
+def _send_console(app, to_email: str, subject: str, html: str) -> None:
+    app.logger.info("[MAIL console] to=%s subj=%s\n%s", to_email, subject, html)
+
+
+def _send_smtp(app, cfg, to_email: str, subject: str, html: str) -> None:
+    """
+    Envío vía SMTP (Gmail). Requiere App Password en MAIL_PASSWORD.
+    """
+    server = cfg.get("MAIL_SERVER", "smtp.gmail.com")
+    port = int(cfg.get("MAIL_PORT", 587))
+    use_tls = bool(cfg.get("MAIL_USE_TLS", True))
+    use_ssl = bool(cfg.get("MAIL_USE_SSL", False))
+    username = cfg.get("MAIL_USERNAME")
+    password = cfg.get("MAIL_PASSWORD")
+    timeout = int(cfg.get("SMTP_TIMEOUT", 12))
+
+    _require(username, "MAIL_USERNAME")
+    _require(password, "MAIL_PASSWORD")
+
+    msg = _build_message(cfg, to_email, subject, html)
 
     try:
         if use_ssl:
@@ -67,18 +85,63 @@ def send_html(to_email: str, subject: str, html: str) -> None:
                 smtp.login(username, password)
                 smtp.send_message(msg)
 
-        current_app.logger.info("Correo ENVIADO a %s (asunto: %s)", to_email, subject)
+        app.logger.info("Correo ENVIADO (SMTP) a %s (asunto: %s)", to_email, subject)
+
     except Exception as e:
-        current_app.logger.exception("Error enviando correo a %s: %s", to_email, str(e))
+        # Log detallado y re-lanzar para que el caller decida si rompe la request o no.
+        app.logger.error("Error enviando correo SMTP a %s: %s", to_email, e)
+        app.logger.debug("Trace:\n%s", traceback.format_exc())
         raise
 
+
+# =========================
+# API pública
+# =========================
+def send_html(to_email: str, subject: str, html: str, *, async_: bool = True) -> None:
+    """
+    Envía un correo con el modo seleccionado:
+      - smtp    (por defecto; recomendado para Gmail con App Password)
+      - console (solo imprime en logs, útil en dev)
+
+    async_ = True -> dispara en background para no bloquear la request.
+    """
+    app = current_app._get_current_object()
+    cfg = app.config
+
+    # Prioridad: config > env > default
+    mode = (cfg.get("MAIL_MODE") or os.getenv("MAIL_MODE") or "smtp").lower()
+
+    def _dispatch():
+        try:
+            if mode == "console":
+                _send_console(app, to_email, subject, html)
+            else:
+                # Forzamos SMTP (lo que pediste) salvo que config diga console
+                _log_cfg(app, cfg)
+                _send_smtp(app, cfg, to_email, subject, html)
+        except Exception:
+            # En async registramos y NO propagamos; en sync sí levantamos excepción.
+            if async_:
+                app.logger.exception("Fallo envío email (async) a %s", to_email)
+            else:
+                raise
+
+    if async_:
+        # Asegura contexto dentro del hilo
+        def _runner():
+            with app.app_context():
+                _dispatch()
+
+        threading.Thread(target=_runner, daemon=True).start()
+    else:
+        _dispatch()
+
+
+# =========================
+# Alias legacy (si tu código lo llama)
+# =========================
 def send_html_async(to_email: str, subject: str, html: str) -> None:
     """
-    Dispara el envío en un hilo aparte para no bloquear el request HTTP.
+    Alias para compatibilidad. Envia en background.
     """
-    def job():
-        try:
-            send_html(to_email, subject, html)
-        except Exception as e:
-            current_app.logger.error("Error en envío async a %s: %s", to_email, str(e))
-    threading.Thread(target=job, daemon=True).start()
+    send_html(to_email, subject, html, async_=True)
