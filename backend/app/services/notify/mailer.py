@@ -69,8 +69,18 @@ def send_html(to_email: str, subject: str, html: str) -> None:
 
         current_app.logger.info("Correo ENVIADO a %s (asunto: %s)", to_email, subject)
     except Exception as e:
-        current_app.logger.exception("Error enviando correo a %s: %s", to_email, str(e))
+        # Log completo en consola (stdout)
+        import traceback
+        print("=== ERROR SMTP ===")
+        print(f"Tipo: {type(e).__name__}")
+        print(f"Detalle: {str(e)}")
+        print("--- Traceback ---")
+        traceback.print_exc()
+        print("==================")
+
+        current_app.logger.exception("Error enviando correo a %s", to_email)
         raise
+
 
 def send_html_async(to_email: str, subject: str, html: str) -> None:
     """
