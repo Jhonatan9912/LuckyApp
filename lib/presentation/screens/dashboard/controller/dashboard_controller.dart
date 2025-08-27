@@ -71,9 +71,10 @@ class DashboardController extends ChangeNotifier {
       false; // en este ciclo de add() se liberó una reserva previa
   int? _lastClosedGameId; // id del último juego que quedó cerrado
   int? get lastClosedGameId => _lastClosedGameId;
-
   int? _userId;
   int? get userId => _userId;
+  bool _isPremium = false;
+  bool get isPremium => _isPremium;
 
   // ======= Getters públicos =======
   List<int> get numbers => List.unmodifiable(_numbers);
@@ -195,10 +196,13 @@ class DashboardController extends ChangeNotifier {
     final token = await _session.getToken();
     if (token == null || token.isEmpty) {
       _authToken = null;
-      _userId = null; // 👈
+      _userId = null;
+      _isPremium = false; // 👈 sin sesión, no PRO
       _setSessionReady(false);
+      notifyListeners();
       return;
     }
+
     _authToken = token;
     final dynamic uid = await _session.getUserId();
     if (uid is int) {
@@ -209,7 +213,10 @@ class DashboardController extends ChangeNotifier {
       _userId = null;
     }
 
+    // 👇 NUEVO: sincroniza PRO de la sesión (persistido por tu backend tras validar compra)
+    _isPremium = await _session.getIsPremium() == true;
     _setSessionReady(true);
+    notifyListeners();
   }
 
   Future<void> loadReferralCode() async {
@@ -314,6 +321,7 @@ class DashboardController extends ChangeNotifier {
     // Limpieza de estado en memoria
     _authToken = null;
     referralCode = null;
+    _isPremium = false;
     _lastReservedGameId = null;
     _lastReservedNumbers = null;
     _lastReservedUserId = null;
@@ -456,24 +464,31 @@ class DashboardController extends ChangeNotifier {
         message: 'Sesión no válida.',
       );
     }
+    if (!_isPremium) {
+      return const ReserveOutcome(
+        ok: false,
+        code: 'NEED_PREMIUM',
+        message: 'Necesitas PRO para reservar.',
+        status: 403,
+      );
+    }
+    final stillRevealing = _animating || !_showFinalButtons;
+    if (_gameId == null) {
+      return const ReserveOutcome(
+        ok: false,
+        code: 'PREVIEW_ONLY',
+        message: 'Necesitas PRO para reservar.',
+        status: 403,
+      );
+    }
 
-final stillRevealing = _animating || !_showFinalButtons;
-if (_gameId == null) {
-  return const ReserveOutcome(
-    ok: false,
-    code: 'PREVIEW_ONLY',
-    message: 'Necesitas PRO para reservar.',
-    status: 403,
-  );
-}
-if (stillRevealing) {
-  return const ReserveOutcome(
-    ok: false,
-    code: 'INVALID_STATE',
-    message: 'Aún no hay selección lista.',
-  );
-}
-
+    if (stillRevealing) {
+      return const ReserveOutcome(
+        ok: false,
+        code: 'INVALID_STATE',
+        message: 'Aún no hay selección lista.',
+      );
+    }
 
     final isValid =
         _numbers.length == 5 && _numbers.every((n) => n >= 0 && n <= 999);
@@ -998,5 +1013,19 @@ if (stillRevealing) {
       'time': time,
       'game_id': gameId,
     };
+  }
+
+  Future<void> applyPremiumFromStore(bool premium) async {
+    _isPremium = premium;
+
+    // Persiste también en sesión, para que al reabrir la app no se pierda
+    await _session.setIsPremium(premium);
+
+    // Opcional: si estabas en algún estado intermedio, limpia para evitar “parpadeo”
+    if (premium) {
+      resetToInitial(); // limpia animaciones/flags que pudieran quedar a medias
+    }
+
+    notifyListeners();
   }
 }
