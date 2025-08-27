@@ -163,9 +163,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return AnimatedBuilder(
       animation: _ctrl,
       builder: (context, __) {
-        final isPro = context.select<SubscriptionProvider, bool>(
-          (p) => p.isPremium,
-        );
+        final subs = context.watch<SubscriptionProvider>();
+        final isPro = subs.isPremium;
+
         return Scaffold(
           appBar: DashboardAppBar(
             onHelp: _showHelp,
@@ -432,15 +432,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return const SizedBox.shrink();
     }
     // 1) Forzar botón JUGAR para usuarios FREE
-    final isPremium = context.select<SubscriptionProvider, bool>(
-      (p) => p.isPremium,
-    );
-    if (!isPremium) {
-      // independientemente del estado interno del controlador.
+    if (!subs.isPremium) {
       return PlayButton(
         onPressed: () async {
           if (!_ctrl.animating && !_ctrl.saving) {
-            await _ctrl.generateLocalPreview(); // <- local, sin backend ✅
+            await _ctrl.generateLocalPreview();
           }
         },
         key: const ValueKey('play_free'),
@@ -460,49 +456,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
 
       // ⬇️ Lee isPremium usando Selector (aunque ya sabemos que es true)
-      return Selector<SubscriptionProvider, bool>(
-        selector: (_, p) => p.isPremium,
-        builder: (context, isPremiumSelector, _) {
-          return ActionButtons(
-            onAdd: () async {
-              final out = await _ctrl.add();
+      return ActionButtons(
+        onAdd: () async {
+          final out = await _ctrl.add();
+          if (!mounted) return;
+
+          if (out.ok) {
+            if (out.code == 'REPLACED' && out.message != null) {
+              await _showInfo(out.message!);
+            } else {
+              await _showReserveSuccessDialog(completed: out.gameCompleted);
+            }
+          } else {
+            final code = out.code ?? '';
+            final msg = out.message ?? 'No se pudo guardar la selección.';
+
+            if (code == 'CONFLICT' || code == 'GAME_SWITCHED') {
+              await _showWarn(msg);
+              if (!mounted) return;
+              _ctrl.resetToInitial();
+              setState(() {});
+              await _ctrl.openFreshGame();
+              return;
+            } else if (code == 'UNAUTHORIZED' || code == 'UNAUTHENTICATED') {
+              // 👇 captura el navigator ANTES del await
+              final nav = Navigator.of(context, rootNavigator: true);
+
+              await _showError(msg);
+
+              // Por si este State se desmontó durante el await, comprobamos:
               if (!mounted) return;
 
-              if (out.ok) {
-                if (out.code == 'REPLACED' && out.message != null) {
-                  await _showInfo(out.message!);
-                } else {
-                  await _showReserveSuccessDialog(completed: out.gameCompleted);
-                }
-              } else {
-                final code = out.code ?? '';
-                final msg = out.message ?? 'No se pudo guardar la selección.';
-
-                if (code == 'CONFLICT' || code == 'GAME_SWITCHED') {
-                  await _showWarn(msg);
-                  if (!mounted) return;
-                  _ctrl.resetToInitial();
-                  setState(() {});
-                  await _ctrl.openFreshGame();
-                  return;
-                } else if (code == 'UNAUTHORIZED' ||
-                    code == 'UNAUTHENTICATED') {
-                  await _showError(msg);
-                  if (!context.mounted) return;
-                  Navigator.of(
-                    context,
-                  ).pushNamedAndRemoveUntil('/login', (_) => false);
-                } else {
-                  await _showError(msg);
-                }
-              }
-            },
-            onRetry: () async => _ctrl.retry(),
-            isSaving: _ctrl.saving,
-            isPremium: isPremiumSelector,
-            onGoPro: () => Navigator.pushNamed(context, '/pro'),
-          );
+              nav.pushNamedAndRemoveUntil('/login', (_) => false);
+            } else {
+              await _showError(msg);
+            }
+          }
         },
+        onRetry: () async => _ctrl.retry(),
+        isSaving: _ctrl.saving,
+        isPremium: subs.isPremium, // <- usamos el mismo watch
+        onGoPro: () => Navigator.pushNamed(context, '/pro'),
       );
     }
 
