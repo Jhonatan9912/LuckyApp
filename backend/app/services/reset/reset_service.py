@@ -1,22 +1,27 @@
 # backend/app/services/reset/reset_service.py
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import secrets, string, threading              # 👈 añade threading
+import secrets, string, threading
 from app.db.database import db
 from app.models.user import User
 from werkzeug.security import generate_password_hash
 from sqlalchemy import text
-from app.services.notify.mailer import send_html
 from flask import current_app
+
+# IMPORTA EL MAILER SEGÚN TU PATH REAL:
+# Si usas app/services/notify/mailer.py:
+from app.services.notify.mailer import send_html_async
+# Si tu archivo está en app/services/mailer.py, usa en su lugar:
+# from app.services.mailer import send_html_async
 
 @dataclass
 class ResetError(Exception):
     message: str
     def __str__(self): return self.message
 
-CODE_TTL_MIN = 10
-TOKEN_TTL_MIN = 30
-CODE_LEN = 6
+CODE_TTL_MIN = 10          # minutos
+TOKEN_TTL_MIN = 30         # minutos
+CODE_LEN = 6               # 6 dígitos
 
 def _gen_code() -> str:
     return ''.join(secrets.choice(string.digits) for _ in range(CODE_LEN))
@@ -24,24 +29,14 @@ def _gen_code() -> str:
 def _gen_token() -> str:
     return secrets.token_urlsafe(32)
 
-# ⬇️ NUEVO: envío asíncrono para no bloquear el request HTTP
-def _send_email_async(to_email: str, subject: str, html_body: str) -> None:
-    def job():
-        try:
-            send_html(to_email, subject, html_body)  # mailer debe tener timeout (p.ej. 10s)
-            current_app.logger.info("Correo enviado a %s", to_email)
-        except Exception as e:
-            current_app.logger.exception("Error enviando correo a %s: %s", to_email, e)
-            # NO relanzar: la respuesta HTTP ya se devolvió
-    threading.Thread(target=job, daemon=True).start()
-
 def request_password_reset_by_email(email: str) -> None:
     user: User | None = db.session.query(User).filter(User.email == email).first()
     if not user:
+        # Mantiene semántica actual (no revelar existencia)
         raise ResetError("No existe un usuario con ese correo")
 
     code = _gen_code()
-    ttl_code = current_app.config.get('RESET_CODE_TTL_MIN', 10)
+    ttl_code = current_app.config.get('RESET_CODE_TTL_MIN', CODE_TTL_MIN)
     expires_at = datetime.utcnow() + timedelta(minutes=ttl_code)
 
     # invalida códigos previos no usados (opcional)
@@ -57,7 +52,7 @@ def request_password_reset_by_email(email: str) -> None:
     """), {"uid": user.id, "code": code, "exp": expires_at})
     db.session.commit()
 
-    # (Opcional) en modo debug, deja el código en logs para pruebas sin depender del mail
+    # En DEBUG, loguea el código para probar sin depender del correo
     if current_app.debug:
         current_app.logger.warning("DEBUG RESET CODE for %s: %s", user.email, code)
 
@@ -68,9 +63,8 @@ def request_password_reset_by_email(email: str) -> None:
     <p>Expira en {ttl_code} minutos.</p>
     """
 
-    # ⬇️ antes llamabas send_html() directo -> bloqueaba y causaba 502.
-    #    ahora lo mandamos en background para responder de inmediato.
-    _send_email_async(user.email, subject, html)
+    # ⬇️ Envío asíncrono: no bloquea el request → evita 502 en Railway
+    send_html_async(user.email, subject, html)
 
 def verify_reset_code_by_email(email: str, code: str) -> str:
     user: User | None = db.session.query(User).filter(User.email == email).first()
@@ -93,15 +87,15 @@ def verify_reset_code_by_email(email: str, code: str) -> str:
         raise ResetError("Código expirado")
 
     token = _gen_token()
-    ttl_token = current_app.config.get('RESET_TOKEN_TTL_MIN', 30)
+    ttl_token = current_app.config.get('RESET_TOKEN_TTL_MIN', TOKEN_TTL_MIN)
     token_exp = datetime.utcnow() + timedelta(minutes=ttl_token)
 
-    # 👇 NO marcar used=TRUE aquí. Solo invalidamos el código para que no se pueda reutilizar.
+    # Invalida el código y fija token + nueva expiración
     db.session.execute(text("""
         UPDATE reset_tokens
            SET token = :token,
                expires_at = :texp,
-               code = NULL     -- invalida el código para que no se reuse
+               code = NULL
          WHERE id = :rid
     """), {"token": token, "texp": token_exp, "rid": row["id"]})
 
