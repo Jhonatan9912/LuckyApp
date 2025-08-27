@@ -12,21 +12,20 @@ class _PaywallScreenState extends State<PaywallScreen> {
   bool _purchasing = false;
   String? _message;
 
-  late final SubscriptionProvider _subs; // 👈 declara en la clase
+  late final SubscriptionProvider _subs;
 
   @override
   void initState() {
     super.initState();
-    // Provider se puede leer en initState con listen:false
     _subs = Provider.of<SubscriptionProvider>(context, listen: false);
-    _bootstrapPaywall(); // corre tareas async sin usar `context`
+    _bootstrapPaywall();
   }
 
   Future<void> _bootstrapPaywall() async {
+    // ⚠️ Solo configurar billing. NO hagas refresh aquí.
     await _subs.configureBilling();
-    await _subs.refresh(force: true);
     if (!mounted) return;
-    setState(() {});
+    setState(() {}); // opcional, por si quieres refrescar el priceString
   }
 
   Future<void> _purchaseMonthly() async {
@@ -39,13 +38,14 @@ class _PaywallScreenState extends State<PaywallScreen> {
       _message = null;
     });
 
-    final ok = await subs.buyPro(); // el resultado real llega por stream
-    await subs.refresh(force: true);
+    // Dispara la compra. El estado real llega por purchaseStream.
+    final ok = await subs.buyPro();
 
     setState(() {
       _purchasing = false;
     });
 
+    // No llames refresh aquí; el provider ya hará refresh al recibir 'purchased'
     if (subs.isPremium) {
       messenger.showSnackBar(
         const SnackBar(content: Text('Suscripción PRO activada')),
@@ -65,8 +65,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
     final nav = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
 
+    // Esto dispara eventos 'restored' -> el provider hará refresh.
     await subs.restore();
-    await subs.refresh(force: true);
 
     if (subs.isPremium) {
       messenger.showSnackBar(
@@ -93,6 +93,16 @@ class _PaywallScreenState extends State<PaywallScreen> {
         : (price != null
               ? 'Accede a PRO por $price / mes'
               : 'Selecciona tu plan');
+
+    // Auto-cerrar si ya se activó PRO mientras estamos en esta pantalla
+    if (isPro) {
+      // Evita múltiples pops con microtask
+      final nav = Navigator.of(context); // captura ANTES del async gap
+      Future.microtask(() {
+        if (!mounted) return;
+        nav.maybePop();
+      });
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Pro')),

@@ -33,6 +33,7 @@ class SubscriptionProvider extends ChangeNotifier {
   DateTime? _lastFetch;
   String? _error;
   String? get error => _error;
+
   // Usuario al que pertenece el estado de esta instancia del provider
   int? _ownerUserId;
 
@@ -49,6 +50,9 @@ class SubscriptionProvider extends ChangeNotifier {
   static const String _gpProductId = 'cm_suscripcion';
   ProductDetails? _product;
 
+  // Evita refresh() superpuestos (causa clásica de parpadeo)
+  bool _refreshing = false;
+
   // ========= Compat alias para no tocar tu app =========
   Future<void> configureRC({required String apiKey, String? appUserId}) async {
     await configureBilling();
@@ -60,9 +64,7 @@ class SubscriptionProvider extends ChangeNotifier {
 
     final available = await _iap.isAvailable();
     if (!available) {
-      dev.log(
-        'Billing no disponible (¿Play Store instalada / app desde Play? )',
-      );
+      dev.log('Billing no disponible (¿Play Store instalada / app desde Play? )');
       _billingConfigured = false;
       return;
     }
@@ -89,59 +91,59 @@ class SubscriptionProvider extends ChangeNotifier {
     _error = null;
   }
 
-void clear() {
-  _reset(); // ← reutiliza la función que ya tienes para limpiar flags
-  _ownerUserId = null;
-  _purchaseSub?.cancel();
-  _purchaseSub = null;
-  _billingConfigured = false;
-  notifyListeners();
-}
-
+  void clear() {
+    _reset();
+    _ownerUserId = null;
+    _purchaseSub?.cancel();
+    _purchaseSub = null;
+    _billingConfigured = false;
+    notifyListeners();
+  }
 
   Future<void> refresh({bool force = false}) async {
-    _error = null;
-
-    // Detectar usuario actual
-    final uidDyn = await session.getUserId();
-    final uid = uidDyn is int ? uidDyn : int.tryParse('$uidDyn');
-
-    // Si cambió el usuario, resetea el estado a FREE
-    if (_ownerUserId != uid) {
-      _ownerUserId = uid;
-      _reset();
-    }
-
-    // Intentar configurar billing (no cambia el estado premium por sí solo)
-    try {
-      if (_billingConfigured) {
-        await _iap.restorePurchases(); // opcional en DEV
-      } else {
-        await configureBilling();
-      }
-    } catch (e) {
-      dev.log('subs.refresh() restore error: $e');
-    }
-
-    // TTL por usuario
-    if (!force &&
-        _lastFetch != null &&
-        DateTime.now().difference(_lastFetch!) < ttl) {
-      return;
-    }
-
+    if (_refreshing) return;       // ← evita solapes
+    _refreshing = true;
     _loading = true;
+    _error = null;
     notifyListeners();
 
     try {
+      // Detectar usuario actual
+      final uidDyn = await session.getUserId();
+      final uid = uidDyn is int ? uidDyn : int.tryParse('$uidDyn');
+
+      // Si cambió el usuario, resetea el estado a FREE
+      if (_ownerUserId != uid) {
+        _ownerUserId = uid;
+        _reset();
+        _loading = true; // volvemos a marcar loading después del reset
+        notifyListeners();
+      }
+
+      // Intentar configurar billing (no cambia el estado premium por sí solo)
+      try {
+        if (_billingConfigured) {
+          await _iap.restorePurchases(); // opcional en DEV
+        } else {
+          await configureBilling();
+        }
+      } catch (e) {
+        dev.log('subs.refresh() restore error: $e');
+      }
+
+      // TTL por usuario
+      if (!force &&
+          _lastFetch != null &&
+          DateTime.now().difference(_lastFetch!) < ttl) {
+        return;
+      }
+
       final token = await session.getToken();
       if (token == null || token.isEmpty || uid == null) {
         _reset();
         _status = 'not_authenticated';
         _lastFetch = DateTime.now();
-        _loading = false; // 👈 agrega esto
-        notifyListeners(); // 👈 y esto
-        return;
+        return; // el finally apaga loading/refreshing
       }
 
       final json = await api.getStatus(token: token);
@@ -151,24 +153,25 @@ void clear() {
       final backendStatus = (json['status'] ?? 'none').toString();
 
       final String? expStr = json['expiresAt']?.toString();
-      final DateTime? backendExpires = (expStr != null && expStr.isNotEmpty)
-          ? DateTime.tryParse(expStr)
-          : null;
+      final DateTime? backendExpires =
+          (expStr != null && expStr.isNotEmpty) ? DateTime.tryParse(expStr) : null;
 
-      // ⚠️ No hagas OR con el estado previo: confía en backend.
+      // Confía en backend
       _isPremium = backendIsPremium;
       _status = backendIsPremium ? 'active' : backendStatus;
       _expiresAt = backendExpires;
+
+      // Guarda cache local (por si UI lo necesita muy pronto)
       await session.setIsPremium(_isPremium);
 
       _lastFetch = DateTime.now();
     } catch (e) {
       _error = e.toString();
       dev.log('subs.refresh() backend error: $_error');
-      // Ante error no “heredes” PRO. Mantén el estado tal cual (o fuerza FREE si prefieres):
-      // _reset();
+      // No forzamos _reset() para no “brincar” de PRO a FREE ante un glitch.
     } finally {
       _loading = false;
+      _refreshing = false;         // ← libera el candado
       notifyListeners();
     }
   }
@@ -178,18 +181,14 @@ void clear() {
       if (!_billingConfigured) {
         await configureBilling();
         if (!_billingConfigured) {
-          throw Exception(
-            'Google Play Billing no disponible en este dispositivo.',
-          );
+          throw Exception('Google Play Billing no disponible en este dispositivo.');
         }
       }
 
       if (_product == null) {
         await _queryProduct();
         if (_product == null) {
-          throw Exception(
-            'Producto $_gpProductId no encontrado en Play Console.',
-          );
+          throw Exception('Producto $_gpProductId no encontrado en Play Console.');
         }
       }
 
@@ -286,7 +285,10 @@ void clear() {
             dev.log('syncPurchase error: $e');
           }
           await _complete(p);
-          await refresh(force: true); // ← backend manda la verdad
+
+          // 🔑 IMPORTANTE: deja “respirar” al backend antes de refrescar
+          await Future.delayed(const Duration(milliseconds: 1500));
+          await refresh(force: true); // ← una sola vez, ya con candado
           break;
 
         case PurchaseStatus.error:
@@ -305,7 +307,6 @@ void clear() {
       await _iap.completePurchase(purchase); // acknowledge/finish
     }
   }
-
 
   @override
   void dispose() {
