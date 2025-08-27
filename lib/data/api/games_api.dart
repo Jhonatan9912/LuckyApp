@@ -68,7 +68,8 @@ class GamesApi {
   // ======================
   Future<Map<String, dynamic>> generate({String? token, int? xUserId}) async {
     final uri = Uri.parse('$baseUrl/api/games/generate');
-    final headers = _headers(token: token, xUserId: xUserId);
+   final headers = _headers(token: token, xUserId: null); // ← SOLO token
+
 
     _log('GENERATE-REQ', uri, headers);
     http.Response res;
@@ -132,7 +133,7 @@ class GamesApi {
     });
 
     // Usa el helper con xUserId
-    final headers = _headers(token: token, xUserId: xUserId);
+    final headers = _headers(token: token, xUserId: null); // ← SOLO token
 
     _log('COMMIT-REQ', uri, headers, payload);
     http.Response res;
@@ -170,56 +171,6 @@ class GamesApi {
       );
     }
 
-    // Fallback con X-USER-ID si 401
-    if (res.statusCode == 401 && xUserId != null) {
-      final devHeaders = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-USER-ID': xUserId.toString(),
-      };
-      _log('COMMIT-REQ(DEV)', uri, devHeaders, payload);
-      try {
-        final devRes = await _client
-            .post(uri, headers: devHeaders, body: payload)
-            .timeout(const Duration(seconds: 10));
-        _log(
-          'COMMIT-RES(DEV)',
-          uri,
-          devHeaders,
-          null,
-          devRes.statusCode,
-          devRes.body,
-        );
-
-        Map<String, dynamic>? devParsed;
-        try {
-          devParsed = devRes.body.isEmpty ? null : jsonDecode(devRes.body);
-        } catch (_) {
-          devParsed = null;
-        }
-
-        if (devRes.statusCode >= 200 && devRes.statusCode < 300) {
-          return _ok(devRes, devParsed);
-        }
-
-        return _fail(
-          status: devRes.statusCode,
-          code: (devParsed?['code'] ?? 'HTTP_${devRes.statusCode}').toString(),
-          message:
-              (devParsed?['message'] ??
-                      'Error HTTP ${devRes.statusCode} al guardar selección')
-                  .toString(),
-          data: devParsed,
-        );
-      } catch (e) {
-        return _fail(
-          status: null,
-          code: 'NETWORK_ERROR',
-          message: 'No se pudo conectar con el servidor ($e)',
-        );
-      }
-    }
-
     return _fail(
       status: res.statusCode,
       code: (parsed?['code'] ?? 'HTTP_${res.statusCode}').toString(),
@@ -238,7 +189,7 @@ class GamesApi {
   }) async {
     // Ruta actual para liberar selección
     final uri = Uri.parse('$baseUrl/api/games/$gameId/selection');
-    final headers = _headers(token: token, xUserId: xUserId);
+    final headers = _headers(token: token, xUserId: null); // SOLO Authorization
 
     _log('RELEASE-REQ', uri, headers);
     http.Response res;
@@ -369,7 +320,7 @@ class GamesApi {
     int? xUserId, // ← en la misma línea
   }) async {
     final uri = Uri.parse('$baseUrl/api/games/my-selection');
-    final headers = _headers(token: token, xUserId: xUserId);
+    final headers = _headers(token: token, xUserId: null); // SOLO Authorization
 
     _log('MYSEL-REQ', uri, headers);
     http.Response res;
@@ -426,7 +377,7 @@ class GamesApi {
         : '?page=$page&per_page=$perPage';
 
     final uri = Uri.parse('$baseUrl/api/notifications$q');
-    final headers = _headers(token: token, xUserId: xUserId);
+    final headers = _headers(token: token, xUserId: null); // SOLO Authorization
 
     _log('NOTIFS-REQ', uri, headers);
     http.Response res;
@@ -468,7 +419,7 @@ class GamesApi {
     int? xUserId,
   }) async {
     final uri = Uri.parse('$baseUrl/api/notifications/read');
-    final headers = _headers(token: token, xUserId: xUserId);
+    final headers = _headers(token: token, xUserId: null); // SOLO Authorization
     final body = jsonEncode({"ids": ids});
 
     _log('NOTIFS-READ-REQ', uri, headers, body);
@@ -511,7 +462,7 @@ class GamesApi {
     final uri = Uri.parse(
       '$baseUrl/api/games/history?page=$page&per_page=$perPage',
     );
-    final headers = _headers(token: token, xUserId: xUserId);
+    final headers = _headers(token: token, xUserId: null); // SOLO Authorization
 
     _log('HISTORY-REQ', uri, headers);
     http.Response res;
@@ -570,7 +521,7 @@ class GamesApi {
     int? xUserId,
   }) async {
     final uri = Uri.parse('$baseUrl/api/admin/games/$gameId');
-    final headers = _headers(token: token, xUserId: xUserId);
+    final headers = _headers(token: token, xUserId: null); // SOLO Authorization
 
     final body = jsonEncode({
       if (lotteryId != null) 'lottery_id': lotteryId,
@@ -616,7 +567,7 @@ class GamesApi {
     int? xUserId,
   }) async {
     final uri = Uri.parse('$baseUrl/api/me/notifications/peek-schedule');
-    final headers = _headers(token: token, xUserId: xUserId);
+    final headers = _headers(token: token, xUserId: null); // SOLO Authorization
 
     _log('PEEK-SCHEDULE-REQ', uri, headers);
     http.Response res;

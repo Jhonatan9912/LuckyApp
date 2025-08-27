@@ -199,7 +199,15 @@ class DashboardController extends ChangeNotifier {
       return;
     }
     _authToken = token;
-    _userId = await _session.getUserId(); // 👈 guarda el id real
+    final dynamic uid = await _session.getUserId();
+    if (uid is int) {
+      _userId = uid;
+    } else if (uid is String) {
+      _userId = int.tryParse(uid);
+    } else {
+      _userId = null;
+    }
+
     _setSessionReady(true);
   }
 
@@ -488,8 +496,8 @@ class DashboardController extends ChangeNotifier {
     final res = await _gamesApi.commit(
       gameId: _gameId!,
       numbers: _numbers,
-      token: _authToken,
-      xUserId: _authToken == null ? _devUserId : null,
+      token: _authToken, // ✅ usar Authorization
+      xUserId: null, // ❌ no enviar X-USER-ID
     );
 
     _setSaving(false);
@@ -584,91 +592,11 @@ class DashboardController extends ChangeNotifier {
         message: 'No hay conexión con el servidor.',
       );
     } else if (status == 401 || status == 403) {
-      // Reintenta UNA VEZ con modo dev (X-USER-ID) conservando contexto de reemplazo
-      final retry = await _retryCommitWithDev(
-        prevNumbers: prevNumbers,
-        releasedPrev: _releasedPrevious,
-      );
-      _releasedPrevious = false; // reset siempre tras el intento
-      if (retry.ok) return retry;
-
+      await initSession(); // re-lee token por si cambió
       return ReserveOutcome(
         ok: false,
         code: 'UNAUTHORIZED',
         message: 'No autorizado con la sesión actual.',
-        status: status,
-      );
-    } else {
-      return ReserveOutcome(
-        ok: false,
-        code: code.isEmpty ? null : code,
-        message: msg,
-        status: status,
-      );
-    }
-  }
-
-  Future<ReserveOutcome> _retryCommitWithDev({
-    List<int>? prevNumbers,
-    required bool releasedPrev,
-  }) async {
-    final res2 = await _gamesApi.commit(
-      gameId: _gameId!,
-      numbers: _numbers,
-      token: null,
-      xUserId: _userId ?? _devUserId,
-    );
-
-    if (res2['ok'] == true) {
-      _setHasAddedFinal(true);
-
-      final data = (res2['data'] as Map<String, dynamic>? ?? {});
-      final completed =
-          data['game_completed'] == true || res2['game_completed'] == true;
-
-      // Actualiza última reserva
-      _lastReservedGameId = _gameId;
-      _lastReservedNumbers = List<int>.from(_numbers);
-      // 👇 guarda también aquí
-      final userIdUsed = (data['user_id_used'] as num?)?.toInt();
-      _lastReservedUserId = userIdUsed ?? _lastReservedUserId;
-      if (releasedPrev && prevNumbers != null) {
-        return ReserveOutcome(
-          ok: true,
-          gameCompleted: completed,
-          code: 'REPLACED',
-          message:
-              'Se reemplazaron ${_fmtNums(prevNumbers)} por ${_fmtNums(_numbers)}.',
-        );
-      }
-
-      return ReserveOutcome(ok: true, gameCompleted: completed);
-    }
-
-    final code = (res2['code'] ?? '').toString();
-    final msg = (res2['message'] ?? 'No se pudo guardar la selección.')
-        .toString();
-    final status = res2['status'] as int?;
-
-    if (status == 401 || status == 403) {
-      return ReserveOutcome(
-        ok: false,
-        code: 'UNAUTHORIZED',
-        message: 'Sin permisos (dev).',
-        status: status,
-      );
-    } else if (code == 'CONFLICT' || status == 409) {
-      _setHasAdded(false);
-      _setHasAddedFinal(false);
-      _displayedBalls.clear();
-      _setShowActionIcons(false);
-      _setNumbers(List.filled(5, 0));
-      _setShowFinalButtons(false);
-      _setHasPlayedOnce(false);
-      return ReserveOutcome(
-        ok: false,
-        code: 'CONFLICT',
-        message: 'Algunos números ya no están disponibles. Vuelve a jugar.',
         status: status,
       );
     } else {
@@ -688,9 +616,8 @@ class DashboardController extends ChangeNotifier {
 
     final res = await _gamesApi.release(
       gameId: _lastReservedGameId!,
-      token: _authToken, // si tienes JWT, que vaya normal
-      xUserId:
-          _lastReservedUserId, // 👈 fuerza la misma identidad exacta del commit anterior
+      token: _authToken, // ✅ Authorization requerido por backend
+      xUserId: null, // ❌ no mezclar override
     );
 
     final status = res['status'] as int?;

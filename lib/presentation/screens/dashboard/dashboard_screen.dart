@@ -107,6 +107,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       gamesApi: gamesApi,
       authRepo: authRepo,
       session: session,
+      devUserId: 8, 
     );
 
     // 👇 todo lo que abre diálogos, después del primer frame

@@ -35,8 +35,8 @@ class SubscriptionProvider extends ChangeNotifier {
   String? get error => _error;
 
   /// Getter para usar en Paywall
-  ProductDetails? get product => _product;
-  String? get priceString => _product?.price;
+ProductDetails? get product => _product;
+String? get priceString => _product?.price;
 
   // ========= Internos Billing =========
   final InAppPurchase _iap = InAppPurchase.instance;
@@ -58,9 +58,7 @@ class SubscriptionProvider extends ChangeNotifier {
 
     final available = await _iap.isAvailable();
     if (!available) {
-      dev.log(
-        'Billing no disponible (¿Play Store instalada / app desde Play? )',
-      );
+      dev.log('Billing no disponible (¿Play Store instalada / app desde Play? )');
       _billingConfigured = false;
       return;
     }
@@ -119,9 +117,7 @@ class SubscriptionProvider extends ChangeNotifier {
 
     try {
       final token = await session.getToken();
-      dev.log(
-        'subs.refresh() token presente? ${token != null && token.isNotEmpty}',
-      );
+      dev.log('subs.refresh() token presente? ${token != null && token.isNotEmpty}');
 
       if (token == null || token.isEmpty) {
         _isPremium = false;
@@ -139,9 +135,8 @@ class SubscriptionProvider extends ChangeNotifier {
 
       // Asegura string -> DateTime
       final String? expStr = json['expiresAt']?.toString();
-      final DateTime? fromBackendExpires = (expStr != null && expStr.isNotEmpty)
-          ? DateTime.tryParse(expStr)
-          : null;
+      final DateTime? fromBackendExpires =
+          (expStr != null && expStr.isNotEmpty) ? DateTime.tryParse(expStr) : null;
 
       // Si backend dice PRO o ya quedó PRO por una compra restaurada, es PRO
       final mergedPremium = _isPremium || fromBackendIsPremium;
@@ -151,9 +146,7 @@ class SubscriptionProvider extends ChangeNotifier {
       _expiresAt = _expiresAt ?? fromBackendExpires;
 
       _lastFetch = DateTime.now();
-      dev.log(
-        'subs.refresh() result -> isPremium=$_isPremium, status=$_status, expiresAt=$_expiresAt',
-      );
+      dev.log('subs.refresh() result -> isPremium=$_isPremium, status=$_status, expiresAt=$_expiresAt');
     } catch (e) {
       _error = e.toString();
       dev.log('subs.refresh() backend error: $_error');
@@ -168,18 +161,14 @@ class SubscriptionProvider extends ChangeNotifier {
       if (!_billingConfigured) {
         await configureBilling();
         if (!_billingConfigured) {
-          throw Exception(
-            'Google Play Billing no disponible en este dispositivo.',
-          );
+          throw Exception('Google Play Billing no disponible en este dispositivo.');
         }
       }
 
       if (_product == null) {
         await _queryProduct();
         if (_product == null) {
-          throw Exception(
-            'Producto $_gpProductId no encontrado en Play Console.',
-          );
+          throw Exception('Producto $_gpProductId no encontrado en Play Console.');
         }
       }
 
