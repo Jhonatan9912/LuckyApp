@@ -30,6 +30,11 @@ def create_app():
     app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'cambia-esta-clave-en-produccion')
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', app.config['JWT_SECRET_KEY'])
 
+        # Config de suscripciones / RTDN / reconciliación
+    app.config["RECONCILE_TOKEN"] = os.getenv("RECONCILE_TOKEN")                # usado por /api/subscriptions/reconcile
+    app.config["PUBSUB_PUSH_AUDIENCE"] = os.getenv("PUBSUB_PUSH_AUDIENCE", "")  # opcional, para verificar OIDC en /rtdn
+    app.config["GOOGLE_PLAY_PACKAGE_NAME"] = os.getenv("GOOGLE_PLAY_PACKAGE_NAME", "")
+
     # =========================
     # Correo (SOLO Resend)
     # =========================
