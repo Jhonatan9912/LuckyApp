@@ -1,7 +1,6 @@
 # app/subscriptions/service.py
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
-from datetime import datetime, timezone
 
 from app.db.database import db
 from app.subscriptions.models import UserSubscription
@@ -11,6 +10,21 @@ from googleapiclient.errors import HttpError
 from sqlalchemy import or_
 from datetime import datetime, timezone, timedelta
 
+import json
+from flask import current_app
+
+from app.observability.metrics import (
+    SUBS_SYNC_OK, SUBS_SYNC_ERR,
+    RTDN_RCVD, RTDN_ERR,
+    RECONCILE_UPD, RECONCILE_ERR
+)
+
+def _log_event(event: str, **fields):
+    try:
+        current_app.logger.info(json.dumps({"event": event, **fields}, default=str))
+    except Exception:
+        # Fallback por si no hay app context
+        print(json.dumps({"event": event, **fields}, default=str))
 
 @dataclass
 class SubscriptionStatus:
@@ -22,7 +36,7 @@ class SubscriptionStatus:
     reason: Optional[str] = None
     since: Optional[str] = None              # inicio del periodo vigente
     auto_renewing: Optional[bool] = None     # si se renueva automáticamente
-
+    
     def to_json(self) -> Dict[str, Any]:
         # Mantén camelCase para Flutter
         return {
@@ -170,6 +184,7 @@ def sync_purchase(
     package_name = package_name or os.environ.get('GOOGLE_PLAY_PACKAGE_NAME', 'com.tu.paquete')
     purchase_token = verification_data  # viene de tu app (serverVerificationData)
 
+    _log_event("subs_sync_start", user_id=user_id, product_id=product_id)
     # cliente Android Publisher con el service account (lee GOOGLE_CREDENTIALS_JSON)
     service = build_android_publisher()
 
@@ -180,12 +195,16 @@ def sync_purchase(
             token=purchase_token,
         ).execute()
     except HttpError as e:
+        _log_event("subs_sync_http_error", user_id=user_id, error=str(e))
+        SUBS_SYNC_ERR.inc()
         raise Exception(f'Google Play API error: {getattr(e, "status_code", "HTTP")} {e}')
 
 
     # Extrae datos clave
     line_items = gp.get('lineItems', [])
     if not line_items:
+        _log_event("subs_sync_bad_response", user_id=user_id, reason="no_lineItems")
+        SUBS_SYNC_ERR.inc()
         raise Exception('Google Play: respuesta sin lineItems')
 
     li = line_items[0]
@@ -204,6 +223,8 @@ def sync_purchase(
     # expiryTime viene en milisegundos desde epoch
     expiry_ms = li.get('expiryTime') or gp.get('latestOrder', {}).get('expiryTime')
     if not expiry_ms:
+        _log_event("subs_sync_bad_response", user_id=user_id, reason="no_expiryTime")
+        SUBS_SYNC_ERR.inc()
         raise Exception('Google Play: sin expiryTime en la respuesta')
 
     expiry_dt = datetime.fromtimestamp(int(expiry_ms) / 1000.0, tz=timezone.utc)
@@ -240,6 +261,9 @@ def sync_purchase(
 
     db.session.add(sub)
     db.session.commit()
+    _log_event("subs_sync_ok", user_id=user_id, product_id=product_id, status=status_str, expires_at=expiry_dt.isoformat())
+
+    SUBS_SYNC_OK.inc()
 
     return {
         "ok": True,
@@ -253,21 +277,23 @@ def sync_purchase(
     }
 
 def rtdn_handle(purchase_token: str, package_name: str | None = None) -> Dict[str, Any]:
-    """
-    Maneja una notificación en tiempo real (RTDN).
-    - Consulta a Google Play con el purchaseToken recibido.
-    - Actualiza el estado en la DB.
-    - Devuelve el mismo dict que sync_purchase().
-    """
-    return sync_purchase(
-        user_id=0,  # aquí no siempre sabrás el user_id, lo puedes buscar luego en tu DB si lo necesitas
+    """Maneja una notificación en tiempo real (RTDN)."""
+    RTDN_RCVD.inc()
+    _log_event("rtdn_received", purchase_token=purchase_token, package_name=package_name)
+
+    result = sync_purchase(
+        user_id=0,  # si luego mapeas token->usuario, aquí lo puedes poner
         product_id="",
         purchase_id="",
         verification_data=purchase_token,
-        package_name=package_name
+        package_name=package_name,
     )
 
+    _log_event("rtdn_processed", purchase_token=purchase_token)
+    return result
+
 def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[str, Any]:
+    _log_event("reconcile_start", batch_size=batch_size, days_ahead=days_ahead)
     """
     Recorre suscripciones cercanas a expirar o en estados inestables y las revalida contra Google.
     - Selecciona: status en ('on_hold','grace','active') o expirando en <= days_ahead días.
@@ -355,12 +381,14 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
 
             db.session.add(sub)
             updated += 1
-
+            RECONCILE_UPD.inc()
         except Exception:
+            RECONCILE_ERR.inc()
             errors += 1
             continue
 
     db.session.commit()
+    _log_event("reconcile_done", checked=checked, updated=updated, skipped=skipped, errors=errors)
     return {
         "checked": checked,
         "updated": updated,

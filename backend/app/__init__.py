@@ -80,4 +80,10 @@ def create_app():
     def healthz():
         return {"ok": True}, 200
 
+    from app.observability.metrics import metrics_http_response
+
+    @app.get("/metrics")
+    def metrics():
+        return metrics_http_response()
+
     return app

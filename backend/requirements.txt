@@ -12,3 +12,5 @@ google-auth
 google-auth-oauthlib
 google-auth-httplib2
 google-api-python-client
+url_launcher: ^6.3.0
+prometheus-client==0.20.0
