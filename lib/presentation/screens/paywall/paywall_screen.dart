@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:base_app/presentation/providers/subscription_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class PaywallScreen extends StatefulWidget {
   const PaywallScreen({super.key});
@@ -25,7 +26,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     // ⚠️ Solo configurar billing. NO hagas refresh aquí.
     await _subs.configureBilling();
     if (!mounted) return;
-    setState(() {}); // opcional, por si quieres refrescar el priceString
+    setState(() {}); // refresca priceString si apareció tras cargar catálogo
   }
 
   Future<void> _purchaseMonthly() async {
@@ -38,25 +39,29 @@ class _PaywallScreenState extends State<PaywallScreen> {
       _message = null;
     });
 
-    // Dispara la compra. El estado real llega por purchaseStream.
-    final ok = await subs.buyPro();
+    try {
+      final ok = await subs.buyPro(); // el estado real llega por purchaseStream
 
-    setState(() {
-      _purchasing = false;
-    });
-
-    // No llames refresh aquí; el provider ya hará refresh al recibir 'purchased'
-    if (subs.isPremium) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Suscripción PRO activada')),
-      );
-      nav.maybePop();
-    } else {
+      if (subs.isPremium) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Suscripción PRO activada')),
+        );
+        if (mounted) nav.maybePop();
+      } else {
+        setState(() {
+          _message = ok
+              ? 'Compra procesada, verificando activación…'
+              : 'No se pudo completar la compra.';
+        });
+      }
+    } catch (e) {
       setState(() {
-        _message = ok
-            ? 'Compra procesada, verificando activación…'
-            : 'No se pudo completar la compra.';
+        _message = 'Error al comprar: $e';
       });
+    } finally {
+      if (mounted) {
+        setState(() => _purchasing = false);
+      }
     }
   }
 
@@ -65,18 +70,33 @@ class _PaywallScreenState extends State<PaywallScreen> {
     final nav = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
 
-    // Esto dispara eventos 'restored' -> el provider hará refresh.
-    await subs.restore();
-
-    if (subs.isPremium) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('PRO restaurado correctamente')),
-      );
-      if (mounted) nav.maybePop();
-    } else {
+    try {
+      await subs.restore(); // disparará restored → sync → refresh en el provider
+      if (subs.isPremium) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('PRO restaurado correctamente')),
+        );
+        if (mounted) nav.maybePop();
+      } else {
+        setState(() {
+          _message = 'No se encontraron compras para restaurar.';
+        });
+      }
+    } catch (e) {
       setState(() {
-        _message = 'No se encontraron compras para restaurar.';
+        _message = 'Error al restaurar: $e';
       });
+    }
+  }
+
+  Future<void> _openManage() async {
+    final uri = Uri.parse(
+      // ajusta sku y package si quieres algo más específico
+      'https://play.google.com/store/account/subscriptions',
+    );
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      // no pasa nada si falla; solo mensaje opcional
+      setState(() => _message = 'No se pudo abrir la gestión de suscripciones.');
     }
   }
 
@@ -84,20 +104,22 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Widget build(BuildContext context) {
     final subs = context.watch<SubscriptionProvider>();
     final isPro = subs.isPremium;
-    final loading = subs.loading || subs.activating; 
+    final loading = subs.loading || subs.activating;
     final price = subs.priceString;
+    final productLoaded = subs.product != null;
 
     final title = isPro ? 'Tienes PRO activo' : 'Mejora a PRO';
     final subtitle = isPro
         ? 'Gracias por tu suscripción.'
         : (price != null
-              ? 'Accede a PRO por $price / mes'
-              : 'Selecciona tu plan');
+            ? 'Accede a PRO por $price / mes'
+            : (productLoaded
+                ? 'Selecciona tu plan'
+                : 'Cargando planes…'));
 
     // Auto-cerrar si ya se activó PRO mientras estamos en esta pantalla
     if (isPro) {
-      // Evita múltiples pops con microtask
-      final nav = Navigator.of(context); // captura ANTES del async gap
+      final nav = Navigator.of(context);
       Future.microtask(() {
         if (!mounted) return;
         nav.maybePop();
@@ -118,11 +140,12 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   Text(subtitle),
                   const SizedBox(height: 24),
 
-                  if (!isPro)
+                  if (!isPro) ...[
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton(
-                        onPressed: _purchasing ? null : _purchaseMonthly,
+                        onPressed:
+                            _purchasing || !productLoaded ? null : _purchaseMonthly,
                         child: Text(
                           _purchasing
                               ? 'Procesando...'
@@ -130,6 +153,17 @@ class _PaywallScreenState extends State<PaywallScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    // Gestionar desde Play (útil para cancelar en pruebas)
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _openManage,
+                        icon: const Icon(Icons.manage_accounts),
+                        label: const Text('Gestionar suscripción en Google Play'),
+                      ),
+                    ),
+                  ],
 
                   if (isPro)
                     const Row(
