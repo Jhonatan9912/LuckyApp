@@ -34,8 +34,7 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen>
-    with WidgetsBindingObserver {
+class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingObserver {
   bool _dialogBusy = false; // evita abrir 2 diálogos a la vez
   bool _scheduleShownOnce = false; // no repetir alerta de programado
 
@@ -190,24 +189,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) async {
-    if (!mounted) return;
-    if (state == AppLifecycleState.resumed) {
-      // Al volver a primer plano, sincroniza suscripción
-      final subs = context.read<SubscriptionProvider>();
-      await subs.refresh(force: true);
-      // Sincroniza el flag en tu controller (UI) por si cambió a FREE
-      _ctrl.applyPremiumFromStore(subs.isPremium);
-      if (!subs.isPremium && mounted) {
-        // Opcional: si perdió PRO, deja la UI en estado inicial de juego
-        _ctrl.resetToInitial();
-        setState(() {});
-      }
-    }
-  }
-
+  
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -480,7 +462,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     // Lee el provider UNA vez aquí
     final subs = context.watch<SubscriptionProvider>();
 
-    if (subs.activating) {
+    // Mientras se verifica PRO/Free o se está activando tras una compra,
+    // no mostramos nada para evitar parpadeo.
+    if (subs.loading || subs.activating) {
       return const SizedBox.shrink();
     }
 

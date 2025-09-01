@@ -60,17 +60,8 @@ class SubscriptionProvider extends ChangeNotifier {
 
   // Evita refresh() superpuestos (causa clásica de parpadeo)
   bool _refreshing = false;
-  Timer? _expiryTimer;
 
   // ========= Compat alias para no tocar tu app =========
-
-  bool get isExpired =>
-      _expiresAt != null && DateTime.now().isAfter(_expiresAt!);
-
-  bool get isExpiringSoon =>
-      _expiresAt != null &&
-      _expiresAt!.difference(DateTime.now()) <= const Duration(minutes: 2);
-
   Future<void> configureRC({required String apiKey, String? appUserId}) async {
     await configureBilling();
   }
@@ -113,8 +104,6 @@ class SubscriptionProvider extends ChangeNotifier {
   }
 
   void clear() {
-    _expiryTimer?.cancel();
-    _expiryTimer = null;
     _reset();
     _ownerUserId = null;
     _purchaseSub?.cancel();
@@ -133,96 +122,79 @@ class SubscriptionProvider extends ChangeNotifier {
     }
   }
 
-  void _armExpiryTimer() {
-    _expiryTimer?.cancel();
-    if (_expiresAt == null) return;
+  Future<void> refresh({bool force = false}) async {
+    if (_refreshing) return; // ← evita solapes
+    _refreshing = true;
+    _loading = true;
+    _error = null;
+    notifyListeners();
 
-    final now = DateTime.now();
-    final when = _expiresAt!;
-    final delay = when.isAfter(now)
-        ? when.difference(now) + const Duration(seconds: 2)
-        : const Duration(seconds: 1);
+    try {
+      // Detectar usuario actual
+      final uidDyn = await session.getUserId();
+      final uid = uidDyn is int ? uidDyn : int.tryParse('$uidDyn');
 
-    _expiryTimer = Timer(delay, () async {
+      // Si cambió el usuario, resetea el estado a FREE
+      if (_ownerUserId != uid) {
+        _ownerUserId = uid;
+        _reset();
+        _loading = true; // volvemos a marcar loading después del reset
+        notifyListeners();
+      }
+
+      // Intentar configurar billing (no cambia el estado premium por sí solo)
       try {
-        await refresh(force: true); // cuando vence, refresca con backend
-      } catch (_) {}
-    });
-  }
+        if (!_billingConfigured) {
+          await configureBilling();
+        }
+        // No hagas restorePurchases() aquí; hazlo bajo demanda (botón Restaurar).
+      } catch (e) {
+        dev.log('subs.refresh() restore error: $e');
+      }
 
-Future<void> refresh({bool force = false}) async {
-  if (_refreshing) return; // ← evita solapes
+      // TTL por usuario
+      if (!force &&
+          _lastFetch != null &&
+          DateTime.now().difference(_lastFetch!) < ttl) {
+        return;
+      }
 
-  // 👇 Salida rápida por TTL SIN tocar loading ni notifyListeners
-  if (!force &&
-      _lastFetch != null &&
-      DateTime.now().difference(_lastFetch!) < ttl) {
-    return;
-  }
+      final token = await session.getToken();
+      if (token == null || token.isEmpty || uid == null) {
+        _reset();
+        _status = 'not_authenticated';
+        _lastFetch = DateTime.now();
+        return; // el finally apaga loading/refreshing
+      }
 
-  _refreshing = true;
-  _loading = true;
-  _error = null;
-  notifyListeners();
+      final json = await api.getStatus(token: token);
+      dev.log('subs.refresh() status payload: $json');
 
-  try {
-    // Detectar usuario actual
-    final uidDyn = await session.getUserId();
-    final uid = uidDyn is int ? uidDyn : int.tryParse('$uidDyn');
+      final backendIsPremium = (json['isPremium'] == true);
+      final backendStatus = (json['status'] ?? 'none').toString();
 
-    // Si cambió el usuario, resetea el estado a FREE
-    if (_ownerUserId != uid) {
-      _ownerUserId = uid;
-      _reset();
-      _loading = true; // volvemos a marcar loading después del reset
+      _isPremium = backendIsPremium;
+      _status = backendIsPremium ? 'active' : backendStatus;
+
+      _since = _parseDate(json['since']); // e.g. "2025-08-15T12:00:00Z"
+      _expiresAt = _parseDate(json['expiresAt']); // e.g. "2025-09-15T12:00:00Z"
+      _autoRenewing =
+          (json['autoRenewing'] == true) || (json['auto_renewing'] == true);
+
+      // Guarda cache local (por si UI lo necesita muy pronto)
+      await session.setIsPremium(_isPremium);
+
+      _lastFetch = DateTime.now();
+    } catch (e) {
+      _error = e.toString();
+      dev.log('subs.refresh() backend error: $_error');
+      // No forzamos _reset() para no “brincar” de PRO a FREE ante un glitch.
+    } finally {
+      _loading = false;
+      _refreshing = false; // ← libera el candado
       notifyListeners();
     }
-
-    // Intentar configurar billing
-    try {
-      if (!_billingConfigured) {
-        await configureBilling();
-      }
-    } catch (e) {
-      dev.log('subs.refresh() restore error: $e');
-    }
-
-    final token = await session.getToken();
-    if (token == null || token.isEmpty || uid == null) {
-      _reset();
-      _status = 'not_authenticated';
-      _lastFetch = DateTime.now();
-      return;
-    }
-
-    final json = await api.getStatus(token: token);
-    dev.log('subs.refresh() status payload: $json');
-
-    final backendIsPremium = (json['isPremium'] == true);
-    final backendStatus = (json['status'] ?? 'none').toString();
-
-    _isPremium = backendIsPremium;
-    _status = backendIsPremium ? 'active' : backendStatus;
-
-    _since = _parseDate(json['since']);
-    _expiresAt = _parseDate(json['expiresAt']);
-    _autoRenewing =
-        (json['autoRenewing'] == true) || (json['auto_renewing'] == true);
-
-    _armExpiryTimer();
-
-    await session.setIsPremium(_isPremium);
-
-    _lastFetch = DateTime.now();
-  } catch (e) {
-    _error = e.toString();
-    dev.log('subs.refresh() backend error: $_error');
-  } finally {
-    _loading = false;
-    _refreshing = false;
-    notifyListeners();
   }
-}
 
   Future<bool> buyPro() async {
     try {
@@ -366,7 +338,6 @@ Future<void> refresh({bool force = false}) async {
 
   @override
   void dispose() {
-    _expiryTimer?.cancel();
     _purchaseSub?.cancel();
     super.dispose();
   }
