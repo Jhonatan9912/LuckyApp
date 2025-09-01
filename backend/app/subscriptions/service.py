@@ -118,6 +118,29 @@ def _parse_gp_time(v) -> Optional[datetime]:
     except Exception:
         return None
 
+def _pick_line_item(line_items: list[dict]) -> dict:
+    """
+    Devuelve el lineItem 'vigente/reciente'.
+    Regla: el de MAYOR expiryTime (ms o RFC3339). Si no hay fechas válidas, retorna el primero.
+    """
+    def _expiry_of(li: dict) -> Optional[datetime]:
+        v = li.get("expiryTime") or li.get("expiryTimeMillis")
+        return _parse_gp_time(v)
+
+    items = [li for li in (line_items or []) if isinstance(li, dict)]
+    if not items:
+        return {}
+
+    best = None
+    best_exp = None
+    for li in items:
+        exp = _expiry_of(li)
+        if exp is None:
+            continue
+        if best is None or exp > best_exp:
+            best, best_exp = li, exp
+    return best or items[0]
+
 def get_status(user_id: Optional[int]) -> SubscriptionStatus:
     """
     Devuelve el estado de suscripción del usuario.
@@ -265,7 +288,7 @@ def sync_purchase(
         SUBS_SYNC_ERR.inc()
         raise Exception('Google Play: respuesta sin lineItems')
 
-    li = line_items[0]
+    li = _pick_line_item(line_items)
 
     # Intenta tomar el inicio de línea desde Google (v2 puede venir en ms o RFC3339)
     start_raw = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
@@ -289,11 +312,13 @@ def sync_purchase(
 
     status_str, is_active_flag = _decide_status(state_raw, auto_ren, expiry_dt)
 
+    # actualiza
     sub.status = status_str
     sub.is_active = is_active_flag
     sub.current_period_start = period_start
     sub.current_period_end = expiry_dt
     sub.auto_renewing = bool(auto_ren) if auto_ren is not None else False
+
 
 
     sub.last_purchase_id = purchase_id or getattr(sub, "last_purchase_id", None)
@@ -316,7 +341,7 @@ def sync_purchase(
         "status": status_str,
         "expiresAt": expiry_dt.isoformat(),
         "since": period_start.isoformat(),
-        "autoRenewing": auto_ren,
+        "autoRenewing": bool(auto_ren) if auto_ren is not None else False,
     }
 
 def rtdn_handle(purchase_token: str, package_name: str | None = None) -> Dict[str, Any]:
@@ -351,13 +376,14 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
         UserSubscription.query
         .filter(
             or_(
-                UserSubscription.status.in_(('on_hold', 'grace', 'active')),
+                UserSubscription.status.in_(('on_hold', 'grace', 'active', 'canceled')),
                 UserSubscription.current_period_end <= (now + timedelta(days=days_ahead))
             )
         )
         .order_by(UserSubscription.current_period_end.asc().nullslast())
         .limit(batch_size)
     )
+
 
     checked = 0
     updated = 0
@@ -385,7 +411,7 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
                 skipped += 1
                 continue
 
-            li = line_items[0]
+            li = _pick_line_item(line_items)
 
             # start
             start_raw = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
