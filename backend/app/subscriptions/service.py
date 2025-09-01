@@ -64,6 +64,30 @@ def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
+def _parse_gp_time(v) -> Optional[datetime]:
+    """
+    Acepta:
+      - int/float o str numérica en milisegundos/segundos desde epoch
+      - str en RFC3339/ISO8601 (p. ej. '2025-09-01T16:38:06.465Z')
+    Devuelve datetime timezone-aware en UTC o None.
+    """
+    if v is None:
+        return None
+    try:
+        if isinstance(v, (int, float)):
+            iv = int(v)
+            # Heurística: > 1e12 => milisegundos
+            return datetime.fromtimestamp(iv / 1000.0 if iv > 1_000_000_000_000 else iv, tz=timezone.utc)
+        if isinstance(v, str):
+            s = v.strip()
+            if s.isdigit():
+                iv = int(s)
+                return datetime.fromtimestamp(iv / 1000.0 if iv > 1_000_000_000_000 else iv, tz=timezone.utc)
+            # RFC3339 -> ISO compatible
+            s = s.replace('Z', '+00:00')
+            return datetime.fromisoformat(s).astimezone(timezone.utc)
+    except Exception:
+        return None
 
 def get_status(user_id: Optional[int]) -> SubscriptionStatus:
     """
@@ -182,7 +206,10 @@ def sync_purchase(
 
     # === VALIDACIÓN REAL CON GOOGLE (sustituye el bloque DEMO) ===
     package_name = package_name or os.environ.get('GOOGLE_PLAY_PACKAGE_NAME', 'com.tu.paquete')
-    purchase_token = verification_data  # viene de tu app (serverVerificationData)
+    purchase_token = (verification_data or '').strip()
+    if purchase_token.startswith('gp:'):
+        purchase_token = purchase_token[3:]
+
 
     _log_event("subs_sync_start", user_id=user_id, product_id=product_id)
     # cliente Android Publisher con el service account (lee GOOGLE_CREDENTIALS_JSON)
@@ -195,9 +222,13 @@ def sync_purchase(
             token=purchase_token,
         ).execute()
     except HttpError as e:
-        _log_event("subs_sync_http_error", user_id=user_id, error=str(e))
+        try:
+            content = e.content.decode('utf-8', 'ignore') if hasattr(e, 'content') else str(e)
+        except Exception:
+            content = str(e)
+        _log_event("subs_sync_http_error", user_id=user_id, status=getattr(e, "status_code", None), content=content)
         SUBS_SYNC_ERR.inc()
-        raise Exception(f'Google Play API error: {getattr(e, "status_code", "HTTP")} {e}')
+        raise Exception(f'Google Play API error: {getattr(e, "status_code", "HTTP")} {content}')
 
 
     # Extrae datos clave
@@ -209,25 +240,21 @@ def sync_purchase(
 
     li = line_items[0]
 
-    # Intenta tomar el inicio de línea desde Google (si viene)
-    start_ms = (li.get('startTime')                  # v2 actual
-                or li.get('startTimeMillis')         # variantes raras
-                or gp.get('startTime'))              # fallback
-    if start_ms:
-        period_start = datetime.fromtimestamp(int(start_ms) / 1000.0, tz=timezone.utc)
-    else:
-        # Fallback: tu lógica previa
+    # Intenta tomar el inicio de línea desde Google (v2 puede venir en ms o RFC3339)
+    start_raw = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
+    period_start = _parse_gp_time(start_raw)
+    if not period_start:
         prev_end = _to_aware_utc(getattr(sub, "current_period_end", None))
         period_start = prev_end if (prev_end and prev_end > now) else now
 
-    # expiryTime viene en milisegundos desde epoch
-    expiry_ms = li.get('expiryTime') or gp.get('latestOrder', {}).get('expiryTime')
-    if not expiry_ms:
-        _log_event("subs_sync_bad_response", user_id=user_id, reason="no_expiryTime")
+    # Expiración (ms o RFC3339)
+    expiry_raw = li.get('expiryTime') or (gp.get('latestOrder') or {}).get('expiryTime')
+    expiry_dt = _parse_gp_time(expiry_raw)
+    if not expiry_dt:
+        _log_event("subs_sync_bad_response", user_id=user_id, reason="no_expiryTime_valid", raw=expiry_raw)
         SUBS_SYNC_ERR.inc()
-        raise Exception('Google Play: sin expiryTime en la respuesta')
+        raise Exception('Google Play: sin expiryTime válido en la respuesta')
 
-    expiry_dt = datetime.fromtimestamp(int(expiry_ms) / 1000.0, tz=timezone.utc)
 
     # Estado y autorrenovación (Subscriptions v2)
     state_raw = (gp.get('subscriptionState') or '').upper()  # ACTIVE, CANCELED, IN_GRACE_PERIOD, ON_HOLD, PAUSED, EXPIRED
@@ -254,10 +281,8 @@ def sync_purchase(
     sub.last_purchase_id = purchase_id or getattr(sub, "last_purchase_id", None)
     sub.last_product_id = product_id or getattr(sub, "last_product_id", None)
 
-    # Guarda el token/recibo de Google para validaciones posteriores
-    # Requiere columna purchase_token en el modelo
     if hasattr(sub, "purchase_token"):
-        sub.purchase_token = verification_data or getattr(sub, "purchase_token", None)
+        sub.purchase_token = purchase_token or getattr(sub, "purchase_token", None)
 
     db.session.add(sub)
     db.session.commit()
@@ -345,19 +370,17 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
             li = line_items[0]
 
             # start
-            start_ms = (li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime'))
-            if start_ms:
-                period_start = datetime.fromtimestamp(int(start_ms) / 1000.0, tz=timezone.utc)
-            else:
+            start_raw = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
+            period_start = _parse_gp_time(start_raw)
+            if not period_start:
                 prev_end = _to_aware_utc(getattr(sub, "current_period_end", None))
                 period_start = prev_end if (prev_end and prev_end > now) else now
 
-            # end (expiry)
-            expiry_ms = li.get('expiryTime') or gp.get('latestOrder', {}).get('expiryTime')
-            if not expiry_ms:
+            expiry_raw = li.get('expiryTime') or (gp.get('latestOrder') or {}).get('expiryTime')
+            expiry_dt = _parse_gp_time(expiry_raw)
+            if not expiry_dt:
                 skipped += 1
                 continue
-            expiry_dt = datetime.fromtimestamp(int(expiry_ms) / 1000.0, tz=timezone.utc)
 
             # state + autorenovación
             state_raw = (gp.get('subscriptionState') or '').upper()
