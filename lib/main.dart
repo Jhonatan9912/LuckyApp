@@ -48,19 +48,34 @@ Future<void> main() async {
           ),
         ),
         ChangeNotifierProvider(
-          create: (_) => ReferralProvider(api: buildReferralsApi())..load(),
+          create: (_) => ReferralProvider(
+            api: ReferralsApi(
+              baseUrl: Env.apiBaseUrl,
+              session: SessionManager(),
+            ),
+          ),
         ),
       ],
       child: const BaseApp(),
     ),
   );
 
-WidgetsBinding.instance.addPostFrameCallback((_) async {
-  final subs = navigatorKey.currentContext!.read<SubscriptionProvider>();
-  await subs.configureBilling();
-  await subs.refresh(force: true);
-});
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
 
+    // Toma las dependencias ANTES del primer await
+    final subs = ctx.read<SubscriptionProvider>();
+    final referrals = ctx.read<ReferralProvider>();
+
+    await subs.configureBilling();
+    await subs.refresh(force: true);
+
+    // (opcional) si quieres, valida que la app siga montada
+    if (navigatorKey.currentState?.mounted != true) return;
+
+    await referrals.load(refresh: true);
+  });
 }
 
 void _setupLogging() {

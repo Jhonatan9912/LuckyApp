@@ -1,6 +1,10 @@
 // lib/data/api/referrals_api.dart
 import 'dart:convert';
+import 'dart:async';
 import 'package:http/http.dart' as http;
+
+// 👇 agrega esto para poder usar debugPrint
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'package:base_app/core/config/env.dart';
 import 'package:base_app/data/session/session_manager.dart';
@@ -25,15 +29,16 @@ class ReferralItem {
   });
 
   factory ReferralItem.fromJson(Map<String, dynamic> j) => ReferralItem(
-        id: j['id'] as int,
-        referredUserId: j['referred_user_id'] as int?,
-        referredName: j['referred_name'] as String?,
-        referredEmail: j['referred_email'] as String?,
+        id: (j['id'] ?? 0) as int,
+        referredUserId:
+            (j['referred_user_id'] ?? j['referredUserId']) as int?,
+        referredName: j['referred_name'] as String? ?? j['referredName'] as String?,
+        referredEmail: j['referred_email'] as String? ?? j['referredEmail'] as String?,
         status: (j['status'] ?? '').toString(),
-        createdAt: (j['created_at'] is String)
+        createdAt: j['created_at'] != null
             ? DateTime.tryParse(j['created_at'])
-            : null,
-        proActive: (j['pro_active'] ?? false) == true,
+            : (j['createdAt'] != null ? DateTime.tryParse(j['createdAt']) : null),
+        proActive: (j['pro_active'] ?? j['proActive'] ?? false) == true,
       );
 }
 
@@ -49,9 +54,9 @@ class ReferralSummary {
   });
 
   factory ReferralSummary.fromJson(Map<String, dynamic> j) => ReferralSummary(
-        total: j['total'] ?? 0,
-        activos: j['activos'] ?? 0,
-        inactivos: j['inactivos'] ?? 0,
+        total: (j['total'] ?? 0) as int,
+        activos: (j['activos'] ?? 0) as int,
+        inactivos: (j['inactivos'] ?? 0) as int,
       );
 }
 
@@ -77,6 +82,8 @@ class PayoutsSummary {
       );
 }
 
+// -------------------- API --------------------
+
 class ReferralsApi {
   final String baseUrl;
   final SessionManager session;
@@ -85,6 +92,8 @@ class ReferralsApi {
     required this.baseUrl,
     required this.session,
   });
+
+  static const _timeout = Duration(seconds: 15);
 
   Future<ReferralSummary> fetchSummary() async {
     final token = await session.getToken();
@@ -97,7 +106,7 @@ class ReferralsApi {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
       },
-    );
+    ).timeout(_timeout);
 
     if (res.statusCode >= 200 && res.statusCode < 300) {
       final Map<String, dynamic> data = json.decode(res.body);
@@ -111,7 +120,8 @@ class ReferralsApi {
 
   Future<List<ReferralItem>> fetchList({int limit = 50, int offset = 0}) async {
     final token = await session.getToken();
-    final uri = Uri.parse('$baseUrl/api/me/referrals?limit=$limit&offset=$offset');
+    final uri =
+        Uri.parse('$baseUrl/api/me/referrals?limit=$limit&offset=$offset');
 
     final res = await http.get(
       uri,
@@ -120,7 +130,7 @@ class ReferralsApi {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
       },
-    );
+    ).timeout(_timeout);
 
     if (res.statusCode >= 200 && res.statusCode < 300) {
       final List<dynamic> data = json.decode(res.body);
@@ -134,37 +144,48 @@ class ReferralsApi {
     );
   }
 
-  /// Nuevo: totales de comisiones (para el banner de “Comisión disponible”)
-  Future<PayoutsSummary> fetchPayoutsSummary({String currency = 'COP'}) async {
-    final token = await session.getToken();
-    final uri = Uri.parse(
-      '$baseUrl/api/me/referrals/payouts/summary?currency=${Uri.encodeComponent(currency)}',
-    );
+Future<PayoutsSummary> fetchPayoutsSummary({String currency = 'COP'}) async {
+  final token = await session.getToken(); // puede ser null
 
-    final res = await http.get(
-      uri,
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      },
-    );
+  // Construye la URL usando baseUrl inyectado
+  final uri = Uri.parse(
+    '$baseUrl/api/me/referrals/payouts/summary?currency=${Uri.encodeComponent(currency)}',
+  );
 
-    if (res.statusCode >= 200 && res.statusCode < 300) {
-      final Map<String, dynamic> data = json.decode(res.body);
-      return PayoutsSummary.fromJson(data);
-    }
+  // Logs seguros (no crashean si token es null)
+  final safeTokenHead = (token == null)
+      ? 'null'
+      : (token.length > 12 ? token.substring(0, 12) : token);
+  debugPrint('[referrals_api] baseUrl=$baseUrl');
+  debugPrint('[referrals_api] token(head)=$safeTokenHead...');
 
-    throw Exception(
-      'Error ${res.statusCode} al obtener payouts summary: ${res.body}',
-    );
+  final res = await http.get(
+    uri,
+    headers: {
+      'Authorization': 'Bearer ${token ?? ''}', // si es null, manda vacío
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    },
+  ).timeout(_timeout);
+
+  debugPrint('[referrals_api] GET $uri -> ${res.statusCode}');
+  debugPrint('[referrals_api] body: ${res.body}');
+
+  if (res.statusCode >= 200 && res.statusCode < 300) {
+    final Map<String, dynamic> data = json.decode(res.body);
+    return PayoutsSummary.fromJson(data);
   }
+
+  throw Exception(
+    'Error ${res.statusCode} al obtener payouts summary: ${res.body}',
+  );
 }
 
-// Helper para crear la API con tus singletons actuales
+// Helper para instanciar usando tus singletons actuales
 ReferralsApi buildReferralsApi() {
   return ReferralsApi(
-    baseUrl: Env.apiBaseUrl,
+    baseUrl: Env.apiBaseUrl, // asegúrate que no termine en "/"
     session: SessionManager(),
   );
+}
 }

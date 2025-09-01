@@ -3,7 +3,6 @@ import 'package:base_app/data/api/referrals_api.dart';
 
 class ReferralProvider extends ChangeNotifier {
   final ReferralsApi api;
-
   ReferralProvider({required this.api});
 
   bool _loading = false;
@@ -13,8 +12,10 @@ class ReferralProvider extends ChangeNotifier {
   int activos = 0;
   int inactivos = 0;
 
+  // Totales de comisión
   double comisionPendiente = 0.0;
   double comisionPagada = 0.0;
+  String moneda = 'COP';
 
   List<ReferralItem> items = [];
 
@@ -24,7 +25,7 @@ class ReferralProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1) Resumen (total / activos / inactivos)
+      // 1) Resumen (conteos)
       final summary = await api.fetchSummary();
       total = summary.total;
       activos = summary.activos;
@@ -33,18 +34,21 @@ class ReferralProvider extends ChangeNotifier {
       // 2) Lista de referidos
       items = await api.fetchList(limit: 50, offset: 0);
 
-      // 3) Resumen de comisiones (pendiente / pagada)
+      // 3) Totales de comisiones
       try {
         final payouts = await api.fetchPayoutsSummary();
         comisionPendiente = payouts.pending;
         comisionPagada = payouts.paid;
+        moneda = payouts.currency; // <-- IMPORTANTE: guardar la moneda
+
+        debugPrint(
+          '[referral_provider] pending=$comisionPendiente paid=$comisionPagada currency=$moneda',
+        );
       } catch (e) {
-        // Si falla el endpoint de payouts, no rompas la carga
-        if (kDebugMode) {
-          print('Error obteniendo payouts summary: $e');
-        }
+        debugPrint('[referral_provider] ERROR payouts: $e');
         comisionPendiente = 0.0;
         comisionPagada = 0.0;
+        // moneda la dejamos como esté
       }
     } catch (e) {
       if (kDebugMode) {
@@ -56,7 +60,10 @@ class ReferralProvider extends ChangeNotifier {
     }
   }
 
-  /// Mostrar el botón "Solicitar retiro" sólo si hay algo pendiente (> 0).
-  /// Si manejas un mínimo, cambia a: `comisionPendiente >= 20000`.
   bool get canWithdraw => comisionPendiente > 0.0;
+
+  // Aliases usados por la UI
+  String get payoutCurrency => moneda;
+  double get payoutPending => comisionPendiente;
+  double get payoutPaid => comisionPagada;
 }

@@ -5,33 +5,74 @@ from app.db.database import db  # tu SQLAlchemy()
 # Cambia esta condición si tu lógica PRO es distinta (status/expires_at).
 PRO_CONDITION = "s.status = 'active'"
 
-def get_summary_for_user(user_id: int) -> Dict[str, int]:
+
+def get_summary_for_user(user_id: int) -> Dict[str, Any]:
     sql = text(f"""
         WITH base AS (
           SELECT r.id,
                  r.referred_user_id,
                  EXISTS (
-                   SELECT 1
-                   FROM user_subscriptions s
+                   SELECT 1 FROM user_subscriptions s
                    WHERE s.user_id = r.referred_user_id
                      AND ({PRO_CONDITION})
                  ) AS pro_active
           FROM referrals r
           WHERE r.referrer_user_id = :uid
+        ),
+        counts AS (
+          SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE pro_active) AS activos
+          FROM base
+        ),
+        sums AS (
+          SELECT
+            COALESCE(SUM(CASE WHEN status IN ('approved','available','accrued')
+                              THEN commission_micros END),0) AS available_micros,
+            COALESCE(SUM(CASE WHEN status IN ('pending','grace','hold')
+                              THEN commission_micros END),0) AS pending_micros,
+            COALESCE(SUM(CASE WHEN status = 'paid'
+                              THEN commission_micros END),0) AS paid_micros,
+            COALESCE(SUM(commission_micros),0) AS total_micros
+          FROM referral_commissions
+          WHERE referrer_user_id = :uid
         )
         SELECT
-          COUNT(*)                       AS total,
-          COUNT(*) FILTER (WHERE pro_active) AS activos
-        FROM base;
+          c.total,
+          c.activos,
+          s.available_micros,
+          s.pending_micros,
+          s.paid_micros,
+          s.total_micros
+        FROM counts c
+        CROSS JOIN sums s;
     """)
-    row = db.session.execute(sql, {"uid": user_id}).one()
-    total = int(row.total or 0)
-    activos = int(row.activos or 0)
+    row = db.session.execute(sql, {"uid": user_id}).mappings().one()
+
+    total = int(row["total"] or 0)
+    activos = int(row["activos"] or 0)
+    inactivos = max(total - activos, 0)
+
+    def m2c(v): return float(v or 0) / 1_000_000.0
+
+    available_micros = int(row["available_micros"] or 0)
+    pending_micros   = int(row["pending_micros"] or 0)
+    paid_micros      = int(row["paid_micros"] or 0)
+    total_micros     = int(row["total_micros"] or 0)
+
     return {
-        "total": total,
-        "activos": activos,
-        "inactivos": max(total - activos, 0),
+        "total": total, "activos": activos, "inactivos": inactivos,
+        "available_micros": available_micros,
+        "pending_micros":   pending_micros,
+        "paid_micros":      paid_micros,
+        "total_micros":     total_micros,
+        "available_cop": m2c(available_micros),
+        "pending_cop":   m2c(pending_micros),
+        "paid_cop":      m2c(paid_micros),
+        "total_cop":     m2c(total_micros),
+        "__debug_stamp": "summary_v2_commissions",
     }
+
 
 def get_referrals_for_user(user_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     sql = text(f"""
@@ -229,3 +270,40 @@ def get_payouts_summary_for_referrer(referrer_user_id: int) -> dict:
     pending = (row_p["pend"] or 0) / 1_000_000.0
     paid = (row_paid["paid"] or 0) / 1_000_000.0
     return {"pending": pending, "paid": paid, "currency": row_p["cur"] or "COP"}
+
+def get_commissions_for_user(user_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    sql = text("""
+        SELECT
+          id,
+          referrer_user_id,
+          referred_user_id,
+          source,
+          product_id,
+          purchase_token,
+          order_id,
+          event_time,
+          amount_micros,
+          currency_code,
+          percent,
+          commission_micros,
+          status
+        FROM referral_commissions
+        WHERE referrer_user_id = :uid
+        ORDER BY event_time DESC NULLS LAST, id DESC
+        LIMIT :limit OFFSET :offset
+    """)
+    rows = db.session.execute(sql, {"uid": user_id, "limit": limit, "offset": offset}).mappings().all()
+    def m2c(x): return float(x or 0)/1_000_000.0
+    return [{
+        "id": r["id"],
+        "referred_user_id": r["referred_user_id"],
+        "source": r["source"],
+        "product_id": r["product_id"],
+        "order_id": r["order_id"],
+        "event_time": r["event_time"].isoformat() if r["event_time"] else None,
+        "amount_cop": m2c(r["amount_micros"]),
+        "currency_code": r["currency_code"],
+        "percent": r["percent"],
+        "commission_cop": m2c(r["commission_micros"]),
+        "status": r["status"],
+    } for r in rows]

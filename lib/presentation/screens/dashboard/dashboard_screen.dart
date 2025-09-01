@@ -34,7 +34,8 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingObserver {
+class _DashboardScreenState extends State<DashboardScreen>
+    with WidgetsBindingObserver {
   bool _dialogBusy = false; // evita abrir 2 diálogos a la vez
   bool _scheduleShownOnce = false; // no repetir alerta de programado
 
@@ -126,23 +127,25 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _ctrl.applyPremiumFromStore(subs.isPremium);
     });
 
-    // 👇 todo lo que abre diálogos, después del primer frame
+    // ... dentro de initState(), en el segundo addPostFrameCallback:
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _ctrl.initSession();
-      if (!mounted) return;
-      if (!_ctrl.sessionReady) return;
+      if (!mounted || !_ctrl.sessionReady) return;
 
-      // ✅ Activa el purchaseStream y trae el estado del backend
+      // ✅ Toma los providers ANTES de cualquier await (evita el warning)
       final subs = context.read<SubscriptionProvider>();
-      await subs.configureBilling(); // escucha purchaseStream
-      await subs.refresh(force: true); // GET /api/subscriptions/status
+      final refs = context.read<ReferralProvider>();
 
+      // Estado PRO y facturación
+      await subs.configureBilling();
+      await subs.refresh(force: true);
+
+      // Comisión de referidos (requiere token ya listo)
+      await refs.load(refresh: true);
+
+      // Resto del flujo
       await _ctrl.loadReferralCode();
-
-      // 👇 Cargar historial primero
       await _ctrl.loadHistory();
-
-      // Luego restaura selección (si la hay)
       await _ctrl.restoreSelectionIfAny();
 
       // 1) Peek de juego programado (solo una vez)
@@ -189,7 +192,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
-  
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(

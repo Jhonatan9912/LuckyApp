@@ -76,6 +76,38 @@ def create_app():
     # Registra TODOS los blueprints desde routes/__init__.py
     register_routes(app)
 
+       # =========================
+    # DEBUG GLOBAL
+    # =========================
+    from flask import Blueprint, jsonify, current_app
+    debug_bp = Blueprint("debug_global", __name__, url_prefix="/api/debug")
+
+    @debug_bp.get("/version")
+    def debug_version():
+        # Cambia el sello cuando hagas nuevos cambios para confirmar que el deploy tomó esta versión
+        return jsonify({"stamp": "deploy_referrals_v2"}), 200
+
+    @debug_bp.get("/routes")
+    def debug_routes():
+        rules = []
+        for r in current_app.url_map.iter_rules():
+            rules.append({
+                "rule": str(r),
+                "methods": sorted(m for m in r.methods if m not in ("HEAD","OPTIONS"))
+            })
+        return jsonify(routes=sorted(rules, key=lambda x: x["rule"])), 200
+
+    # Log: ¿desde qué archivo se cargaron los services?
+    try:
+        import app.services.referrals.referral_service as rs
+        import app.services.referrals.payouts_service as ps
+        app.logger.info("referral_service loaded from: %s", getattr(rs, "__file__", None))
+        app.logger.info("payouts_service  loaded from: %s", getattr(ps, "__file__", None))
+    except Exception as e:
+        app.logger.error("debug import failed: %s", e)
+
+    app.register_blueprint(debug_bp)
+    
     @app.get("/healthz")
     def healthz():
         return {"ok": True}, 200

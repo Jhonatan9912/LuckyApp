@@ -9,7 +9,7 @@ import os
 from googleapiclient.errors import HttpError
 from sqlalchemy import or_
 from datetime import datetime, timezone, timedelta
-
+from app.services.referrals.payouts_service import register_referral_commission
 import json
 from flask import current_app
 
@@ -25,6 +25,26 @@ def _log_event(event: str, **fields):
     except Exception:
         # Fallback por si no hay app context
         print(json.dumps({"event": event, **fields}, default=str))
+
+def _credit_referral_if_any(*, purchaser_user_id: int, product_id: str,
+                            purchase_token: str, order_id: str | None,
+                            price_amount_micros: int, price_currency_code: str,
+                            event_time=None):
+    """Crea UNA comisión por compra/renovación (idempotente por token+order_id)."""
+    try:
+        register_referral_commission(
+            referred_user_id=purchaser_user_id,
+            product_id=product_id or "unknown",
+            amount_micros=price_amount_micros or 0,
+            currency_code=price_currency_code or "COP",
+            purchase_token=purchase_token,
+            order_id=order_id,
+            source="google_play",
+            event_time=event_time,
+        )
+    except Exception:
+        db.session.rollback()
+        raise
 
 @dataclass
 class SubscriptionStatus:
@@ -319,10 +339,30 @@ def sync_purchase(
     sub.current_period_end = expiry_dt
     sub.auto_renewing = bool(auto_ren) if auto_ren is not None else False
 
+       # === CREDITO DE COMISIÓN (PEGAR DEBAJO DE sub.auto_renewing = ...) ===
+    price = (li.get('price') or {})
+    price_micros = int(price.get('priceMicros') or 0)
+    currency      = price.get('currency') or "COP"
+    product_id_gp = li.get('productId') or (gp.get('latestOrder') or {}).get('productId') or ""
+    order_id      = gp.get('latestOrderId') or (gp.get('latestOrder') or {}).get('orderId')
+    event_time    = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
+
+    # Acredita comisión SOLO si hay usuario válido y el periodo está vigente
+    if user_id and expiry_dt and expiry_dt > now:
+        _credit_referral_if_any(
+            purchaser_user_id=int(user_id),
+            product_id=product_id_gp,
+            purchase_token=purchase_token,
+            order_id=order_id,
+            price_amount_micros=price_micros,
+            price_currency_code=currency,
+            event_time=event_time,
+        )
+
 
 
     sub.last_purchase_id = purchase_id or getattr(sub, "last_purchase_id", None)
-    sub.last_product_id = product_id or getattr(sub, "last_product_id", None)
+    sub.last_product_id = product_id_gp or product_id or getattr(sub, "last_product_id", None)
 
     if hasattr(sub, "purchase_token"):
         sub.purchase_token = purchase_token or getattr(sub, "purchase_token", None)
@@ -439,6 +479,25 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
             sub.current_period_end = expiry_dt
             sub.auto_renewing = bool(auto_ren) if auto_ren is not None else False
 
+                     # === CREDITO DE COMISIÓN EN RECONCILIACIÓN (PEGAR DEBAJO DE sub.auto_renewing = ...) ===
+            price = (li.get('price') or {})
+            price_micros = int(price.get('priceMicros') or 0)
+            currency      = price.get('currency') or "COP"
+            product_id_gp = li.get('productId') or (gp.get('latestOrder') or {}).get('productId') or ""
+            order_id      = gp.get('latestOrderId') or (gp.get('latestOrder') or {}).get('orderId')
+            event_time    = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
+
+            if sub.user_id and expiry_dt and expiry_dt > now:
+                _credit_referral_if_any(
+                    purchaser_user_id=int(sub.user_id),
+                    product_id=product_id_gp,
+                    purchase_token=token,
+                    order_id=order_id,
+                    price_amount_micros=price_micros,
+                    price_currency_code=currency,
+                    event_time=event_time,
+                )
+
 
             db.session.add(sub)
             updated += 1
@@ -453,6 +512,94 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
     return {
         "checked": checked,
         "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+def backfill_commissions(limit: int = 1000) -> Dict[str, Any]:
+    """
+    BACKFILL OFFLINE (sin Google):
+    Recorre suscripciones existentes y crea comisiones faltantes en referral_commissions.
+    Idempotente por (referred_user_id, product_id, purchase_token, order_id).
+
+    Solo paga si el usuario tiene relación en 'referrals' (no basta con registrarse).
+    Esto es SOLO para histórico; las compras nuevas se acreditan con datos reales
+    desde sync_purchase/reconcile_subscriptions.
+    """
+    from app.subscriptions.models import UserSubscription
+
+    # ====== PRECIOS PARA BACKFILL ======
+    # 10.000 COP => 10_000_000 micros
+    DEFAULT_PRICE_MICROS = 10_000_000
+
+    # Tu producto real:
+    PRICE_BY_PRODUCT = {
+        "cm_suscripcion": 10_000_000,
+    }
+    # ===================================
+
+    checked = 0
+    credited = 0
+    skipped = 0
+    errors = 0
+
+    q = (
+        UserSubscription.query
+        .order_by(UserSubscription.id.asc())
+        .limit(limit)
+    )
+
+    for sub in q.all():
+        checked += 1
+        try:
+            user_id = int(getattr(sub, "user_id", 0) or 0)
+            if not user_id:
+                skipped += 1
+                continue
+
+            product_id = getattr(sub, "last_product_id", None) or ""
+            if not product_id:
+                skipped += 1
+                continue
+
+            # Si tu modelo ya guarda el monto en micros, úsalo; si no, usa el mapa/DEFAULT
+            amount_micros = getattr(sub, "amount_micros", None)
+            if amount_micros is None:
+                amount_micros = PRICE_BY_PRODUCT.get(product_id, DEFAULT_PRICE_MICROS)
+
+            if not isinstance(amount_micros, int) or amount_micros <= 0:
+                skipped += 1
+                continue
+
+            currency = "COP"
+            token = getattr(sub, "purchase_token", None) or f"local-{sub.id}"
+            order_id = getattr(sub, "last_purchase_id", None) or f"backfill-{sub.id}"
+            event_time = getattr(sub, "current_period_start", None)
+
+            ok = register_referral_commission(
+                referred_user_id=user_id,
+                product_id=product_id,
+                amount_micros=int(amount_micros),
+                currency_code=currency,
+                purchase_token=token,
+                order_id=order_id,
+                source="backfill_local",
+                event_time=event_time,
+            )
+            if ok:
+                credited += 1
+            else:
+                # ya existía o el usuario no tiene referrer
+                skipped += 1
+
+        except Exception:
+            errors += 1
+            continue
+
+    db.session.commit()
+    return {
+        "processed": checked,
+        "credited": credited,
         "skipped": skipped,
         "errors": errors,
     }

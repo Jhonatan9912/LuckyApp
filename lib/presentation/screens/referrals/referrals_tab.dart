@@ -10,7 +10,6 @@ class ReferralsTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<ReferralProvider>(
       builder: (_, p, __) {
-        // Estado de carga inicial
         if (p.loading && p.items.isEmpty) {
           return const Center(child: CircularProgressIndicator());
         }
@@ -20,7 +19,8 @@ class ReferralsTab extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.only(bottom: 80),
             children: [
-              // KPIs: ahora son total, activos, inactivos
+
+              // KPIs existentes
               ReferralKpis(total: p.total, activos: p.activos, inactivos: p.inactivos),
 
               const SizedBox(height: 4),
@@ -44,14 +44,11 @@ class ReferralsTab extends StatelessWidget {
                   ),
                 ),
               ] else ...[
-                // Lista real con ReferralItem
                 ...p.items.map((e) => ListTile(
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                       leading: const CircleAvatar(child: Icon(Icons.person)),
                       title: Text(e.referredName ?? e.referredEmail ?? 'Usuario'),
-                      subtitle: Text(
-                        'Estado: ${_humanStatus(e.status)} • ${_fmt(e.createdAt)}',
-                      ),
+                      subtitle: Text('Estado: ${_humanStatus(e.status)} • ${_fmt(e.createdAt)}'),
                       trailing: _ProBadgeMini(active: e.proActive),
                     )),
               ],
@@ -91,6 +88,7 @@ class ReferralsTab extends StatelessWidget {
     return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
   }
 }
+
 
 class _ProBadgeMini extends StatelessWidget {
   final bool active;
