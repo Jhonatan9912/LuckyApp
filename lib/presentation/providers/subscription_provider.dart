@@ -26,6 +26,11 @@ class SubscriptionProvider extends ChangeNotifier {
 
   String _status = 'none'; // active | expired | none | not_authenticated
   String get status => _status;
+  DateTime? _since;
+  DateTime? get since => _since;
+
+  bool _autoRenewing = false;
+  DateTime? get renewsAt => _autoRenewing ? _expiresAt : null;
 
   DateTime? _expiresAt;
   DateTime? get expiresAt => _expiresAt;
@@ -91,7 +96,9 @@ class SubscriptionProvider extends ChangeNotifier {
     _loading = false;
     _isPremium = false;
     _status = 'none';
+    _since = null;
     _expiresAt = null;
+    _autoRenewing = false;
     _lastFetch = null;
     _error = null;
   }
@@ -103,6 +110,16 @@ class SubscriptionProvider extends ChangeNotifier {
     _purchaseSub = null;
     _billingConfigured = false;
     notifyListeners();
+  }
+
+  // Parse seguro de ISO8601 a DateTime local
+  DateTime? _parseDate(dynamic v) {
+    if (v == null) return null;
+    try {
+      return DateTime.parse(v.toString()).toLocal();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> refresh({bool force = false}) async {
@@ -156,15 +173,13 @@ class SubscriptionProvider extends ChangeNotifier {
       final backendIsPremium = (json['isPremium'] == true);
       final backendStatus = (json['status'] ?? 'none').toString();
 
-      final String? expStr = json['expiresAt']?.toString();
-      final DateTime? backendExpires = (expStr != null && expStr.isNotEmpty)
-          ? DateTime.tryParse(expStr)
-          : null;
-
-      // Confía en backend
       _isPremium = backendIsPremium;
       _status = backendIsPremium ? 'active' : backendStatus;
-      _expiresAt = backendExpires;
+
+      _since = _parseDate(json['since']); // e.g. "2025-08-15T12:00:00Z"
+      _expiresAt = _parseDate(json['expiresAt']); // e.g. "2025-09-15T12:00:00Z"
+      _autoRenewing =
+          (json['autoRenewing'] == true) || (json['auto_renewing'] == true);
 
       // Guarda cache local (por si UI lo necesita muy pronto)
       await session.setIsPremium(_isPremium);
