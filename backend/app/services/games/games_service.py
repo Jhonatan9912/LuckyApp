@@ -5,24 +5,37 @@ from app.db.database import db
 from app.models.game_models import Game
 from app.subscriptions.models import UserSubscription
 from sqlalchemy import or_
+from datetime import datetime, timezone
 
 def _is_user_pro(user_id: int) -> bool:
     """
-    Devuelve True si el usuario tiene la suscripción PRO activa (no expirada).
+    True si el usuario tiene acceso PRO vigente:
+      - current_period_end > ahora (UTC)
+      - status en estados que permiten acceso (active, canceled, grace, on_hold, paused)
+    No depende de la columna is_active (evita quedarnos pegados).
     """
     try:
         sub = (
             UserSubscription.query
-            .filter_by(user_id=int(user_id), entitlement="pro", is_active=True)
-            .filter(
-                or_(
-                    UserSubscription.current_period_end == None,
-                    UserSubscription.current_period_end > db.func.now()
-                )
-            )
+            .filter_by(user_id=int(user_id), entitlement="pro")
             .first()
         )
-        return sub is not None
+        if not sub:
+            return False
+
+        end = getattr(sub, "current_period_end", None)
+        if end is None:
+            return False
+
+        # normaliza a aware UTC
+        if getattr(end, "tzinfo", None) is None:
+            end = end.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+
+        period_active = end > now
+        status = (getattr(sub, "status", "") or "").lower()
+
+        return period_active and status in ("active", "canceled", "grace", "on_hold", "paused")
     except Exception:
         return False
 
@@ -95,6 +108,10 @@ def generate_five_available(user_id: int | None, avoid_game_id: int | None = Non
     - Respeta tus reglas: un solo juego activo donde todos juegan,
       y solo se abrirá otro al cerrarse (1000) o al tener ganador / estar programado.
     """
+
+    if not user_id or not _is_user_pro(int(user_id)):
+        raise PermissionError("NOT_PREMIUM")
+    
     # 1) Siempre trabajar sobre el juego abierto y sin programar
     gid = get_or_create_active_unscheduled_game_id()
 

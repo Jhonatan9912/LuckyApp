@@ -60,8 +60,17 @@ class SubscriptionProvider extends ChangeNotifier {
 
   // Evita refresh() superpuestos (causa clásica de parpadeo)
   bool _refreshing = false;
+  Timer? _expiryTimer;
 
   // ========= Compat alias para no tocar tu app =========
+
+  bool get isExpired =>
+      _expiresAt != null && DateTime.now().isAfter(_expiresAt!);
+
+  bool get isExpiringSoon =>
+      _expiresAt != null &&
+      _expiresAt!.difference(DateTime.now()) <= const Duration(minutes: 2);
+
   Future<void> configureRC({required String apiKey, String? appUserId}) async {
     await configureBilling();
   }
@@ -104,6 +113,8 @@ class SubscriptionProvider extends ChangeNotifier {
   }
 
   void clear() {
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
     _reset();
     _ownerUserId = null;
     _purchaseSub?.cancel();
@@ -120,6 +131,23 @@ class SubscriptionProvider extends ChangeNotifier {
     } catch (_) {
       return null;
     }
+  }
+
+  void _armExpiryTimer() {
+    _expiryTimer?.cancel();
+    if (_expiresAt == null) return;
+
+    final now = DateTime.now();
+    final when = _expiresAt!;
+    final delay = when.isAfter(now)
+        ? when.difference(now) + const Duration(seconds: 2)
+        : const Duration(seconds: 1);
+
+    _expiryTimer = Timer(delay, () async {
+      try {
+        await refresh(force: true); // cuando vence, refresca con backend
+      } catch (_) {}
+    });
   }
 
   Future<void> refresh({bool force = false}) async {
@@ -180,6 +208,9 @@ class SubscriptionProvider extends ChangeNotifier {
       _expiresAt = _parseDate(json['expiresAt']); // e.g. "2025-09-15T12:00:00Z"
       _autoRenewing =
           (json['autoRenewing'] == true) || (json['auto_renewing'] == true);
+
+      // Programa un refresh automático al vencimiento
+      _armExpiryTimer();
 
       // Guarda cache local (por si UI lo necesita muy pronto)
       await session.setIsPremium(_isPremium);
@@ -338,6 +369,7 @@ class SubscriptionProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _expiryTimer?.cancel();
     _purchaseSub?.cancel();
     super.dispose();
   }

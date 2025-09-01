@@ -2,8 +2,9 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.db.database import db
-from app.subscriptions.models import UserSubscription  # <-- NUEVO
-from sqlalchemy import or_                             # <-- NUEVO
+
+# Usa el guard centralizado del service (fecha + estado)
+from app.services.games.games_service import _is_user_pro
 
 # Servicios
 from app.services.games import games_service
@@ -16,7 +17,6 @@ from app.services.games.games_service import (
 
 from app.services.notify.notifications_service import (
     create_notifications_for_game_winner,
-    # create_notifications_for_personal_winners,  # <- quitar si no lo usas
 )
 
 # Resolver user_id unificado (session → bearer → X-USER-ID)
@@ -28,14 +28,26 @@ games_bp = Blueprint("games_bp", __name__, url_prefix="/api/games")
 @games_bp.post("/generate")
 @jwt_required(optional=True)
 def generate():
+    uid_raw = get_jwt_identity()  # puede ser None
+    uid = int(uid_raw) if uid_raw is not None else None
+
     try:
-        uid_raw = get_jwt_identity()  # puede ser None
-        uid = int(uid_raw) if uid_raw is not None else None
+        # Guard explícito: no abrir/usar juegos si NO es PRO
+        if not uid or not _is_user_pro(uid):
+            return jsonify({
+                "ok": False,
+                "code": "NOT_PREMIUM",
+                "message": "Necesitas la suscripción PRO para jugar."
+            }), 403
 
         gid, numbers = generate_five_available(uid)
         db.session.commit()
 
         return jsonify({"ok": True, "data": {"game_id": gid, "numbers": numbers}}), 200
+
+    except PermissionError as e:  # por si el service eleva NOT_PREMIUM
+        db.session.rollback()
+        return jsonify({"ok": False, "code": "NOT_PREMIUM", "message": str(e)}), 403
     except Exception as e:
         db.session.rollback()
         return jsonify({"ok": False, "message": str(e)}), 500
@@ -62,18 +74,8 @@ def commit():
         numbers_int = [int(n) for n in numbers]
     except Exception:
         return jsonify({"error": "numbers debe contener enteros"}), 400
-    
-    sub = (
-        UserSubscription.query
-        .filter_by(user_id=uid, entitlement="pro", is_active=True)
-        .filter(or_(UserSubscription.current_period_end == None,
-                    UserSubscription.current_period_end > db.func.now()))
-        .first()
-    )
-    if not sub:
-        return jsonify({"ok": False, "code": "NOT_PREMIUM",
-                        "message": "Necesitas la suscripción PRO para reservar."}), 403
-    
+
+    # Deja que el service valide PRO y reglas del juego
     res = commit_selection(uid, game_id, numbers_int)
 
     if res.get("ok"):
@@ -82,6 +84,8 @@ def commit():
         return jsonify({"ok": True, "data": flat}), 200
 
     code = res.get("code")
+    if code == "NOT_PREMIUM":
+        return jsonify(res), 403
     if code in ("CONFLICT", "GAME_SWITCHED"):
         return jsonify(res), 409
     return jsonify(res), 400
@@ -164,19 +168,15 @@ def api_history():
     uid = _resolve_user_id()
     if not uid:
         return jsonify({"error": "No autorizado"}), 403
-        # --- NUEVO: exigir PRO para ver historial ---
 
-    sub = (
-    UserSubscription.query
-    .filter_by(user_id=int(uid), entitlement="pro", is_active=True)
-    .filter(or_(UserSubscription.current_period_end == None,
-                UserSubscription.current_period_end > db.func.now()))
-    .first()
-    )
-    if not sub:
-        return jsonify({"ok": False, "code": "NOT_PREMIUM",
-                        "message": "El historial es solo para usuarios PRO."}), 403
-    
+    # Mismo guard que en el service: fecha + estado
+    if not _is_user_pro(int(uid)):
+        return jsonify({
+            "ok": False,
+            "code": "NOT_PREMIUM",
+            "message": "El historial es solo para usuarios PRO."
+        }), 403
+
     page = int(request.args.get("page") or 1)
     per_page = int(request.args.get("per_page") or 20)
 
