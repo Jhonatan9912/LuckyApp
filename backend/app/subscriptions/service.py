@@ -64,6 +64,35 @@ def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
+def _decide_status(subscription_state: str, auto_renewing: Optional[bool], expiry_dt: Optional[datetime]) -> tuple[str, bool]:
+    """
+    Devuelve (status_str, is_active_bool) coherente con V2:
+    - Mientras no venza:
+        * auto_renewing=True  -> 'active'
+        * auto_renewing=False -> 'canceled' (acceso vigente hasta expiry)
+    - Si ya venció -> 'expired', is_active=False
+    - También soporta estados de Google como GRACE/ON_HOLD si te interesan.
+    """
+    now = _now_utc()
+    if not expiry_dt or expiry_dt <= now:
+        return "expired", False
+
+    s = (subscription_state or "").upper()
+    if s in ("IN_GRACE_PERIOD", "GRACE"):
+        return "grace", True
+    if s in ("ON_HOLD",):
+        return "on_hold", True
+    if s in ("PAUSED",):
+        return "paused", True
+
+    # Google normalmente reporta ACTIVE incluso tras cancelar, pero con autoRenewing=False
+    if auto_renewing is False:
+        return "canceled", True
+
+    # Por defecto, si está vigente y auto_renewing no es False, lo tratamos como active
+    return "active", True
+
+
 def _parse_gp_time(v) -> Optional[datetime]:
     """
     Acepta:
@@ -130,13 +159,11 @@ def get_status(user_id: Optional[int]) -> SubscriptionStatus:
 
     period_active = bool(end_at_utc and end_at_utc > now)
     status_str = getattr(sub, "status", "none") or "none"
-    is_active_flag = bool(getattr(sub, "is_active", False))
     auto_renewing = bool(getattr(sub, "auto_renewing", False))
 
+    # premium si NO ha vencido y el estado permite acceso
     is_premium = bool(
-        is_active_flag
-        or status_str == "active"
-        or (status_str == "canceled" and period_active)
+        period_active and status_str in ("active", "canceled", "grace", "on_hold", "paused")
     )
 
     return SubscriptionStatus(
@@ -256,26 +283,17 @@ def sync_purchase(
         raise Exception('Google Play: sin expiryTime válido en la respuesta')
 
 
-    # Estado y autorrenovación (Subscriptions v2)
-    state_raw = (gp.get('subscriptionState') or '').upper()  # ACTIVE, CANCELED, IN_GRACE_PERIOD, ON_HOLD, PAUSED, EXPIRED
-    auto_ren = bool(gp.get('autoRenewing', False))
+    # ---- Estado + autorrenovación (V2): autoRenewing viene en el line item ----
+    state_raw = (gp.get('subscriptionState') or '').upper()
+    auto_ren = li.get('autoRenewing')  # True/False/None
 
-    MAP = {
-        'ACTIVE': 'active',
-        'CANCELED': 'canceled',
-        'IN_GRACE_PERIOD': 'grace',
-        'ON_HOLD': 'on_hold',
-        'PAUSED': 'paused',
-        'EXPIRED': 'expired',
-    }
-    status_str = MAP.get(state_raw, 'active')
-
+    status_str, is_active_flag = _decide_status(state_raw, auto_ren, expiry_dt)
 
     sub.status = status_str
-    sub.is_active = (status_str == 'active') or (status_str == 'canceled' and expiry_dt > now)
+    sub.is_active = is_active_flag
     sub.current_period_start = period_start
     sub.current_period_end = expiry_dt
-    sub.auto_renewing = auto_ren
+    sub.auto_renewing = bool(auto_ren) if auto_ren is not None else False
 
 
     sub.last_purchase_id = purchase_id or getattr(sub, "last_purchase_id", None)
@@ -382,25 +400,19 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
                 skipped += 1
                 continue
 
-            # state + autorenovación
+            # ---- state + autorenovación (V2) ----
             state_raw = (gp.get('subscriptionState') or '').upper()
-            auto_ren = bool(gp.get('autoRenewing', False))
-            MAP = {
-                'ACTIVE': 'active',
-                'CANCELED': 'canceled',
-                'IN_GRACE_PERIOD': 'grace',
-                'ON_HOLD': 'on_hold',
-                'PAUSED': 'paused',
-                'EXPIRED': 'expired',
-            }
-            status_str = MAP.get(state_raw, 'active')
+            auto_ren = li.get('autoRenewing')  # True/False/None
+
+            status_str, is_active_flag = _decide_status(state_raw, auto_ren, expiry_dt)
 
             # actualiza
             sub.status = status_str
-            sub.is_active = (status_str == 'active') or (status_str == 'canceled' and expiry_dt > now)
+            sub.is_active = is_active_flag
             sub.current_period_start = period_start
             sub.current_period_end = expiry_dt
-            sub.auto_renewing = auto_ren
+            sub.auto_renewing = bool(auto_ren) if auto_ren is not None else False
+
 
             db.session.add(sub)
             updated += 1
