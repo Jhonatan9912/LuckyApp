@@ -45,24 +45,35 @@ def subscription_sync():
     except Exception:
         return jsonify({"ok": False, "code": "BAD_JSON"}), 400
 
-    # Acepta camelCase y snake_case
     product_id = (body.get("product_id") or body.get("productId") or "").strip()
     purchase_id = (body.get("purchase_id") or body.get("purchaseId") or "").strip()
     verification_data = (body.get("verification_data") or body.get("verificationData") or "").strip()
     package_name = (body.get("package_name") or body.get("packageName") or "").strip()
 
+    # 🔎 LOGS ÚTILES
+    current_app.logger.info({
+        "event": "sync_req",
+        "user_id": user_id,
+        "product_id": product_id,
+        "purchase_id": purchase_id,
+        "package_name": package_name or "ENV",
+        "token_len": len(verification_data),
+        "token_prefix": verification_data[:12] if verification_data else None,
+    })
+
     if not product_id or not verification_data:
         return jsonify({"ok": False, "code": "MISSING_FIELDS"}), 400
 
-    result = sync_purchase(
-        int(user_id),
-        product_id,
-        purchase_id,
-        verification_data,
-        package_name=package_name or None,
-    )
-    return jsonify(result), 200
-
+    try:
+        result = sync_purchase(
+            int(user_id), product_id, purchase_id, verification_data,
+            package_name=package_name or None,
+        )
+        return jsonify(result), 200
+    except Exception as e:
+        # Devuelve el error en JSON para depurar rápido desde el móvil/Postman
+        current_app.logger.exception("sync_purchase_failed")
+        return jsonify({"ok": False, "code": "SYNC_FAILED", "msg": str(e)}), 500
 
 @subscriptions_bp.post("/cancel")
 @jwt_required()
