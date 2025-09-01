@@ -1,10 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:base_app/presentation/providers/subscription_provider.dart';
 
+/// Ajusta estos valores a tu app real
+const String _kPackageName = 'com.tu.paquete';
+const String _kProductId = 'cm_suscripcion';
+
 /// Hoja inferior con el estado actual de la suscripción.
-class SubscriptionSheet extends StatelessWidget {
+class SubscriptionSheet extends StatefulWidget {
   const SubscriptionSheet({super.key});
+
+  @override
+  State<SubscriptionSheet> createState() => _SubscriptionSheetState();
+}
+
+class _SubscriptionSheetState extends State<SubscriptionSheet> {
+  bool _busy = false;
 
   @override
   Widget build(BuildContext context) {
@@ -12,9 +24,11 @@ class SubscriptionSheet extends StatelessWidget {
 
     final String plan = subs.isPremium ? 'PRO' : 'FREE';
     final String status = subs.isPremium ? 'Activo' : 'Inactivo';
-    final DateTime? renewsAt = null; // por ahora
-    final DateTime? expiresAt = subs.expiresAt;
-    final DateTime? since = null; // por ahora
+
+    // ← usa los datos reales del provider
+    final DateTime? since = subs.since;
+    final DateTime? renewsAt = subs.renewsAt;     // solo si auto-renueva
+    final DateTime? expiresAt = subs.expiresAt;   // fecha de expiración real
 
     return SafeArea(
       child: Padding(
@@ -40,12 +54,9 @@ class SubscriptionSheet extends StatelessWidget {
 
             // Plan & fechas
             _TwoLineRow(label: 'Plan', value: plan),
-            if (since != null)
-              _TwoLineRow(label: 'Desde', value: _fmtDate(since)),
-            if (expiresAt != null)
-              _TwoLineRow(label: 'Hasta', value: _fmtDate(expiresAt)),
-            if (renewsAt != null)
-              _TwoLineRow(label: 'Renovación', value: _fmtDate(renewsAt)),
+            if (since != null) _TwoLineRow(label: 'Desde', value: _fmtDate(since)),
+            if (expiresAt != null) _TwoLineRow(label: 'Vence', value: _fmtDate(expiresAt)),
+            if (renewsAt != null) _TwoLineRow(label: 'Renovación', value: _fmtDate(renewsAt)),
 
             const SizedBox(height: 8),
             const Divider(height: 24),
@@ -59,7 +70,46 @@ class SubscriptionSheet extends StatelessWidget {
             const _Bullet(text: 'Reservar números y funciones avanzadas'),
             const _Bullet(text: 'Jugar con más cifras'),
             const _Bullet(text: 'Notificaciones de premio en tiempo real'),
-            const SizedBox(height: 8),
+
+            const SizedBox(height: 16),
+
+            // Acciones
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _busy ? null : _openManageSubscriptions,
+                    icon: const Icon(Icons.manage_accounts),
+                    label: const Text('Gestionar'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextButton.icon(
+                    onPressed: _busy
+                        ? null
+                        : () async {
+                            setState(() => _busy = true);
+                            try {
+                              final p = context.read<SubscriptionProvider>();
+                              await p.restore();            // pide a Play sus compras
+                              await p.refresh(force: true); // refresca estado desde tu backend
+                            } finally {
+                              if (mounted) setState(() => _busy = false);
+                            }
+                          },
+                    icon: _busy
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.restore),
+                    label: const Text('Restaurar compras'),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -72,6 +122,20 @@ class SubscriptionSheet extends StatelessWidget {
     final yyyy = d.year.toString();
     return '$dd/$mm/$yyyy';
   }
+
+  Future<void> _openManageSubscriptions() async {
+    // Deep link a la pantalla de suscripciones de Google Play para tu SKU
+    final uri = Uri.parse(
+      'https://play.google.com/store/account/subscriptions'
+      '?sku=$_kProductId&package=$_kPackageName',
+    );
+
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      // Fallback: página general de suscripciones
+      final fallback = Uri.parse('https://play.google.com/store/account/subscriptions');
+      await launchUrl(fallback, mode: LaunchMode.externalApplication);
+    }
+  }
 }
 
 class _TwoLineRow extends StatelessWidget {
@@ -82,11 +146,12 @@ class _TwoLineRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final labelStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
-      color: Theme.of(context).colorScheme.outline,
-    );
-    final valueStyle = Theme.of(
-      context,
-    ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w700);
+          color: Theme.of(context).colorScheme.outline,
+        );
+    final valueStyle = Theme.of(context)
+        .textTheme
+        .bodyLarge
+        ?.copyWith(fontWeight: FontWeight.w700);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
