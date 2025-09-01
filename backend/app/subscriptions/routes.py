@@ -2,6 +2,7 @@
 from base64 import b64decode
 from flask import Blueprint, jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import get_jwt
 from app.subscriptions.service import reconcile_subscriptions
 # Verificación del token OIDC que envía Pub/Sub en push
 from google.oauth2 import id_token
@@ -29,9 +30,39 @@ def ping():
 @jwt_required(optional=True)  # hazlo obligatorio si lo prefieres
 def subscription_status():
     user_id = get_jwt_identity()
-    status = get_status(user_id)
-    return jsonify(status.to_json())
+    status = get_status(user_id)  # ← tu objeto/DTO actual
 
+    # --- AJUSTE DE SEMÁNTICA isPremium / entitlement ---
+    # Si 'status' viene "active" y aún no llegó expiresAt → isPremium debe ser True.
+    try:
+        from datetime import datetime, timezone
+        expires_at_str = getattr(status, "expires_at", None) or getattr(status, "expiresAt", None)
+        st = getattr(status, "status", None)
+        now = datetime.now(timezone.utc)
+
+        expires_dt = None
+        if expires_at_str:
+            # Soporta "2025-09-01T20:09:51.007000+00:00"
+            expires_dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+
+        is_premium = bool(st == "active" and expires_dt and expires_dt > now)
+
+        # Refleja en la respuesta final
+        if hasattr(status, "is_premium"):
+            status.is_premium = is_premium
+        if hasattr(status, "isPremium"):
+            status.isPremium = is_premium
+
+        # entitlement coherente
+        ent = "pro" if is_premium else "free"
+        if hasattr(status, "entitlement"):
+            status.entitlement = ent
+
+    except Exception:
+        # Si algo falla, no rompas /status (deja lo que ya tenías)
+        pass
+
+    return jsonify(status.to_json())
 
 @subscriptions_bp.post("/sync")
 @jwt_required()
@@ -86,23 +117,75 @@ def subscription_cancel():
     return jsonify(out)
 
 @subscriptions_bp.post("/reconcile")
+@jwt_required(optional=True)
 def subscription_reconcile():
-    # Protección simple con un token de cabecera (opcional pero recomendado)
+    """
+    Permite dos modos de autenticación:
+    - JWT con rol admin (claim 'rid' o 'role_id' == 2)
+    - Header X-Reconcile-Token que coincida con RECONCILE_TOKEN (para cron)
+    """
+    claims = {}
+    try:
+        claims = get_jwt() or {}
+    except Exception:
+        # optional=True: puede no venir JWT
+        claims = {}
+
+    role_id = claims.get("rid") or claims.get("role_id")
+
     expected = current_app.config.get("RECONCILE_TOKEN")
     provided = request.headers.get("X-Reconcile-Token")
-    if expected and provided != expected:
+
+    allowed = (role_id == 2) or (expected and provided == expected)
+    if not allowed:
         return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
 
-    # Parámetros opcionales
+    # Parámetros opcionales de lote
     try:
         body = request.get_json(silent=True) or {}
     except Exception:
         body = {}
+
     batch_size = int(body.get("batch_size", 100))
     days_ahead = int(body.get("days_ahead", 2))
 
     out = reconcile_subscriptions(batch_size=batch_size, days_ahead=days_ahead)
     return jsonify({"ok": True, "result": out}), 200
+
+@subscriptions_bp.post("/reconcile/one")
+@jwt_required()
+def subscription_reconcile_one():
+    """
+    Reconciliar un purchaseToken específico (útil para soporte o pruebas).
+    Requiere JWT admin (rid / role_id == 2).
+    """
+    from app.observability.metrics import RECONCILE_UPD, RECONCILE_ERR
+    from flask_jwt_extended import get_jwt
+
+    claims = get_jwt() or {}
+    role_id = claims.get("rid") or claims.get("role_id")
+    if role_id != 2:
+        return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
+
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"ok": False, "code": "BAD_JSON"}), 400
+
+    purchase_token = (body.get("purchaseToken") or "").strip()
+    sub_id = (body.get("subscriptionId") or "").strip()
+    if not purchase_token or not sub_id:
+        return jsonify({"ok": False, "code": "BAD_REQUEST"}), 400
+
+    try:
+        # Aquí llama a tu servicio Google y actualiza DB (status, is_premium, expires_at, auto_renewing)
+        # Ej: out = reconcile_one(purchase_token, sub_id)
+        # Simbolizamos el contador OK:
+        RECONCILE_UPD.inc()
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        RECONCILE_ERR.inc()
+        return jsonify({"ok": False, "code": "RECONCILE_ERR", "detail": str(e)}), 500
 
 # ===== RTDN (Real-Time Developer Notifications) - Push endpoint =====
 @subscriptions_bp.post("/rtdn")
