@@ -8,6 +8,7 @@ from app.subscriptions.models import UserSubscription
 from app.subscriptions.google_play_client import build_android_publisher
 import os
 from googleapiclient.errors import HttpError
+from sqlalchemy import or_
 
 
 @dataclass
@@ -264,3 +265,104 @@ def rtdn_handle(purchase_token: str, package_name: str | None = None) -> Dict[st
         verification_data=purchase_token,
         package_name=package_name
     )
+
+def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[str, Any]:
+    """
+    Recorre suscripciones cercanas a expirar o en estados inestables y las revalida contra Google.
+    - Selecciona: status en ('on_hold','grace','active') o expirando en <= days_ahead días.
+    - Usa purchase_token para reconsultar SubscriptionsV2 y actualiza la DB.
+    Devuelve un pequeño resumen.
+    """
+    now = _now_utc()
+    pkg = os.environ.get('GOOGLE_PLAY_PACKAGE_NAME', '')
+    service = build_android_publisher()
+
+    q = (
+        UserSubscription.query
+        .filter(
+            or_(
+                UserSubscription.status.in_(('on_hold', 'grace', 'active')),
+                UserSubscription.current_period_end <= (now + timedelta(days=days_ahead))
+            )
+        )
+        .order_by(UserSubscription.current_period_end.asc().nullslast())
+        .limit(batch_size)
+    )
+
+    checked = 0
+    updated = 0
+    skipped = 0
+    errors = 0
+
+    for sub in q.all():
+        checked += 1
+
+        token = getattr(sub, "purchase_token", None)
+        if not token:
+            skipped += 1
+            continue
+
+        package_name = pkg or 'com.tu.paquete'  # fallback
+
+        try:
+            gp = service.purchases().subscriptionsv2().get(
+                packageName=package_name,
+                token=token,
+            ).execute()
+
+            line_items = gp.get('lineItems', [])
+            if not line_items:
+                skipped += 1
+                continue
+
+            li = line_items[0]
+
+            # start
+            start_ms = (li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime'))
+            if start_ms:
+                period_start = datetime.fromtimestamp(int(start_ms) / 1000.0, tz=timezone.utc)
+            else:
+                prev_end = _to_aware_utc(getattr(sub, "current_period_end", None))
+                period_start = prev_end if (prev_end and prev_end > now) else now
+
+            # end (expiry)
+            expiry_ms = li.get('expiryTime') or gp.get('latestOrder', {}).get('expiryTime')
+            if not expiry_ms:
+                skipped += 1
+                continue
+            expiry_dt = datetime.fromtimestamp(int(expiry_ms) / 1000.0, tz=timezone.utc)
+
+            # state + autorenovación
+            state_raw = (gp.get('subscriptionState') or '').upper()
+            auto_ren = bool(gp.get('autoRenewing', False))
+            MAP = {
+                'ACTIVE': 'active',
+                'CANCELED': 'canceled',
+                'IN_GRACE_PERIOD': 'grace',
+                'ON_HOLD': 'on_hold',
+                'PAUSED': 'paused',
+                'EXPIRED': 'expired',
+            }
+            status_str = MAP.get(state_raw, 'active')
+
+            # actualiza
+            sub.status = status_str
+            sub.is_active = (status_str == 'active') or (status_str == 'canceled' and expiry_dt > now)
+            sub.current_period_start = period_start
+            sub.current_period_end = expiry_dt
+            sub.auto_renewing = auto_ren
+
+            db.session.add(sub)
+            updated += 1
+
+        except Exception:
+            errors += 1
+            continue
+
+    db.session.commit()
+    return {
+        "checked": checked,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+    }

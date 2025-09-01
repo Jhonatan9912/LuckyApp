@@ -2,7 +2,7 @@
 from base64 import b64decode
 from flask import Blueprint, jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-
+from app.subscriptions.service import reconcile_subscriptions
 # Verificación del token OIDC que envía Pub/Sub en push
 from google.oauth2 import id_token
 from google.auth.transport import requests as g_requests
@@ -74,6 +74,24 @@ def subscription_cancel():
     out = cancel(int(user_id))
     return jsonify(out)
 
+@subscriptions_bp.post("/reconcile")
+def subscription_reconcile():
+    # Protección simple con un token de cabecera (opcional pero recomendado)
+    expected = current_app.config.get("RECONCILE_TOKEN")
+    provided = request.headers.get("X-Reconcile-Token")
+    if expected and provided != expected:
+        return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
+
+    # Parámetros opcionales
+    try:
+        body = request.get_json(silent=True) or {}
+    except Exception:
+        body = {}
+    batch_size = int(body.get("batch_size", 100))
+    days_ahead = int(body.get("days_ahead", 2))
+
+    out = reconcile_subscriptions(batch_size=batch_size, days_ahead=days_ahead)
+    return jsonify({"ok": True, "result": out}), 200
 
 # ===== RTDN (Real-Time Developer Notifications) - Push endpoint =====
 @subscriptions_bp.post("/rtdn")
