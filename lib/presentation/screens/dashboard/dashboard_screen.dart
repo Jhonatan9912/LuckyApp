@@ -480,9 +480,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     // Lee el provider UNA vez aquí
     final subs = context.watch<SubscriptionProvider>();
 
-    // Mientras se verifica PRO/Free o se está activando tras una compra,
-    // no mostramos nada para evitar parpadeo.
-    if (subs.loading || subs.activating) {
+    if (subs.activating) {
       return const SizedBox.shrink();
     }
 
