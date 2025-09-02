@@ -2,11 +2,59 @@
 from decimal import Decimal
 from sqlalchemy import text
 from app.db.database import db
-from datetime import datetime, timezone
-
+from datetime import datetime, timezone, timedelta 
+from app.models import ReferralCommission 
 DEFAULT_CURRENCY = "COP"
+import os 
+
+def get_maturity_days() -> int:
+    """
+    Días para pasar pending → available.
+    Prod: 3 (por ventana de reembolso)
+    Dev/Sandbox: configurable y corto para pruebas (0 o 1).
+    """
+    env = (os.getenv('ENV', '') or '').lower()
+    if env in ('dev', 'sandbox', 'staging'):
+        return int(os.getenv('MATURITY_DAYS', '1'))
+    return int(os.getenv('MATURITY_DAYS', '3'))
+
+def mature_commissions(days: int | None = None) -> int:
+    """
+    Pasa comisiones de pending → available si:
+      - amount_micros > 0
+      - event_time <= now - days
+    Devuelve cuántas filas actualizó.
+    """
+    if days is None:
+        days = get_maturity_days()
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    q = (
+        ReferralCommission.query
+        .filter(ReferralCommission.status == 'pending')
+        .filter(ReferralCommission.amount_micros > 0)
+        .filter(ReferralCommission.event_time <= cutoff)
+    )
+
+    n = 0
+    for rc in q.all():
+        rc.status = 'available'
+        db.session.add(rc)
+        n += 1
+
+    db.session.commit()
+    return n
 
 def get_payout_totals(referrer_user_id: int, currency: str = DEFAULT_CURRENCY) -> dict:
+    """
+    Devuelve:
+      - currency
+      - pending:   suma en micros → unidades
+      - available: suma en micros → unidades (listo para retiro)
+      - paid:      suma en micros → unidades (pagado históricamente)
+      - visible_total: pending + available (lo que muestras al usuario de inmediato)
+    """
     row_p = db.session.execute(
         text("""
             SELECT COALESCE(SUM(commission_micros),0) AS pend,
@@ -15,6 +63,15 @@ def get_payout_totals(referrer_user_id: int, currency: str = DEFAULT_CURRENCY) -
             WHERE referrer_user_id = :uid AND status = 'pending'
         """),
         {"uid": referrer_user_id, "cur": currency}
+    ).mappings().first()
+
+    row_a = db.session.execute(
+        text("""
+            SELECT COALESCE(SUM(commission_micros),0) AS avail
+            FROM referral_commissions
+            WHERE referrer_user_id = :uid AND status = 'available'
+        """),
+        {"uid": referrer_user_id}
     ).mappings().first()
 
     row_paid = db.session.execute(
@@ -26,12 +83,19 @@ def get_payout_totals(referrer_user_id: int, currency: str = DEFAULT_CURRENCY) -
         {"uid": referrer_user_id}
     ).mappings().first()
 
-    pend_micros = (row_p or {}).get("pend", 0) or 0
-    paid_micros = (row_paid or {}).get("paid", 0) or 0
+    pend_micros  = (row_p or {}).get("pend", 0) or 0
+    avail_micros = (row_a or {}).get("avail", 0) or 0
+    paid_micros  = (row_paid or {}).get("paid", 0) or 0
     cur = (row_p or {}).get("cur") or currency
 
     to_units = lambda x: float(Decimal(x) / Decimal(1_000_000))
-    return {"currency": cur, "pending": to_units(pend_micros), "paid": to_units(paid_micros)}
+    return {
+        "currency": cur,
+        "pending": to_units(pend_micros),
+        "available": to_units(avail_micros),        # ← para habilitar el botón
+        "paid": to_units(paid_micros),
+        "visible_total": to_units(pend_micros + avail_micros),  # ← lo que ves desde el día 0
+    }
 
 def _get_commission_percent() -> float:
     """

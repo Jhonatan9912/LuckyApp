@@ -172,6 +172,26 @@ def _pick_line_item(line_items: list[dict]) -> dict:
             best, best_exp = li, exp
     return best or items[0]
 
+def _price_from_catalog(product_id: str, default_currency: str = "COP") -> tuple[int, str]:
+    """
+    Busca un precio de catálogo para el product_id.
+    Hace match por prefijo para cubrir variantes de base plan / offers.
+    Devuelve (price_micros, currency).
+    """
+    CATALOG = {
+        "cm_suscripcion": (10_000_000, "COP"),  # 10.000 COP en micros
+        # agrega otros productos si tienes...
+    }
+    pid = (product_id or "").strip()
+    # match exacto
+    if pid in CATALOG:
+        return CATALOG[pid]
+    # match por prefijo (ej: "cm_suscripcion:plan_mensual")
+    for k, v in CATALOG.items():
+        if pid.startswith(k):
+            return v
+    return (0, default_currency)
+
 def get_status(user_id: Optional[int]) -> SubscriptionStatus:
     """
     Devuelve el estado de suscripción del usuario.
@@ -396,6 +416,12 @@ def sync_purchase(
     db.session.commit()
     _log_event("subs_sync_ok", user_id=user_id, product_id=product_id, status=status_str, expires_at=expiry_dt.isoformat())
 
+    try:
+        from app.services.referrals.payouts_service import mature_pending_commissions
+        mature_pending_commissions()
+    except Exception as _e:
+        _log_event("mature_err", err=str(_e))
+
     SUBS_SYNC_OK.inc()
 
     return {
@@ -548,6 +574,11 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
 
     db.session.commit()
     _log_event("reconcile_done", checked=checked, updated=updated, skipped=skipped, errors=errors)
+    try:
+        from app.services.referrals.payouts_service import mature_pending_commissions
+        mature_pending_commissions()
+    except Exception as _e:
+        _log_event("mature_err", err=str(_e))
     return {
         "checked": checked,
         "updated": updated,
