@@ -379,28 +379,19 @@ def sync_purchase(
     event_time_raw = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
     event_time_dt  = _parse_gp_time(event_time_raw)
 
-      # === FORZAR PRECIO EN SANDBOX/DEV PARA PRUEBAS ===
+    # === OVERRIDE 100% CONTROLADO POR ENV PARA PRUEBAS ===
     env = (os.getenv('ENV', '') or '').lower()
-    if env in ('dev', 'sandbox', 'staging'):
-        PRICE_BY_PRODUCT = {
-            "cm_suscripcion": 10_000_000,  # 10.000 COP → micros
-        }
-        pid_for_map = (product_id_gp or product_id or "").strip()
-        forced = 0
-        if pid_for_map in PRICE_BY_PRODUCT:
-            forced = PRICE_BY_PRODUCT[pid_for_map]
-        else:
-            for k, v in PRICE_BY_PRODUCT.items():
-                if pid_for_map.startswith(k):
-                    forced = v
-                    break
-        if forced > 0:
-            price_micros = forced
-            currency = "COP"
-            _log_event("sandbox_forced_price",
-                       product_id=pid_for_map, price_micros=price_micros, env=env)
+    force_override = os.getenv('FORCE_TEST_PRICE', '0') == '1'
+    test_price_micros = int(os.getenv('TEST_PRICE_MICROS', '0') or 0)
+    test_currency = os.getenv('TEST_PRICE_CURRENCY', 'COP') or 'COP'
 
-    # -----------------------------------------------
+    # Si estás en dev/sandbox o si pides override explícito, y hay precio de prueba:
+    if (env in ('dev', 'sandbox', 'staging') or force_override) and test_price_micros > 0:
+        price_micros = test_price_micros
+        currency = test_currency
+        _log_event("test_price_override",
+                env=env, forced=bool(force_override),
+                price_micros=price_micros, currency=currency)
 
     # Acredita comisión SOLO si hay usuario válido y el periodo está vigente
     if user_id and expiry_dt and expiry_dt > now:
@@ -572,16 +563,20 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
             event_time_raw = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
             event_time_dt = _parse_gp_time(event_time_raw)
             
-                        # --- Fallback de precio SOLO para sandbox/test ---
-            is_test = bool(gp.get('testPurchase', False))
-            if (is_test or os.getenv('ENV', '').lower() in ('dev', 'sandbox', 'staging')) and price_micros == 0:
-                PRICE_BY_PRODUCT = {
-                    "cm_suscripcion": 10_000_000,  # 10.000 COP → micros
-                }
-                price_micros = PRICE_BY_PRODUCT.get(product_id_gp, 0)
-                _log_event("reconcile_price_fallback",
-                        user_id=sub.user_id, product_id=product_id_gp,
-                        price_micros=price_micros, reason="sandbox_price_zero")
+            # === OVERRIDE 100% CONTROLADO POR ENV PARA PRUEBAS ===
+            env = (os.getenv('ENV', '') or '').lower()
+            force_override = os.getenv('FORCE_TEST_PRICE', '0') == '1'
+            test_price_micros = int(os.getenv('TEST_PRICE_MICROS', '0') or 0)
+            test_currency = os.getenv('TEST_PRICE_CURRENCY', 'COP') or 'COP'
+
+            # Si estás en dev/sandbox o si pides override explícito, y hay precio de prueba:
+            if (env in ('dev', 'sandbox', 'staging') or force_override) and test_price_micros > 0:
+                price_micros = test_price_micros
+                currency = test_currency
+                _log_event("test_price_override",
+                        env=env, forced=bool(force_override),
+                        price_micros=price_micros, currency=currency)
+
             # -----------------------------------------------
 
             if sub.user_id and expiry_dt and expiry_dt > now:
