@@ -17,49 +17,82 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
 
     q_norm = q.strip() if q and q.strip() else None
 
-    base_stmt = text("""
-        SELECT
-          u.id,
-          u.name,
-          u.phone,
-          u.public_code,
-          u.role_id,
-          COALESCE(r.role_name, 'Desconocido') AS role
-        FROM users u
-        LEFT JOIN public.roles r ON r.id = u.role_id
-        WHERE (:q::text IS NULL)
-           OR (u.name ILIKE '%' || :q || '%'
-            OR u.phone ILIKE '%' || :q || '%'
-            OR u.public_code ILIKE '%' || :q || '%'
-            OR r.role_name ILIKE '%' || :q || '%')
-        ORDER BY u.id DESC
-        OFFSET :offset
-        LIMIT :limit
-    """).bindparams(
-        bindparam("q", type_=String),       # ← tipado evita AmbiguousParameter
-        bindparam("offset", type_=Integer),
-        bindparam("limit", type_=Integer),
-    )
+    if not q_norm:
+        # ▶️ SIN filtro de búsqueda
+        base_stmt = text("""
+            SELECT
+              u.id,
+              u.name,
+              u.phone,
+              u.public_code,
+              u.role_id,
+              COALESCE(r.role_name, 'Desconocido') AS role
+            FROM users u
+            LEFT JOIN public.roles r ON r.id = u.role_id
+            ORDER BY u.id DESC
+            OFFSET :offset
+            LIMIT :limit
+        """).bindparams(
+            bindparam("offset", type_=Integer),
+            bindparam("limit", type_=Integer),
+        )
 
-    rows = db.session.execute(
-        base_stmt,
-        {"q": q_norm, "offset": offset, "limit": per_page},
-    ).mappings().all()
+        rows = db.session.execute(
+            base_stmt, {"offset": offset, "limit": per_page}
+        ).mappings().all()
 
-    count_stmt = text("""
-        SELECT COUNT(*)::bigint
-        FROM users u
-        LEFT JOIN public.roles r ON r.id = u.role_id
-        WHERE (:q::text IS NULL)
-           OR (u.name ILIKE '%' || :q || '%'
-            OR u.phone ILIKE '%' || :q || '%'
-            OR u.public_code ILIKE '%' || :q || '%'
-            OR r.role_name ILIKE '%' || :q || '%')
-    """).bindparams(
-        bindparam("q", type_=String),
-    )
+        count_stmt = text("""
+            SELECT COUNT(*)::bigint
+            FROM users u
+            LEFT JOIN public.roles r ON r.id = u.role_id
+        """)
 
-    total = db.session.execute(count_stmt, {"q": q_norm}).scalar() or 0
+        total = db.session.execute(count_stmt).scalar() or 0
+
+    else:
+        # ▶️ CON filtro de búsqueda (usamos :q_like y NO usamos IS NULL)
+        q_like = f"%{q_norm}%"
+
+        base_stmt = text("""
+            SELECT
+              u.id,
+              u.name,
+              u.phone,
+              u.public_code,
+              u.role_id,
+              COALESCE(r.role_name, 'Desconocido') AS role
+            FROM users u
+            LEFT JOIN public.roles r ON r.id = u.role_id
+            WHERE (u.name ILIKE :q_like
+               OR  u.phone ILIKE :q_like
+               OR  u.public_code ILIKE :q_like
+               OR  r.role_name ILIKE :q_like)
+            ORDER BY u.id DESC
+            OFFSET :offset
+            LIMIT :limit
+        """).bindparams(
+            bindparam("q_like", type_=String),
+            bindparam("offset", type_=Integer),
+            bindparam("limit", type_=Integer),
+        )
+
+        rows = db.session.execute(
+            base_stmt, {"q_like": q_like, "offset": offset, "limit": per_page}
+        ).mappings().all()
+
+        count_stmt = text("""
+            SELECT COUNT(*)::bigint
+            FROM users u
+            LEFT JOIN public.roles r ON r.id = u.role_id
+            WHERE (u.name ILIKE :q_like
+               OR  u.phone ILIKE :q_like
+               OR  u.public_code ILIKE :q_like
+               OR  r.role_name ILIKE :q_like)
+        """).bindparams(
+            bindparam("q_like", type_=String),
+        )
+
+        total = db.session.execute(count_stmt, {"q_like": q_like}).scalar() or 0
 
     items = [dict(r) for r in rows]
     return {"items": items, "page": page, "per_page": per_page, "total": int(total)}
