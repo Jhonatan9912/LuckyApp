@@ -3,13 +3,19 @@ import 'package:flutter/material.dart';
 class ReferralKpis extends StatelessWidget {
   final int total;
   final int activos;
-  final int? inactivos; // opcional
+  final int? inactivos;
+  final double? comisionPendiente;
+  final double? comisionPagada;
+  final String? moneda;
 
   const ReferralKpis({
     super.key,
     required this.total,
     required this.activos,
     this.inactivos,
+    this.comisionPendiente,
+    this.comisionPagada,
+    this.moneda,
   });
 
   @override
@@ -18,13 +24,26 @@ class ReferralKpis extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Row(
+      child: Column(
         children: [
-          _box('Referidos', '$total'),
-          const SizedBox(width: 12),
-          _box('Activos', '$activos'),
-          const SizedBox(width: 12),
-          _box('Inactivos', '$inact'),
+          Row(
+            children: [
+              _box('Referidos', '$total'),
+              const SizedBox(width: 12),
+              _box('Activos', '$activos'),
+              const SizedBox(width: 12),
+              _box('Inactivos', '$inact'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (comisionPendiente != null || comisionPagada != null)
+            Row(
+              children: [
+                _box('Pendiente', '${comisionPendiente?.toStringAsFixed(0)} ${moneda ?? ''}'),
+                const SizedBox(width: 12),
+                _box('Pagado', '${comisionPagada?.toStringAsFixed(0)} ${moneda ?? ''}'),
+              ],
+            ),
         ],
       ),
     );

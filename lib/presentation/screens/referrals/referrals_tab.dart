@@ -19,9 +19,47 @@ class ReferralsTab extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.only(bottom: 80),
             children: [
+              // 👇 NUEVO: Tarjeta que pinta la comisión disponible del provider
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Comisión disponible',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        // p.availableCop lo provee el Provider
+                        '\$${p.availableCop.toStringAsFixed(0)}',
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.blue,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
 
-              // KPIs existentes
-              ReferralKpis(total: p.total, activos: p.activos, inactivos: p.inactivos),
+              // KPIs existentes (cuentas)
+              ReferralKpis(
+                total: p.total,
+                activos: p.activos,
+                inactivos: p.inactivos,
+                comisionPendiente: p.payoutPending,
+                comisionPagada: p.payoutPaid,
+                moneda: p.payoutCurrency,
+              ),
 
               const SizedBox(height: 4),
               Padding(
@@ -29,28 +67,40 @@ class ReferralsTab extends StatelessWidget {
                 child: Text(
                   'Últimos referidos',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               const SizedBox(height: 8),
 
               if (p.items.isEmpty && !p.loading) ...[
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 24,
+                  ),
                   child: Text(
                     'Aún no tienes referidos.',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.black54),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodyMedium?.copyWith(color: Colors.black54),
                   ),
                 ),
               ] else ...[
-                ...p.items.map((e) => ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-                      leading: const CircleAvatar(child: Icon(Icons.person)),
-                      title: Text(e.referredName ?? e.referredEmail ?? 'Usuario'),
-                      subtitle: Text('Estado: ${_humanStatus(e.status)} • ${_fmt(e.createdAt)}'),
-                      trailing: _ProBadgeMini(active: e.proActive),
-                    )),
+                ...p.items.map(
+                  (e) => ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 2,
+                    ),
+                    leading: const CircleAvatar(child: Icon(Icons.person)),
+                    title: Text(e.referredName ?? e.referredEmail ?? 'Usuario'),
+                    subtitle: Text(
+                      'Estado: ${_humanStatus(e.status)} • ${_fmt(e.createdAt)}',
+                    ),
+                    trailing: _ProBadgeMini(active: e.proActive),
+                  ),
+                ),
               ],
 
               if (p.loading) ...[
@@ -88,7 +138,6 @@ class ReferralsTab extends StatelessWidget {
     return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
   }
 }
-
 
 class _ProBadgeMini extends StatelessWidget {
   final bool active;
