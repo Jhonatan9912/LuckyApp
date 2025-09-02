@@ -32,6 +32,17 @@ def _credit_referral_if_any(*, purchaser_user_id: int, product_id: str,
                             event_time=None):
     """Crea UNA comisión por compra/renovación (idempotente por token+order_id)."""
     try:
+        # 🚧 Normaliza event_time a datetime aware UTC
+        if event_time is not None:
+            if isinstance(event_time, datetime):
+                if event_time.tzinfo is None:
+                    event_time = event_time.replace(tzinfo=timezone.utc)
+                else:
+                    event_time = event_time.astimezone(timezone.utc)
+            else:
+                # _parse_gp_time ya convierte ms/seg/RFC3339 → datetime UTC
+                event_time = _parse_gp_time(event_time)
+
         register_referral_commission(
             referred_user_id=purchaser_user_id,
             product_id=product_id or "unknown",
@@ -40,7 +51,7 @@ def _credit_referral_if_any(*, purchaser_user_id: int, product_id: str,
             purchase_token=purchase_token,
             order_id=order_id,
             source="google_play",
-            event_time=event_time,
+            event_time=event_time,  # ✅ siempre datetime UTC o None
         )
     except Exception:
         db.session.rollback()
@@ -345,8 +356,9 @@ def sync_purchase(
     currency      = price.get('currency') or "COP"
     product_id_gp = li.get('productId') or (gp.get('latestOrder') or {}).get('productId') or ""
     order_id      = gp.get('latestOrderId') or (gp.get('latestOrder') or {}).get('orderId')
-    event_time    = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
-
+    event_time_raw = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
+    # ✅ convertir antes de pasar
+    event_time_dt = _parse_gp_time(event_time_raw)
     # Acredita comisión SOLO si hay usuario válido y el periodo está vigente
     if user_id and expiry_dt and expiry_dt > now:
         _credit_referral_if_any(
@@ -356,7 +368,7 @@ def sync_purchase(
             order_id=order_id,
             price_amount_micros=price_micros,
             price_currency_code=currency,
-            event_time=event_time,
+            event_time=event_time_dt,  # ✅ datetime
         )
 
 
@@ -485,7 +497,8 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
             currency      = price.get('currency') or "COP"
             product_id_gp = li.get('productId') or (gp.get('latestOrder') or {}).get('productId') or ""
             order_id      = gp.get('latestOrderId') or (gp.get('latestOrder') or {}).get('orderId')
-            event_time    = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
+            event_time_raw = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
+            event_time_dt = _parse_gp_time(event_time_raw)
 
             if sub.user_id and expiry_dt and expiry_dt > now:
                 _credit_referral_if_any(
@@ -495,8 +508,9 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
                     order_id=order_id,
                     price_amount_micros=price_micros,
                     price_currency_code=currency,
-                    event_time=event_time,
+                    event_time=event_time_dt,  # ✅ datetime
                 )
+
 
 
             db.session.add(sub)
@@ -575,6 +589,7 @@ def backfill_commissions(limit: int = 1000) -> Dict[str, Any]:
             token = getattr(sub, "purchase_token", None) or f"local-{sub.id}"
             order_id = getattr(sub, "last_purchase_id", None) or f"backfill-{sub.id}"
             event_time = getattr(sub, "current_period_start", None)
+            event_time = _to_aware_utc(event_time)
 
             ok = register_referral_commission(
                 referred_user_id=user_id,
