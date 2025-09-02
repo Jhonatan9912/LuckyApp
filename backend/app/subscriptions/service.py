@@ -359,6 +359,19 @@ def sync_purchase(
     event_time_raw = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
     # ✅ convertir antes de pasar
     event_time_dt = _parse_gp_time(event_time_raw)
+
+    # --- Fallback de precio SOLO para sandbox/test ---
+    is_test = bool(gp.get('testPurchase', False))  # flag de Google en sandbox
+    if (is_test or os.getenv('ENV', '').lower() in ('dev', 'sandbox', 'staging')) and price_micros == 0:
+        PRICE_BY_PRODUCT = {
+            "cm_suscripcion": 10_000_000,  # 10.000 COP → micros
+        }
+        price_micros = PRICE_BY_PRODUCT.get(product_id_gp or product_id, 0)
+        _log_event("subs_sync_price_fallback",
+                user_id=user_id, product_id=product_id_gp or product_id,
+                price_micros=price_micros, reason="sandbox_price_zero")
+    # -----------------------------------------------
+
     # Acredita comisión SOLO si hay usuario válido y el periodo está vigente
     if user_id and expiry_dt and expiry_dt > now:
         _credit_referral_if_any(
@@ -499,6 +512,18 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
             order_id      = gp.get('latestOrderId') or (gp.get('latestOrder') or {}).get('orderId')
             event_time_raw = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
             event_time_dt = _parse_gp_time(event_time_raw)
+            
+                        # --- Fallback de precio SOLO para sandbox/test ---
+            is_test = bool(gp.get('testPurchase', False))
+            if (is_test or os.getenv('ENV', '').lower() in ('dev', 'sandbox', 'staging')) and price_micros == 0:
+                PRICE_BY_PRODUCT = {
+                    "cm_suscripcion": 10_000_000,  # 10.000 COP → micros
+                }
+                price_micros = PRICE_BY_PRODUCT.get(product_id_gp, 0)
+                _log_event("reconcile_price_fallback",
+                        user_id=sub.user_id, product_id=product_id_gp,
+                        price_micros=price_micros, reason="sandbox_price_zero")
+            # -----------------------------------------------
 
             if sub.user_id and expiry_dt and expiry_dt > now:
                 _credit_referral_if_any(
