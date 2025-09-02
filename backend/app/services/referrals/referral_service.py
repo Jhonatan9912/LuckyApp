@@ -1,6 +1,7 @@
 from typing import List, Dict, Any
 from sqlalchemy import text
 from app.db.database import db  # tu SQLAlchemy()
+from datetime import datetime, timezone
 
 # Cambia esta condición si tu lógica PRO es distinta (status/expires_at).
 PRO_CONDITION = "s.status = 'active'"
@@ -141,7 +142,6 @@ def link_referral_on_signup(referral_code: str | None, new_user_id: int) -> None
   # =======================
 #  COMISIONES (LEDGER)
 # =======================
-from datetime import datetime, timezone
 
 def _get_commission_percent() -> float:
     """

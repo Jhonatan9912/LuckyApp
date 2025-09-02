@@ -1,11 +1,12 @@
 # app/services/referrals/payouts_service.py
+import os
 from decimal import Decimal
 from sqlalchemy import text
 from app.db.database import db
-from datetime import datetime, timezone, timedelta 
-from app.models import ReferralCommission 
+from datetime import datetime, timezone, timedelta
+
 DEFAULT_CURRENCY = "COP"
-import os 
+
 
 def get_maturity_days() -> int:
     """
@@ -30,21 +31,19 @@ def mature_commissions(days: int | None = None) -> int:
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    q = (
-        ReferralCommission.query
-        .filter(ReferralCommission.status == 'pending')
-        .filter(ReferralCommission.amount_micros > 0)
-        .filter(ReferralCommission.event_time <= cutoff)
+    res = db.session.execute(
+        text("""
+            UPDATE referral_commissions
+               SET status = 'available'
+             WHERE status = 'pending'
+               AND amount_micros > 0
+               AND event_time <= :cutoff
+        """),
+        {"cutoff": cutoff.isoformat()}
     )
-
-    n = 0
-    for rc in q.all():
-        rc.status = 'available'
-        db.session.add(rc)
-        n += 1
-
     db.session.commit()
-    return n
+    # res.rowcount devuelve cuántas filas cambió el UPDATE
+    return int(res.rowcount or 0)
 
 def get_payout_totals(referrer_user_id: int, currency: str = DEFAULT_CURRENCY) -> dict:
     """
