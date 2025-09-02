@@ -42,8 +42,30 @@ def mature_commissions(days: int | None = None) -> int:
         {"cutoff": cutoff.isoformat()}
     )
     db.session.commit()
-    # res.rowcount devuelve cuántas filas cambió el UPDATE
+
     return int(res.rowcount or 0)
+
+def reject_commissions_for_token(purchase_token: str) -> int:
+    """
+    Marca como 'rejected' todas las comisiones PENDIENTES asociadas al purchase_token.
+    Se usa cuando llega RTDN con notificationType=12 (REVOKED/Refund).
+    Devuelve cuántas filas actualizó.
+    """
+    if not purchase_token:
+        return 0
+
+    res = db.session.execute(
+        text("""
+            UPDATE referral_commissions
+               SET status = 'rejected'
+             WHERE purchase_token = :token
+               AND status = 'pending'
+        """),
+        {"token": purchase_token}
+    )
+    db.session.commit()
+    return int(res.rowcount or 0)
+
 
 def get_payout_totals(referrer_user_id: int, currency: str = DEFAULT_CURRENCY) -> dict:
     """

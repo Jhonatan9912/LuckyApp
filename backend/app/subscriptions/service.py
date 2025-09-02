@@ -417,8 +417,8 @@ def sync_purchase(
     _log_event("subs_sync_ok", user_id=user_id, product_id=product_id, status=status_str, expires_at=expiry_dt.isoformat())
 
     try:
-        from app.services.referrals.payouts_service import mature_pending_commissions
-        mature_pending_commissions()
+        from app.services.referrals.payouts_service import mature_commissions
+        mature_commissions()
     except Exception as _e:
         _log_event("mature_err", err=str(_e))
 
@@ -435,21 +435,44 @@ def sync_purchase(
         "autoRenewing": bool(auto_ren) if auto_ren is not None else False,
     }
 
-def rtdn_handle(purchase_token: str, package_name: str | None = None) -> Dict[str, Any]:
+def rtdn_handle(purchase_token: str, package_name: str | None = None, notification_type: int | str | None = None) -> Dict[str, Any]:
     """Maneja una notificación en tiempo real (RTDN)."""
     RTDN_RCVD.inc()
-    _log_event("rtdn_received", purchase_token=purchase_token, package_name=package_name)
+    _log_event("rtdn_received", purchase_token=purchase_token, package_name=package_name, notification_type=notification_type)
 
-    result = sync_purchase(
-        user_id=0,  # si luego mapeas token->usuario, aquí lo puedes poner
-        product_id="",
-        purchase_id="",
-        verification_data=purchase_token,
-        package_name=package_name,
-    )
+    # ✅ Si Google avisa REVOKED (12), rechaza comisiones y termina
+    try:
+        code = int(str(notification_type)) if notification_type is not None else None
+    except Exception:
+        code = None
 
-    _log_event("rtdn_processed", purchase_token=purchase_token)
-    return result
+    if code == 12:  # REVOKED / Refund
+        try:
+            from app.services.referrals.payouts_service import reject_commissions_for_token
+            rejected = reject_commissions_for_token(purchase_token)
+            _log_event("rtdn_refund_rejected", purchase_token=purchase_token, rejected=rejected)
+            return {"ok": True, "refund": True, "rejected": rejected}
+        except Exception as e:
+            RTDN_ERR.inc()
+            _log_event("rtdn_refund_err", purchase_token=purchase_token, err=str(e))
+            # devolvemos 200 desde routes para que Pub/Sub no reintente infinito
+            return {"ok": False, "refund": True, "err": str(e)}
+
+    # 🔁 Para cualquier otro tipo, seguimos con la reconciliación normal
+    try:
+        result = sync_purchase(
+            user_id=0,  # si luego mapeas token->usuario, aquí lo puedes poner
+            product_id="",
+            purchase_id="",
+            verification_data=purchase_token,
+            package_name=package_name,
+        )
+        _log_event("rtdn_processed", purchase_token=purchase_token)
+        return result
+    except Exception as e:
+        RTDN_ERR.inc()
+        _log_event("rtdn_handle_err", purchase_token=purchase_token, err=str(e))
+        return {"ok": False, "err": str(e)}
 
 def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[str, Any]:
     _log_event("reconcile_start", batch_size=batch_size, days_ahead=days_ahead)
@@ -574,11 +597,13 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
 
     db.session.commit()
     _log_event("reconcile_done", checked=checked, updated=updated, skipped=skipped, errors=errors)
+    
     try:
-        from app.services.referrals.payouts_service import mature_pending_commissions
-        mature_pending_commissions()
+        from app.services.referrals.payouts_service import mature_commissions
+        mature_commissions()
     except Exception as _e:
         _log_event("mature_err", err=str(_e))
+
     return {
         "checked": checked,
         "updated": updated,

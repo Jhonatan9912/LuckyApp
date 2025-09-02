@@ -233,6 +233,8 @@ def rtdn_push():
         package_name = j.get("packageName")
         sn = j.get("subscriptionNotification") or {}
         purchase_token = sn.get("purchaseToken") or j.get("purchaseToken")
+        notif_type = sn.get("notificationType") or j.get("notificationType")
+
     except Exception:
         # No reintentes infinito: 200 con motivo
         return jsonify({"ok": True, "reason": "UNPARSEABLE_PAYLOAD"}), 200
@@ -242,7 +244,7 @@ def rtdn_push():
 
     # 4) Reconsultar a Google y actualizar DB
     try:
-        out = rtdn_handle(purchase_token=purchase_token, package_name=package_name)
+        out = rtdn_handle(purchase_token=purchase_token, package_name=package_name, notification_type=notif_type)
         return jsonify({"ok": True, "result": out}), 200
     except Exception as e:
         # Si quieres que Pub/Sub reintente, devuelve 5xx; si no, 200 con error
