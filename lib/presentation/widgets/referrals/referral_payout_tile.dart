@@ -22,7 +22,7 @@ class ReferralPayoutTile extends StatelessWidget {
     // ✅ NO nullable: necesitamos el provider real
     final p = context.watch<ReferralProvider>();
     final currency = p.payoutCurrency.toUpperCase();
-    final amount   = p.payoutPending;
+    final amount   = p.availableCop;
 
     final symbol = currency == 'COP' ? r'$' : '';
     final fmt = NumberFormat.currency(

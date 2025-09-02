@@ -162,8 +162,9 @@ class ReferralsApi {
 
   Future<List<ReferralItem>> fetchList({int limit = 50, int offset = 0}) async {
     final token = await session.getToken();
+    // 👇 importante: con slash al final
     final uri = Uri.parse(
-      '$baseUrl/api/me/referrals?limit=$limit&offset=$offset',
+      '$baseUrl/api/me/referrals/?limit=$limit&offset=$offset',
     );
 
     final res = await http
@@ -176,6 +177,9 @@ class ReferralsApi {
           },
         )
         .timeout(_timeout);
+
+    debugPrint('[referrals_api] GET $uri -> ${res.statusCode}');
+    debugPrint('[referrals_api] body: ${res.body}');
 
     if (res.statusCode >= 200 && res.statusCode < 300) {
       final List<dynamic> data = json.decode(res.body);
@@ -228,6 +232,7 @@ class ReferralsApi {
     );
   }
 }
+
 // Helper para instanciar usando tus singletons actuales
 ReferralsApi buildReferralsApi() {
   return ReferralsApi(
@@ -235,4 +240,3 @@ ReferralsApi buildReferralsApi() {
     session: SessionManager(),
   );
 }
-

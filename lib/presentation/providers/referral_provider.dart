@@ -30,11 +30,19 @@ class ReferralProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1) Resumen (conteos +, si está disponible, montos)
       final summary = await api.fetchSummary();
       total = summary.total;
       activos = summary.activos;
       inactivos = summary.inactivos;
+
+      // ← clave
+      availableCop = summary.availableCop;
+      pendingCop = summary.pendingCop;
+      paidCop = summary.paidCop;
+
+      debugPrint(
+        '[provider] summary avail=$availableCop pend=$pendingCop paid=$paidCop',
+      );
 
       // Si tu ReferralSummary YA incluye montos del backend (available_cop, pending_cop, paid_cop),
       // los tomamos aquí. Si no, este bloque se salta sin romper.
@@ -44,8 +52,8 @@ class ReferralProvider extends ChangeNotifier {
         final p = dyn.pendingCop;
         final d = dyn.paidCop;
         if (a is num) availableCop = a.toDouble();
-        if (p is num) pendingCop   = p.toDouble();
-        if (d is num) paidCop      = d.toDouble();
+        if (p is num) pendingCop = p.toDouble();
+        if (d is num) paidCop = d.toDouble();
       } catch (_) {
         // summary no trae montos; seguimos con fallback de payouts
       }
