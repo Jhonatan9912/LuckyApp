@@ -1,6 +1,7 @@
-from sqlalchemy import text
-from app.db.database import db
+# app/services/admin/users_service.py
 from typing import Optional, Dict, Any
+from sqlalchemy import text, bindparam, Integer, String
+from app.db.database import db
 
 class UserHasActiveGames(Exception):
     """El usuario tiene juegos/balotas asociados; no se puede eliminar."""
@@ -14,7 +15,9 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
     per_page = max(1, min(100, int(per_page or 50)))
     offset = (page - 1) * per_page
 
-    rows = db.session.execute(text("""
+    q_norm = q.strip() if q and q.strip() else None
+
+    base_stmt = text("""
         SELECT
           u.id,
           u.name,
@@ -24,7 +27,7 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
           COALESCE(r.role_name, 'Desconocido') AS role
         FROM users u
         LEFT JOIN public.roles r ON r.id = u.role_id
-        WHERE (:q IS NULL)
+        WHERE (:q::text IS NULL)
            OR (u.name ILIKE '%' || :q || '%'
             OR u.phone ILIKE '%' || :q || '%'
             OR u.public_code ILIKE '%' || :q || '%'
@@ -32,30 +35,35 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
         ORDER BY u.id DESC
         OFFSET :offset
         LIMIT :limit
-    """), {
-        "q": q.strip() if q and q.strip() else None,
-        "offset": offset,
-        "limit": per_page,
-    }).mappings().all()
+    """).bindparams(
+        bindparam("q", type_=String),       # ← tipado evita AmbiguousParameter
+        bindparam("offset", type_=Integer),
+        bindparam("limit", type_=Integer),
+    )
 
-    total = db.session.execute(text("""
-        SELECT COUNT(*)
+    rows = db.session.execute(
+        base_stmt,
+        {"q": q_norm, "offset": offset, "limit": per_page},
+    ).mappings().all()
+
+    count_stmt = text("""
+        SELECT COUNT(*)::bigint
         FROM users u
         LEFT JOIN public.roles r ON r.id = u.role_id
-        WHERE (:q IS NULL)
+        WHERE (:q::text IS NULL)
            OR (u.name ILIKE '%' || :q || '%'
             OR u.phone ILIKE '%' || :q || '%'
             OR u.public_code ILIKE '%' || :q || '%'
             OR r.role_name ILIKE '%' || :q || '%')
-    """), {"q": q.strip() if q and q.strip() else None}).scalar() or 0
+    """).bindparams(
+        bindparam("q", type_=String),
+    )
+
+    total = db.session.execute(count_stmt, {"q": q_norm}).scalar() or 0
 
     items = [dict(r) for r in rows]
     return {"items": items, "page": page, "per_page": per_page, "total": int(total)}
 
-
-# =========================
-#  NUEVO: actualizar el rol
-# =========================
 def update_user_role(user_id: int, new_role_id: int) -> Dict[str, Any]:
     """
     Cambia el rol de un usuario. Valida que el rol exista y que el usuario exista.
@@ -63,34 +71,33 @@ def update_user_role(user_id: int, new_role_id: int) -> Dict[str, Any]:
     Lanza ValueError con mensajes claros si algo falla (para mapear a 4xx en la ruta).
     """
     try:
-        # 1) Validar que el rol exista
         role_row = db.session.execute(
-            text("SELECT id, role_name FROM public.roles WHERE id = :rid"),
-            {"rid": new_role_id}
-        ).mappings().first()
+            text("SELECT id, role_name FROM public.roles WHERE id = :rid")
+            .bindparams(bindparam("rid", type_=Integer))
+        , {"rid": new_role_id}).mappings().first()
 
         if role_row is None:
             raise ValueError("El rol especificado no existe.")
 
-        # 2) Actualizar al usuario y devolver lo actualizado
         updated = db.session.execute(
             text("""
                 UPDATE users
                 SET role_id = :rid
                 WHERE id = :uid
                 RETURNING id, name, phone, public_code, role_id
-            """),
+            """).bindparams(
+                bindparam("rid", type_=Integer),
+                bindparam("uid", type_=Integer),
+            ),
             {"uid": user_id, "rid": new_role_id}
         ).mappings().first()
 
         if updated is None:
-            # no existe el usuario
             db.session.rollback()
             raise ValueError("Usuario no encontrado.")
 
         db.session.commit()
 
-        # 3) Construir payload con el nombre del rol
         return {
             "id": updated["id"],
             "name": updated["name"],
@@ -101,17 +108,11 @@ def update_user_role(user_id: int, new_role_id: int) -> Dict[str, Any]:
         }
 
     except ValueError:
-        # errores de validación se vuelven a lanzar tal cual
         raise
     except Exception as e:
         db.session.rollback()
-        # re-lanzamos con mensaje genérico para no filtrar detalles internos
         raise RuntimeError(f"Error al actualizar rol: {e}") from e
 
-
-# =======================
-#  NUEVO: eliminar usuario
-# =======================
 def delete_user(user_id: int) -> bool:
     """
     Intenta eliminar al usuario.
@@ -121,24 +122,24 @@ def delete_user(user_id: int) -> bool:
     - Si elimina, devuelve True.
     """
     try:
-        # 1) Contar referencias
         numbers_count = db.session.execute(
-            text("SELECT COUNT(*) FROM game_numbers WHERE taken_by = :uid"),
+            text("SELECT COUNT(*) FROM game_numbers WHERE taken_by = :uid")
+            .bindparams(bindparam("uid", type_=Integer)),
             {"uid": user_id},
         ).scalar() or 0
 
         games_count = db.session.execute(
-            text("SELECT COUNT(*) FROM games WHERE user_id = :uid"),
+            text("SELECT COUNT(*) FROM games WHERE user_id = :uid")
+            .bindparams(bindparam("uid", type_=Integer)),
             {"uid": user_id},
         ).scalar() or 0
 
         if numbers_count > 0 or games_count > 0:
-            # No permitir eliminar si tiene “actividad”
             raise UserHasActiveGames(numbers_count, games_count)
 
-        # 2) Eliminar usuario
         row = db.session.execute(
-            text("DELETE FROM users WHERE id = :uid RETURNING id"),
+            text("DELETE FROM users WHERE id = :uid RETURNING id")
+            .bindparams(bindparam("uid", type_=Integer)),
             {"uid": user_id},
         ).first()
 
@@ -150,7 +151,6 @@ def delete_user(user_id: int) -> bool:
         return True
 
     except UserHasActiveGames:
-        # Deja pasar la excepción específica (la manejará la ruta)
         db.session.rollback()
         raise
     except Exception as e:
