@@ -25,7 +25,7 @@ class User(db.Model):
 
     # Rol y código público
     role_id = db.Column(db.Integer, nullable=False, server_default="2")
-    public_code = db.Column(db.String(20), unique=True, nullable=False)
+    public_code = db.Column(db.String(20), unique=True, nullable=False, index=True)
 
     # 👇 Campos que faltaban y ya están en la DB
     country_code = db.Column(db.String(5), nullable=True)  # ej: +57

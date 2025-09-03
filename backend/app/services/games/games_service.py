@@ -6,6 +6,7 @@ from app.models.game_models import Game
 from app.subscriptions.models import UserSubscription
 from sqlalchemy import or_
 from datetime import datetime, timezone
+import random
 
 def _is_user_pro(user_id: int) -> bool:
     """
@@ -38,7 +39,24 @@ def _is_user_pro(user_id: int) -> bool:
         return period_active and status in ("active", "canceled", "grace", "on_hold", "paused")
     except Exception:
         return False
+def _generate_preview_numbers(k: int = 5) -> list[int]:
+    # Solo para mostrar algo en pantalla; NO toca DB
+    return random.sample(range(0, 1000), k)
 
+def find_active_unscheduled_game_id() -> int | None:
+    """
+    Devuelve el id del ÚLTIMO juego abierto sin ganador (si existe).
+    NO crea nada.
+    """
+    row = db.session.execute(text("""
+        SELECT id
+        FROM games
+        WHERE state_id = 1
+          AND winning_number IS NULL
+        ORDER BY id DESC
+        LIMIT 1
+    """)).first()
+    return int(row[0]) if row else None
 # ===== Utilidades =====
 def get_or_create_active_unscheduled_game_id() -> int:
     """
@@ -101,21 +119,40 @@ def _get_or_create_current_game(user_id: int | None, avoid_game_id: int | None =
     return g.id
 
 
-def generate_five_available(user_id: int | None, avoid_game_id: int | None = None) -> Tuple[int, List[int]]:
+def generate_five_available(user_id: int | None, avoid_game_id: int | None = None) -> Tuple[int | None, List[int]]:
     """
-    Devuelve 5 números libres del ÚNICO juego 'abierto y sin programar'.
-    - No crea juegos nuevos aquí (solo usa/crea en get_or_create_active_unscheduled_game_id()).
-    - Respeta tus reglas: un solo juego activo donde todos juegan,
-      y solo se abrirá otro al cerrarse (1000) o al tener ganador / estar programado.
+    - PRO: usa/crea el juego abierto sin programar y trae 5 libres de ese juego.
+    - NO PRO: NO crea juegos. Si hay juego abierto, muestra 5 libres de ese juego.
+              Si no hay juego abierto, devuelve un PREVIEW (números random) y game_id=None.
     """
-
+    # ---- Usuario NO PRO: no crear juegos ----
     if not user_id or not _is_user_pro(int(user_id)):
-        raise PermissionError("NOT_PREMIUM")
-    
-    # 1) Siempre trabajar sobre el juego abierto y sin programar
+        gid = find_active_unscheduled_game_id()
+        if gid is None:
+            # No hay juego abierto -> devolvemos preview sin tocar DB
+            return None, _generate_preview_numbers()
+        # Hay juego abierto -> mostramos 5 disponibles de ese juego (sin reservar)
+        rows = db.session.execute(text("""
+            WITH taken AS (
+                SELECT number FROM game_numbers WHERE game_id = :gid
+            )
+            SELECT n AS number
+            FROM generate_series(0, 999) n
+            WHERE NOT EXISTS (SELECT 1 FROM taken t WHERE t.number = n)
+            ORDER BY random()
+            LIMIT 5;
+        """), {"gid": gid}).fetchall()
+        numbers = [int(r[0]) for r in rows]
+        # Si por cualquier razón hay menos de 5, completamos con preview local
+        if len(numbers) < 5:
+            faltan = 5 - len(numbers)
+            extra = [n for n in _generate_preview_numbers(5 + faltan) if n not in numbers][:faltan]
+            numbers += extra
+        return gid, numbers
+
+    # ---- Usuario PRO: comportamiento original (puede crear) ----
     gid = get_or_create_active_unscheduled_game_id()
 
-    # 2) Tomar 5 números disponibles en ese juego
     rows = db.session.execute(text("""
         WITH taken AS (
             SELECT number FROM game_numbers WHERE game_id = :gid
@@ -128,11 +165,8 @@ def generate_five_available(user_id: int | None, avoid_game_id: int | None = Non
     """), {"gid": gid}).fetchall()
 
     numbers = [int(r[0]) for r in rows]
-
-    # 3) Salvaguarda: si por alguna razón hubiera < 5 libres (no debería con tu flujo),
-    #    devolvemos lo que haya; el commit luego decidirá si debe "cambiar de juego".
-    #    En tu caso (200 jugadores * 5 = 1000) esto no debería ocurrir.
     return gid, numbers
+
 
 def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
     """

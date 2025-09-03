@@ -55,7 +55,8 @@ def register_user(data):
     accepted_data_at  = datetime.utcnow() if accept_data else None
 
     # Código de referido (opcional)
-    referral_code = (data.get('referral_code') or '').strip() or None
+    _rc = (data.get('referral_code') or '').strip()
+    referral_code = _rc.upper() if _rc else None
 
     # 4) Unicidad
     phone_exists = db.session.query(User.id).filter_by(phone=phone).first() is not None
@@ -92,8 +93,9 @@ def register_user(data):
 
         # 5) Enlazar referido si llegó código
         if referral_code:
+            # comparamos en MAYÚSCULAS en ambos lados
             referrer = db.session.query(User).filter(
-                func.lower(User.public_code) == referral_code.lower()
+                func.upper(User.public_code) == referral_code
             ).first()
 
             if not referrer:
@@ -121,8 +123,9 @@ def register_user(data):
             """), {
                 'referrer_id': referrer.id,
                 'referred_id': user.id,
-                'code': referral_code,
+                'code': referral_code,  # ya viene en MAYÚSCULAS
             })
+
 
         # 6) Confirmar
         db.session.commit()
@@ -135,9 +138,33 @@ def register_user(data):
             'public_code': user.public_code,
         }, 201
 
-    except IntegrityError:
+    except IntegrityError as e:
         db.session.rollback()
-        return {'ok': False, 'error': 'Teléfono, identificación o correo ya registrados'}, 409
+
+        # Mensaje por defecto
+        msg = 'Teléfono, identificación o correo ya registrados'
+
+        # Intentar leer el nombre de la constraint (Postgres/psycopg)
+        try:
+            orig = getattr(e, 'orig', None)
+            diag = getattr(orig, 'diag', None)
+            cname = getattr(diag, 'constraint_name', None) or ''
+            cname = cname or str(orig)  # fallback a texto del error
+
+            c = cname.lower()
+            if 'public_code' in c:
+                msg = 'Conflicto al generar código público, intenta de nuevo'
+            elif 'phone' in c:
+                msg = 'teléfono ya registrado'
+            elif 'identification' in c or 'identification_number' in c:
+                msg = 'identificación ya registrada'
+            elif 'email' in c:
+                msg = 'correo ya registrado'
+        except Exception:
+            pass
+
+        return {'ok': False, 'error': msg}, 409
+
     except Exception:
         db.session.rollback()
         raise
