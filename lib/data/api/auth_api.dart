@@ -96,17 +96,25 @@ class AuthApi {
   }
 
 Future<Map<String, dynamic>> me(String token) async {
-  // Si nos pasaste ApiClient, úsalo (inyecta Bearer y refresca si 401).
+  // Si tenemos ApiClient, lo usamos PERO sin auto-refresh.
   if (_apiClient != null) {
-    final path = '/api/auth/me';
+    const path = '/api/auth/me';
+
+    // 👉 Enviamos Authorization manual SOLO si tenemos access.
+    //    auth:false evita que ApiClient haga refresh en 401.
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+    };
+
     try {
       appLogger.i({'event': 'me_request', 'url': '$baseUrl$path'});
 
       final res = await _apiClient
           .get(
             path,
-            headers: const {'Content-Type': 'application/json'},
-            auth: true, // ← ApiClient añade Authorization y maneja 401→refresh
+            headers: headers,
+            auth: false, // ⬅️ CLAVE: NO auto-refresh aquí
           )
           .timeout(const Duration(seconds: 10));
 
@@ -147,7 +155,7 @@ Future<Map<String, dynamic>> me(String token) async {
     }
   }
 
-  // Fallback retrocompatible: usar http.Client con Authorization manual.
+  // Fallback: http.Client con Authorization manual (sin auto-refresh).
   final uri = Uri.parse('$baseUrl/api/auth/me');
   try {
     appLogger.i({'event': 'me_request', 'url': uri.toString()});
@@ -157,7 +165,7 @@ Future<Map<String, dynamic>> me(String token) async {
           uri,
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
           },
         )
         .timeout(const Duration(seconds: 10));
