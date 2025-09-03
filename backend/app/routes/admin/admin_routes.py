@@ -9,12 +9,29 @@ from app.services.admin.admin_service import get_lottery_dashboard_summary
 @bp.get("/dashboard/summary")
 @jwt_required()
 def dashboard_summary():
+    # Tomamos el claim correcto (rid). Si no viene, lo buscamos en DB.
     claims = get_jwt() or {}
-    role_id = claims.get("role_id")
-    if role_id is None:
-        uid = get_jwt_identity()
-        role_id = db.session.execute(text("SELECT role_id FROM users WHERE id=:uid"), {"uid": uid}).scalar()
-    if role_id != 1:
-        return jsonify({"ok": False, "error": "Solo administradores"}), 403
+    rid = claims.get("rid")
 
-    return jsonify(get_lottery_dashboard_summary())
+    if rid is None:
+        uid = get_jwt_identity()
+        role_id_db = db.session.execute(
+            text("SELECT role_id FROM users WHERE id = :uid"),
+            {"uid": int(uid)}
+        ).scalar()
+        rid = role_id_db
+
+    # Solo admin (role_id/rid == 1)
+    try:
+        if int(rid) != 1:
+            return jsonify({"ok": False, "error": "Solo administradores"}), 403
+    except Exception:
+        return jsonify({"ok": False, "error": "Rol inválido"}), 403
+
+    # Entregamos la forma que espera el frontend: { ok: true, data: ... }
+    try:
+        summary = get_lottery_dashboard_summary()
+        return jsonify({"ok": True, "data": summary}), 200
+    except Exception as e:
+        # (opcional) podrías loggear el error con current_app.logger.exception(...)
+        return jsonify({"ok": False, "error": "Fallo en dashboard", "detail": str(e)}), 500
