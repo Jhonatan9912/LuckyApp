@@ -6,7 +6,6 @@ from .routes import register_routes
 from .db.database import init_db
 from dotenv import load_dotenv
 import os
-
 def _as_bool(v, default=False):
     if v is None:
         return default
@@ -29,7 +28,10 @@ def create_app():
     # =========================
     app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'cambia-esta-clave-en-produccion')
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', app.config['JWT_SECRET_KEY'])
-
+    # JWT sin expiración automática (cierran sólo con logout)
+    app.config['JWT_ACCESS_TOKEN_EXPIRES'] = False
+    app.config['JWT_REFRESH_TOKEN_EXPIRES'] = False
+    app.config['JWT_COOKIE_CSRF_PROTECT'] = False
         # Config de suscripciones / RTDN / reconciliación
     app.config["RECONCILE_TOKEN"] = os.getenv("RECONCILE_TOKEN")                # usado por /api/subscriptions/reconcile
     app.config["PUBSUB_PUSH_AUDIENCE"] = os.getenv("PUBSUB_PUSH_AUDIENCE", "")  # opcional, para verificar OIDC en /rtdn
@@ -41,7 +43,6 @@ def create_app():
     # Forzamos el modo resend; no se usa SMTP.
     app.config['MAIL_MODE'] = 'resend'  # fijo
     app.config['RESEND_API_KEY'] = os.getenv('RESEND_API_KEY')
-
     # Remitente para Resend. Idealmente usar dominio verificado.
     app.config['MAIL_FROM'] = os.getenv('MAIL_FROM', 'LuckyApp <onboarding@resend.dev>')
     app.config['MAIL_DEFAULT_SENDER_EMAIL'] = os.getenv('MAIL_DEFAULT_SENDER_EMAIL', 'onboarding@resend.dev')
@@ -71,7 +72,15 @@ def create_app():
     except Exception as e:
         app.logger.error("❌ init_db() falló al arrancar: %s", e)
 
-    JWTManager(app)
+
+    jwt = JWTManager(app)
+
+    @jwt.token_in_blocklist_loader
+    def _is_token_revoked(jwt_header, jwt_payload):
+        # Si el JTI está en la tabla, el token se considera revocado
+        from app.models.token_blocklist import TokenBlocklist
+        jti = jwt_payload.get("jti")
+        return TokenBlocklist.query.filter_by(jti=jti).first() is not None
 
     # Registra TODOS los blueprints desde routes/__init__.py
     register_routes(app)
