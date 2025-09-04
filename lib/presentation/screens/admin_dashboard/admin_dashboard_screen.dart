@@ -9,6 +9,7 @@ import '../dashboard/widgets/help_bottom_sheet.dart';
 import 'widgets/users_bottom_sheet.dart';
 import 'widgets/games_bottom_sheet.dart'; // 👈 NUEVO: import del sheet de Juegos
 import 'widgets/players_bottom_sheet.dart';
+import 'widgets/referrals_bottom_sheet.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -91,40 +92,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       builder: (_) => UsersBottomSheet(
         loader: () async {
           final list = await ctrl.loadAllUsers();
-          return list
-              .map(
-                (m) => UserRow(
-                  id: int.tryParse(m['id'] ?? '') ?? 0,
-                  name: m['name'] ?? '',
-                  phone: m['phone'] ?? '',
-                  role: m['role'] ?? '',
-                  roleId: int.tryParse(m['role_id'] ?? '') ?? 0,
-                  code: m['public_code'] ?? m['code'] ?? '',
-                ),
-              )
-              .toList();
+          debugPrint(
+            '[users loader] first map: ${list.isNotEmpty ? list.first : 'empty'}',
+          );
+          return list.map<UserRow>((m) => UserRow.fromJson(m)).toList();
         },
+
         onUpdateRole: (userId, newRoleId) async {
           final m = await ctrl.updateUserRole(userId, newRoleId);
-
-          int toInt(dynamic v) {
-            if (v == null) return 0;
-            if (v is num) return v.toInt();
-            if (v is String) return int.tryParse(v) ?? 0;
-            return 0;
+          try {
+            return UserRow.fromJson(Map<String, dynamic>.from(m));
+          } catch (_) {
+            // Si tu backend a veces devuelve {ok:true} u otro formato
+            return null; // el sheet de todas formas hace _refresh()
           }
-
-          String toStr(dynamic v) => v?.toString() ?? '';
-
-          return UserRow(
-            id: toInt(m['id']),
-            name: toStr(m['name']),
-            phone: toStr(m['phone']),
-            code: toStr(m['public_code'] ?? m['code']),
-            roleId: toInt(m['role_id']),
-            role: toStr(m['role']),
-          );
         },
+
         onDelete: (userId) => ctrl.deleteUser(userId),
       ),
     );
@@ -297,8 +280,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           kpis: ctrl.kpis!,
                           onUsersTap: _openUsersSheet,
                           onGamesTap: _openGamesSheet,
-                          onPlayersTap:
-                              _openPlayersSheet, // 👈 pasar el callback aquí
+                          onPlayersTap: _openPlayersSheet,
+                          onReferralsTap: _openReferralsSheet,
                         ),
                         const SizedBox(height: 16),
                         LoansByMonthChart(data: ctrl.loansByMonth),
@@ -313,5 +296,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         ],
       ),
     );
+  }
+
+  void _openReferralsSheet() async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const DefaultTabController(
+        length: 3, // Resumen / Comisiones / Pagos
+        child: ReferralsBottomSheet(
+          // Callbacks vacíos por ahora (sin lógica):
+          onPaySelected: null,
+          onOpenUser: null,
+          onToggleSelectCommission: null,
+          onMarkAsPaid: null,
+        ),
+      ),
+    );
+    // Si quieres, refresca KPIs al cerrar:
+    await ctrl.load();
+    if (mounted) setState(() {});
   }
 }

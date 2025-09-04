@@ -21,7 +21,8 @@ class ReferralProvider extends ChangeNotifier {
   double availableCop = 0.0; // “Comisión disponible” que quieres mostrar
   double pendingCop = 0.0;
   double paidCop = 0.0;
-
+  double get heldCop => pendingCop;
+  
   List<ReferralItem> items = [];
 
   Future<void> load({bool refresh = false}) async {

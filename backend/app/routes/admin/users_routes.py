@@ -3,21 +3,13 @@ from flask import jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
 from sqlalchemy import text
 from app.db.database import db
-from . import bp  # blueprint del paquete admin
-
-
-# Servicios de negocio (listado / update rol / borrar)
-from app.services.admin.users_service import (
-    list_users,
-    update_user_role,
-    delete_user,
-)
+from . import bp
 
 from app.services.admin.users_service import (
     list_users,
     update_user_role,
     delete_user,
-    UserHasActiveGames,   # 👈 AÑADIR
+    UserHasActiveGames,
 )
 
 # ---------------------------------------------------------------------
@@ -27,11 +19,9 @@ from app.services.admin.users_service import (
 @jwt_required()
 def admin_users():
     claims = get_jwt() or {}
-    # aceptar varias llaves por si el token cambia
     role_id = claims.get("role_id") or claims.get("rid") or claims.get("role")
 
     if role_id is None:
-        # fallback: consultar DB con el identity del token
         user_id = get_jwt_identity()
         role_id = db.session.execute(
             text("SELECT role_id FROM users WHERE id=:uid"),
@@ -47,18 +37,8 @@ def admin_users():
 
     data = list_users(q=q, page=page, per_page=per_page)
 
-    # normaliza claves para el front
-    items = [{
-        "id": it.get("id"),
-        "name": it.get("name", ""),
-        "phone": it.get("phone", ""),
-        "public_code": it.get("public_code", ""),
-        "role_id": it.get("role_id", 0),
-        "role": it.get("role", "Desconocido"),
-    } for it in data.get("items", [])]
-
-    return jsonify({"ok": True, **data, "items": items})
-
+    # ⬇️ DEVUELVE TODOS LOS CAMPOS (incluidos subscription*)
+    return jsonify({"ok": True, **data})
 
 # ---------------------------------------------------------------------
 # PUT /api/admin/users/<user_id>/role  -> actualizar rol del usuario

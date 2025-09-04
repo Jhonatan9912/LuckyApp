@@ -170,6 +170,21 @@ class _UsersBottomSheetState extends State<UsersBottomSheet> {
     }
   }
 
+  String _subLabel(UserRow u) {
+    final s = (u.subscription ?? '').trim();
+
+    // Si el backend ya manda una etiqueta (p.ej. "PRO (vence 2025-09-29)" o "FREE")
+    // úsala tal cual, excepto cuando viene "-" que significa "sin suscripción".
+    if (s.isNotEmpty && s != '-') return s;
+
+    // Si no hay etiqueta, decide por entitlement
+    final ent = (u.subscriptionEntitlement ?? '').trim().toLowerCase();
+    if (ent == 'pro') return 'PRO';
+
+    // ⭐ Texto para quienes no tienen suscripción
+    return 'GRATIS'; // o 'Sin suscripción' si lo prefieres
+  }
+
   @override
   Widget build(BuildContext context) {
     final filtered = _q.isEmpty
@@ -247,6 +262,10 @@ class _UsersBottomSheetState extends State<UsersBottomSheet> {
                       itemBuilder: (_, i) {
                         final u = filtered[i];
                         final isEditing = _editingUserId == u.id;
+                        final st = (u.subscriptionStatus ?? '').toUpperCase();
+                        final showStatus = st.isNotEmpty && st != 'NONE';
+                        final showExpires =
+                            (u.subscriptionExpiresAt ?? '').isNotEmpty;
 
                         return Card(
                           margin: const EdgeInsets.symmetric(vertical: 6),
@@ -271,7 +290,8 @@ class _UsersBottomSheetState extends State<UsersBottomSheet> {
                                   const SizedBox(height: 4),
                                   Text('📞 ${u.phone}'),
                                   const SizedBox(height: 2),
-                                  // Rol (en edición -> dropdown; normal -> texto)
+
+                                  // Rol (edición / lectura)
                                   if (isEditing)
                                     Padding(
                                       padding: const EdgeInsets.only(top: 6),
@@ -282,7 +302,7 @@ class _UsersBottomSheetState extends State<UsersBottomSheet> {
                                         runSpacing: 6,
                                         children: [
                                           const Text(
-                                            'Rol: ',
+                                            'Rol:',
                                             style: TextStyle(
                                               fontWeight: FontWeight.w600,
                                             ),
@@ -323,10 +343,18 @@ class _UsersBottomSheetState extends State<UsersBottomSheet> {
                                         orElse: () => RoleItem(id: u.roleId, name: u.role.isEmpty ? 'Usuario' : u.role),
                                       ).name)}',
                                     ),
+
+                                  const SizedBox(height: 2),
+                                  Text('Suscripción: ${_subLabel(u)}'),
+                                  if (showStatus) Text('Estado: $st'),
+                                  if (showExpires)
+                                    Text('Vence: ${u.subscriptionExpiresAt}'),
+
                                   const SizedBox(height: 2),
                                   Text('Código: ${u.code}'),
                                 ],
                               ),
+
                               // Acciones
                               trailing: FittedBox(
                                 fit: BoxFit.scaleDown,
@@ -404,6 +432,12 @@ class UserRow {
   final int roleId;
   final String role;
 
+  // 👇 nuevos (todos opcionales, vienen directo del backend)
+  final String? subscription; // etiqueta que envía el backend (PRO/FREE o null)
+  final String? subscriptionStatus; // p.ej. ACTIVE/CANCELED/GRACE…
+  final String? subscriptionEntitlement; // p.ej. "pro"
+  final String? subscriptionExpiresAt; // ISO string si viene
+
   const UserRow({
     required this.id,
     required this.name,
@@ -411,7 +445,29 @@ class UserRow {
     required this.code,
     required this.roleId,
     required this.role,
+    this.subscription,
+    this.subscriptionStatus,
+    this.subscriptionEntitlement,
+    this.subscriptionExpiresAt,
   });
+
+  factory UserRow.fromJson(Map<String, dynamic> j) {
+    return UserRow(
+      id: (j['id'] as num).toInt(),
+      name: (j['name'] ?? '') as String,
+      phone: (j['phone'] ?? '') as String,
+      code: (j['public_code'] ?? j['code'] ?? '') as String,
+      roleId: (j['role_id'] as num?)?.toInt() ?? 2,
+      role: (j['role'] ?? 'Usuario') as String,
+
+      // 👇 vienen directo del backend Python
+      subscription: j['subscription'] as String?,
+      subscriptionStatus: (j['subscription_status'] as String?)?.toUpperCase(),
+      subscriptionEntitlement: (j['subscription_entitlement'] as String?)
+          ?.toLowerCase(),
+      subscriptionExpiresAt: j['subscription_expires_at'] as String?,
+    );
+  }
 
   UserRow copyWith({
     int? id,
@@ -420,6 +476,10 @@ class UserRow {
     String? code,
     int? roleId,
     String? role,
+    String? subscription,
+    String? subscriptionStatus,
+    String? subscriptionEntitlement,
+    String? subscriptionExpiresAt,
   }) {
     return UserRow(
       id: id ?? this.id,
@@ -428,6 +488,12 @@ class UserRow {
       code: code ?? this.code,
       roleId: roleId ?? this.roleId,
       role: role ?? this.role,
+      subscription: subscription ?? this.subscription,
+      subscriptionStatus: subscriptionStatus ?? this.subscriptionStatus,
+      subscriptionEntitlement:
+          subscriptionEntitlement ?? this.subscriptionEntitlement,
+      subscriptionExpiresAt:
+          subscriptionExpiresAt ?? this.subscriptionExpiresAt,
     );
   }
 }

@@ -10,7 +10,6 @@ class ApiException implements Exception {
   final String body;
   ApiException(this.statusCode, this.body);
 
-  /// Permite usar `e.message` desde los providers/widgets.
   String get message {
     try {
       final decoded = json.decode(body);
@@ -30,6 +29,9 @@ class ApiException implements Exception {
 }
 
 class ApiService {
+  /// URL base por defecto (desde Env) accesible de forma estática.
+  static String get defaultBaseUrl => Env.apiBaseUrl;
+
   final String baseUrl;
   ApiService({String? baseUrl}) : baseUrl = baseUrl ?? Env.apiBaseUrl;
 
@@ -101,9 +103,6 @@ class ApiService {
   // Helpers específicos
   // =======================
 
-  /// Compatibilidad con tu código antiguo:
-  /// - Primero intenta `/identification-types`
-  /// - Si no existe (404), intenta `/api/identification-types`
   Future<List<Map<String, dynamic>>> fetchIdentificationTypes() async {
     dynamic res;
     try {
@@ -125,10 +124,6 @@ class ApiService {
     throw ApiException(500, 'Formato inesperado en identification-types');
   }
 
-  /// Helper de registro con *fallback* de rutas:
-  /// - intenta `/register`
-  /// - si no existe (404), intenta `/api/auth/register`
-  /// Devuelve `true` en 2xx; lanza `ApiException` en error.
   Future<bool> registerUser(User user) async {
     final paths = <String>['/register', '/api/auth/register'];
     ApiException? lastError;
@@ -136,19 +131,16 @@ class ApiService {
     for (final p in paths) {
       try {
         await post(p, body: user.toJson());
-        return true; // si fue 2xx, listo
+        return true;
       } on ApiException catch (e) {
-        // si es 404, probamos la siguiente ruta
         if (e.statusCode == 404) {
           lastError = e;
           continue;
         }
-        // para 4xx/5xx distintos de 404, propagamos el error real
         rethrow;
       }
     }
 
-    // Si ninguna ruta existía, lanza el último 404 capturado
     throw lastError ?? ApiException(404, 'Endpoint de registro no encontrado');
   }
 }

@@ -282,7 +282,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                       Consumer<ReferralProvider>(
                         builder: (_, p, __) => ReferralPayoutTile(
                           code: _ctrl.referralCode,
-                          pending: p.comisionPendiente,
+                          pending: p
+                              .payoutPending, // o p.comisionPendiente (equivalente en tu provider)
                           onWithdraw: () {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(

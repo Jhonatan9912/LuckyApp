@@ -18,7 +18,8 @@ class AdminDashboardController extends ChangeNotifier {
   List<Map<String, dynamic>> latestPayments = [];
 
   final String baseUrl;
-AdminDashboardController({String? baseUrl}) : baseUrl = baseUrl ?? Env.apiBaseUrl;
+  AdminDashboardController({String? baseUrl})
+    : baseUrl = baseUrl ?? Env.apiBaseUrl;
 
   Future<void> load() async {
     loading = true;
@@ -105,56 +106,42 @@ AdminDashboardController({String? baseUrl}) : baseUrl = baseUrl ?? Env.apiBaseUr
     }
   }
 
-  /// Carga lista de usuarios desde /api/admin/users
-  Future<List<Map<String, String>>> loadAllUsers({
-    String q = '',
-    int page = 1,
-  }) async {
-    final token = await SessionManager().getToken();
-    final uri = Uri.parse('$baseUrl/api/admin/users').replace(
-      queryParameters: {
-        if (q.isNotEmpty) 'q': q,
-        'page': '$page',
-        'per_page': '50',
-      },
-    );
+Future<List<Map<String, dynamic>>> loadAllUsers({
+  String q = '',
+  int page = 1,
+}) async {
+  final token = await SessionManager().getToken();
+  final uri = Uri.parse('$baseUrl/api/admin/users').replace(
+    queryParameters: {
+      if (q.isNotEmpty) 'q': q,
+      'page': '$page',
+      'per_page': '50',
+    },
+  );
 
-    final res = await http
-        .get(
-          uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-        )
-        .timeout(const Duration(seconds: 15));
+  final res = await http.get(
+    uri,
+    headers: {
+      'Authorization': 'Bearer $token',
+      'Content-Type': 'application/json',
+    },
+  ).timeout(const Duration(seconds: 15));
 
-    if (kDebugMode) {
-      // ignore: avoid_print
-      print('[admin/users] ${res.statusCode} ${res.body}');
-    }
-
-    if (res.statusCode != 200) {
-      throw Exception('HTTP ${res.statusCode}: ${res.body}');
-    }
-
-    final Map<String, dynamic> body =
-        json.decode(res.body) as Map<String, dynamic>;
-    final List items = (body['items'] as List?) ?? const [];
-
-    return items.map<Map<String, String>>((e) {
-      final m = Map<String, dynamic>.from(e as Map);
-      final roleName = (m['role'] ?? '').toString();
-      return {
-        'id': (m['id'] ?? '').toString(), // ← necesario
-        'name': (m['name'] ?? '').toString(),
-        'phone': (m['phone'] ?? '').toString(),
-        'role': roleName,
-        'role_id': (m['role_id'] ?? '').toString(), // ← necesario
-        'code': (m['public_code'] ?? '').toString(),
-      };
-    }).toList();
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
+
+  final body = json.decode(res.body) as Map<String, dynamic>;
+  final items = (body['items'] as List?) ?? const [];
+
+  // 🔎 DEBUG opcional: mira la primera fila cruda que devuelve backend
+  if (items.isNotEmpty) {
+    debugPrint('[admin/users] raw first: ${items.first}');
+  }
+
+  // ⬇️ DEVUELVE TAL CUAL cada fila (incluye subscription, status, etc.)
+  return items.map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map)).toList();
+}
 
   /// Devuelve un Map con: id, name, phone, public_code, role_id, role
   Future<Map<String, dynamic>> updateUserRole(int userId, int newRoleId) async {
@@ -390,93 +377,98 @@ AdminDashboardController({String? baseUrl}) : baseUrl = baseUrl ?? Env.apiBaseUr
     }
   }
 
-Future<GameRow?> updateGame(int gameId, GameEdit input) async {
-  final token = await SessionManager().getToken();
-  final uri = Uri.parse('$baseUrl/api/admin/games/$gameId');
+  Future<GameRow?> updateGame(int gameId, GameEdit input) async {
+    final token = await SessionManager().getToken();
+    final uri = Uri.parse('$baseUrl/api/admin/games/$gameId');
 
-  final res = await http
-      .patch(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: json.encode(input.toJson()), // 👈 usa toJson con todos los campos
-      )
-      .timeout(const Duration(seconds: 15));
+    final res = await http
+        .patch(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: json.encode(
+            input.toJson(),
+          ), // 👈 usa toJson con todos los campos
+        )
+        .timeout(const Duration(seconds: 15));
 
-  if (kDebugMode) {
-    print('[PATCH games/$gameId] ${res.statusCode} ${res.body}');
+    if (kDebugMode) {
+      print('[PATCH games/$gameId] ${res.statusCode} ${res.body}');
+    }
+
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+
+    final Map<String, dynamic> data =
+        json.decode(res.body) as Map<String, dynamic>;
+    final Map<String, dynamic> item =
+        (data['item'] as Map?)?.cast<String, dynamic>() ??
+        data.cast<String, dynamic>();
+
+    int toInt(dynamic v) => int.tryParse(v?.toString() ?? '0') ?? 0;
+    String toStr(dynamic v) => v?.toString() ?? '';
+
+    return GameRow(
+      id: toInt(item['id']),
+      lotteryName: toStr(item['lottery_name']),
+      playedDate: toStr(item['played_date']),
+      playedTime: toStr(item['played_time']),
+      playersCount: toInt(item['players_count']),
+      winningNumber: item['winning_number'] == null
+          ? null
+          : toInt(item['winning_number']),
+      stateId: item['state_id'] == null ? null : toInt(item['state_id']),
+    );
   }
-
-  if (res.statusCode != 200) {
-    throw Exception('HTTP ${res.statusCode}: ${res.body}');
-  }
-
-  final Map<String, dynamic> data =
-      json.decode(res.body) as Map<String, dynamic>;
-  final Map<String, dynamic> item =
-      (data['item'] as Map?)?.cast<String, dynamic>() ??
-      data.cast<String, dynamic>();
-
-  int toInt(dynamic v) => int.tryParse(v?.toString() ?? '0') ?? 0;
-  String toStr(dynamic v) => v?.toString() ?? '';
-
-  return GameRow(
-    id: toInt(item['id']),
-    lotteryName: toStr(item['lottery_name']),
-    playedDate: toStr(item['played_date']),
-    playedTime: toStr(item['played_time']),
-    playersCount: toInt(item['players_count']),
-    winningNumber: item['winning_number'] == null
-        ? null
-        : toInt(item['winning_number']),
-    stateId: item['state_id'] == null ? null : toInt(item['state_id']),
-  );
-}
 
   Future<GameRow?> setGameWinner(int gameId, int winningNumber) async {
-  final token = await SessionManager().getToken();
-  final uri = Uri.parse('$baseUrl/api/admin/games/$gameId/winner');
+    final token = await SessionManager().getToken();
+    final uri = Uri.parse('$baseUrl/api/admin/games/$gameId/winner');
 
-  final res = await http
-      .post(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: json.encode({'winning_number': winningNumber}),
-      )
-      .timeout(const Duration(seconds: 15));
+    final res = await http
+        .post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: json.encode({'winning_number': winningNumber}),
+        )
+        .timeout(const Duration(seconds: 15));
 
-  if (kDebugMode) {
-    // ignore: avoid_print
-    print('[POST games/$gameId/winner] ${res.statusCode} ${res.body}');
+    if (kDebugMode) {
+      // ignore: avoid_print
+      print('[POST games/$gameId/winner] ${res.statusCode} ${res.body}');
+    }
+
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+
+    final Map<String, dynamic> data =
+        json.decode(res.body) as Map<String, dynamic>;
+    final Map<String, dynamic> item =
+        (data['item'] as Map?)?.cast<String, dynamic>() ??
+        data.cast<String, dynamic>();
+
+    int toInt(dynamic v) => int.tryParse(v?.toString() ?? '0') ?? 0;
+    String toStr(dynamic v) => v?.toString() ?? '';
+
+    return GameRow(
+      id: toInt(item['id']),
+      lotteryName: toStr(item['lottery_name']),
+      playedDate: toStr(item['played_date']),
+      playedTime: toStr(item['played_time']),
+      playersCount: toInt(item['players_count']),
+      winningNumber: item['winning_number'] == null
+          ? null
+          : toInt(item['winning_number']),
+      stateId: item['state_id'] == null ? null : toInt(item['state_id']),
+    );
   }
-
-  if (res.statusCode != 200) {
-    throw Exception('HTTP ${res.statusCode}: ${res.body}');
-  }
-
-  final Map<String, dynamic> data =
-      json.decode(res.body) as Map<String, dynamic>;
-  final Map<String, dynamic> item =
-      (data['item'] as Map?)?.cast<String, dynamic>() ?? data.cast<String, dynamic>();
-
-  int toInt(dynamic v) => int.tryParse(v?.toString() ?? '0') ?? 0;
-  String toStr(dynamic v) => v?.toString() ?? '';
-
-  return GameRow(
-    id: toInt(item['id']),
-    lotteryName: toStr(item['lottery_name']),
-    playedDate: toStr(item['played_date']),
-    playedTime: toStr(item['played_time']),
-    playersCount: toInt(item['players_count']),
-    winningNumber: item['winning_number'] == null ? null : toInt(item['winning_number']),
-    stateId: item['state_id'] == null ? null : toInt(item['state_id']),
-  );
-}
 
   /// === JUGADORES: GET /api/admin/players ================================
 

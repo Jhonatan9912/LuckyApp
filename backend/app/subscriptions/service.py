@@ -12,12 +12,73 @@ from datetime import datetime, timezone, timedelta
 from app.services.referrals.payouts_service import register_referral_commission
 import json
 from flask import current_app
-
+from sqlalchemy import text
 from app.observability.metrics import (
     SUBS_SYNC_OK, SUBS_SYNC_ERR,
     RTDN_RCVD, RTDN_ERR,
     RECONCILE_UPD, RECONCILE_ERR
 )
+
+_STATUS_CACHE = {}
+_STATUS_CACHE_LOADED_AT = None
+_STATUS_CACHE_TTL_MIN = 10
+
+def _load_status_catalog(force: bool = False):
+    """Carga subscription_status_catalog en caché (clave -> dict con label_es y grant_access)."""
+    from datetime import timedelta
+    global _STATUS_CACHE, _STATUS_CACHE_LOADED_AT
+
+    now = _now_utc()
+    if not force and _STATUS_CACHE_LOADED_AT and (now - _STATUS_CACHE_LOADED_AT) < timedelta(minutes=_STATUS_CACHE_TTL_MIN):
+        return
+
+    rows = db.session.execute(text("""
+        SELECT status_key, label_es, grant_access
+        FROM subscription_status_catalog
+    """)).fetchall()
+
+    cache = {}
+    for status_key, label_es, grant_access in rows:
+        key = (status_key or "").strip().lower()
+        if key:
+            cache[key] = {"label_es": label_es, "grant_access": bool(grant_access)}
+
+    _STATUS_CACHE = cache
+    _STATUS_CACHE_LOADED_AT = now
+
+def _catalog_get(key: str) -> dict:
+    _load_status_catalog()
+    return _STATUS_CACHE.get((key or "").strip().lower(), {"label_es": key or "none", "grant_access": False})
+
+def _map_gp_state_to_key(subscription_state: str, auto_renewing: Optional[bool]) -> str:
+    """Normaliza estado de Google → clave interna del catálogo."""
+    s = (subscription_state or "").upper()
+    if s in ("IN_GRACE_PERIOD", "GRACE"):
+        return "grace"
+    if s in ("ON_HOLD",):
+        return "on_hold"
+    if s in ("PAUSED",):
+        return "paused"
+    if auto_renewing is False:
+        return "canceled"
+    return "active"
+
+# --- Helpers de compatibilidad con nombres de columnas viejas/nuevas ----
+def _set_attr(sub, candidates: list[str], value):
+    """Escribe en el primer atributo existente de la lista."""
+    for name in candidates:
+        if hasattr(sub, name):
+            setattr(sub, name, value)
+            return name
+    # si no existe ninguno, crea el primero como fallback
+    setattr(sub, candidates[0], value)
+    return candidates[0]
+
+def _get_attr(sub, candidates: list[str], default=None):
+    for name in candidates:
+        if hasattr(sub, name):
+            return getattr(sub, name)
+    return default
 
 def _log_event(event: str, **fields):
     try:
@@ -79,6 +140,7 @@ class SubscriptionStatus:
             "reason": self.reason,
             "since": self.since,
             "autoRenewing": self.auto_renewing,
+            "statusLabel": _catalog_get(self.status)["label_es"],
         }
 
 
@@ -97,31 +159,16 @@ def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
 
 def _decide_status(subscription_state: str, auto_renewing: Optional[bool], expiry_dt: Optional[datetime]) -> tuple[str, bool]:
     """
-    Devuelve (status_str, is_active_bool) coherente con V2:
-    - Mientras no venza:
-        * auto_renewing=True  -> 'active'
-        * auto_renewing=False -> 'canceled' (acceso vigente hasta expiry)
-    - Si ya venció -> 'expired', is_active=False
-    - También soporta estados de Google como GRACE/ON_HOLD si te interesan.
+    Devuelve (status_key, is_premium) usando el catálogo:
+    - is_premium = catalog.grant_access AND no vencida.
     """
     now = _now_utc()
     if not expiry_dt or expiry_dt <= now:
         return "expired", False
 
-    s = (subscription_state or "").upper()
-    if s in ("IN_GRACE_PERIOD", "GRACE"):
-        return "grace", True
-    if s in ("ON_HOLD",):
-        return "on_hold", True
-    if s in ("PAUSED",):
-        return "paused", True
-
-    # Google normalmente reporta ACTIVE incluso tras cancelar, pero con autoRenewing=False
-    if auto_renewing is False:
-        return "canceled", True
-
-    # Por defecto, si está vigente y auto_renewing no es False, lo tratamos como active
-    return "active", True
+    key = _map_gp_state_to_key(subscription_state, auto_renewing)
+    grant = _catalog_get(key)["grant_access"]
+    return key, bool(grant)
 
 
 def _parse_gp_time(v) -> Optional[datetime]:
@@ -193,52 +240,32 @@ def _price_from_catalog(product_id: str, default_currency: str = "COP") -> tuple
     return (0, default_currency)
 
 def get_status(user_id: Optional[int]) -> SubscriptionStatus:
-    """
-    Devuelve el estado de suscripción del usuario.
-    is_premium = True cuando:
-      - sub.is_active == True, o
-      - sub.status == "active", o
-      - sub.status == "canceled" pero current_period_end > ahora (aún dentro del periodo pagado).
-    """
     if not user_id:
-        return SubscriptionStatus(
-            user_id=None,
-            entitlement="pro",
-            is_premium=False,
-            expires_at=None,
-            status="none",
-            reason="not_authenticated",
-        )
+        return SubscriptionStatus(user_id=None, entitlement="pro", is_premium=False, expires_at=None, status="none", reason="not_authenticated")
 
-    sub: Optional[UserSubscription] = (
+    q = (
         UserSubscription.query
         .filter_by(user_id=int(user_id), entitlement="pro")
-        .first()
+        # preferimos google_play si existe ese campo; si no, igual funcionará
+    .order_by(
+        UserSubscription.expires_at.desc().nullslast()
     )
 
+    )
+
+    sub: Optional[UserSubscription] = q.first()
     if not sub:
-        return SubscriptionStatus(
-            user_id=int(user_id),
-            entitlement="pro",
-            is_premium=False,
-            expires_at=None,
-            status="none",
-            reason=None,
-        )
+        return SubscriptionStatus(user_id=int(user_id), entitlement="pro", is_premium=False, expires_at=None, status="none")
 
-    # Fechas normalizadas a UTC
-    end_at_utc = _to_aware_utc(getattr(sub, "current_period_end", None))
-    start_at_utc = _to_aware_utc(getattr(sub, "current_period_start", None))
+    end_at_utc: Optional[datetime] = _to_aware_utc(_get_attr(sub, ["expires_at", "current_period_end"]))
+    start_at_utc: Optional[datetime] = _to_aware_utc(_get_attr(sub, ["period_start", "current_period_start"]))
+    status_str: str = getattr(sub, "status", "none") or "none"
+    auto_renewing: bool = bool(getattr(sub, "auto_renewing", False))
+
     now = _now_utc()
-
-    period_active = bool(end_at_utc and end_at_utc > now)
-    status_str = getattr(sub, "status", "none") or "none"
-    auto_renewing = bool(getattr(sub, "auto_renewing", False))
-
-    # premium si NO ha vencido y el estado permite acceso
-    is_premium = bool(
-        period_active and status_str in ("active", "canceled", "grace", "on_hold", "paused")
-    )
+    not_expired = bool(end_at_utc and end_at_utc > now)
+    grant = _catalog_get(status_str)["grant_access"]
+    is_premium = bool(not_expired and grant)
 
     return SubscriptionStatus(
         user_id=int(user_id),
@@ -246,7 +273,6 @@ def get_status(user_id: Optional[int]) -> SubscriptionStatus:
         is_premium=is_premium,
         expires_at=end_at_utc.isoformat() if end_at_utc else None,
         status=status_str,
-        reason=None,
         since=start_at_utc.isoformat() if start_at_utc else None,
         auto_renewing=auto_renewing,
     )
@@ -361,16 +387,7 @@ def sync_purchase(
     state_raw = (gp.get('subscriptionState') or '').upper()
     auto_ren = li.get('autoRenewing')  # True/False/None
 
-    status_str, is_active_flag = _decide_status(state_raw, auto_ren, expiry_dt)
-
-    # actualiza
-    sub.status = status_str
-    sub.is_active = is_active_flag
-    sub.current_period_start = period_start
-    sub.current_period_end = expiry_dt
-    sub.auto_renewing = bool(auto_ren) if auto_ren is not None else False
-
-        # === Extraer precio/ids del line item (necesario SIEMPRE) ===
+    # === Extraer precio/ids del line item (NECESARIO ANTES DE GUARDAR) ===
     price = (li.get('price') or {})
     price_micros = int(price.get('priceMicros') or 0)
     currency      = price.get('currency') or "COP"
@@ -378,6 +395,21 @@ def sync_purchase(
     order_id      = gp.get('latestOrderId') or (gp.get('latestOrder') or {}).get('orderId')
     event_time_raw = li.get('startTime') or li.get('startTimeMillis') or gp.get('startTime')
     event_time_dt  = _parse_gp_time(event_time_raw)
+
+    status_str, is_premium_flag = _decide_status(state_raw, auto_ren, expiry_dt)
+
+    sub.status = status_str
+    _set_attr(sub, ["is_premium", "is_active"], is_premium_flag)  # compat
+    _set_attr(sub, ["period_start", "current_period_start"], period_start)
+    _set_attr(sub, ["expires_at", "current_period_end"], expiry_dt)
+    sub.auto_renewing = bool(auto_ren) if auto_ren is not None else False
+
+    # info de catálogo/ID + token + plataforma + sello de sincronización
+    _set_attr(sub, ["platform"], "google_play")
+    _set_attr(sub, ["product_id", "last_product_id"], product_id_gp or product_id)
+    if hasattr(sub, "purchase_token"):
+        sub.purchase_token = purchase_token or getattr(sub, "purchase_token", None)
+    _set_attr(sub, ["last_sync_at"], _now_utc())
 
     # === OVERRIDE 100% CONTROLADO POR ENV PARA PRUEBAS ===
     env = (os.getenv('ENV', '') or '').lower()
@@ -429,7 +461,7 @@ def sync_purchase(
         "ok": True,
         "userId": int(user_id),
         "entitlement": "pro",
-        "isPremium": True,
+        "isPremium": bool(is_premium_flag),
         "status": status_str,
         "expiresAt": expiry_dt.isoformat(),
         "since": period_start.isoformat(),
@@ -486,19 +518,19 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
     now = _now_utc()
     pkg = os.environ.get('GOOGLE_PLAY_PACKAGE_NAME', '')
     service = build_android_publisher()
+    end_field = UserSubscription.expires_at
 
     q = (
         UserSubscription.query
         .filter(
             or_(
                 UserSubscription.status.in_(('on_hold', 'grace', 'active', 'canceled')),
-                UserSubscription.current_period_end <= (now + timedelta(days=days_ahead))
+                end_field <= (now + timedelta(days=days_ahead))
             )
         )
-        .order_by(UserSubscription.current_period_end.asc().nullslast())
+        .order_by(end_field.asc().nullslast())
         .limit(batch_size)
     )
-
 
     checked = 0
     updated = 0
@@ -545,14 +577,14 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
             state_raw = (gp.get('subscriptionState') or '').upper()
             auto_ren = li.get('autoRenewing')  # True/False/None
 
-            status_str, is_active_flag = _decide_status(state_raw, auto_ren, expiry_dt)
+            status_str, is_premium_flag = _decide_status(state_raw, auto_ren, expiry_dt)
 
-            # actualiza
             sub.status = status_str
-            sub.is_active = is_active_flag
-            sub.current_period_start = period_start
-            sub.current_period_end = expiry_dt
+            _set_attr(sub, ["is_premium", "is_active"], is_premium_flag)
+            _set_attr(sub, ["period_start", "current_period_start"], period_start)
+            _set_attr(sub, ["expires_at", "current_period_end"], expiry_dt)
             sub.auto_renewing = bool(auto_ren) if auto_ren is not None else False
+            _set_attr(sub, ["last_sync_at"], _now_utc())
 
                      # === CREDITO DE COMISIÓN EN RECONCILIACIÓN (PEGAR DEBAJO DE sub.auto_renewing = ...) ===
             price = (li.get('price') or {})

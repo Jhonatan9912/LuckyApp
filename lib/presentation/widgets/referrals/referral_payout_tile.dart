@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:base_app/presentation/providers/referral_provider.dart';
 
 class ReferralPayoutTile extends StatelessWidget {
-  final double pending;              // fallback (ya no se usará si hay provider)
+  final double pending; // fallback (ya no se usará si hay provider)
   final VoidCallback onWithdraw;
   final String? code;
   final double minToWithdraw;
@@ -22,7 +22,8 @@ class ReferralPayoutTile extends StatelessWidget {
     // ✅ NO nullable: necesitamos el provider real
     final p = context.watch<ReferralProvider>();
     final currency = p.payoutCurrency.toUpperCase();
-    final amount   = p.availableCop;
+    final available = p.availableCop; // disponible para retirar
+    final held = p.heldCop; // retenida (aún no cumple 3 días)
 
     final symbol = currency == 'COP' ? r'$' : '';
     final fmt = NumberFormat.currency(
@@ -32,7 +33,7 @@ class ReferralPayoutTile extends StatelessWidget {
     );
 
     final surface = Theme.of(context).colorScheme.surface;
-    final border  = Colors.black12;
+    final border = Colors.black12;
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 6),
@@ -52,20 +53,23 @@ class ReferralPayoutTile extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w800),
           ),
           subtitle: Text(
-            'Comisión disponible: ${fmt.format(amount)}',
+            'Disponible: ${fmt.format(available)} • Retenida: ${fmt.format(held)}',
             style: const TextStyle(color: Colors.black87),
           ),
+
           children: [
             const SizedBox(height: 6),
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
               child: Row(
                 children: [
-                  _kpi(context, 'Disponible', amount, currency),
+                  _kpi(context, 'Disponible', available, currency),
+                  const SizedBox(width: 8),
+                  _kpi(context, 'Retenida (≤ 3 días)', held, currency),
                 ],
               ),
             ),
-            if (amount >= minToWithdraw)
+            if (available >= minToWithdraw)
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 0, 14, 16),
                 child: FilledButton.icon(
@@ -80,7 +84,12 @@ class ReferralPayoutTile extends StatelessWidget {
     );
   }
 
-  Widget _kpi(BuildContext context, String label, double value, String currency) {
+  Widget _kpi(
+    BuildContext context,
+    String label,
+    double value,
+    String currency,
+  ) {
     final symbol = currency.toUpperCase() == 'COP' ? r'$' : '';
     final fmt = NumberFormat.currency(
       locale: 'es_CO',
@@ -98,7 +107,10 @@ class ReferralPayoutTile extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+            ),
             const SizedBox(height: 4),
             Text(
               fmt.format(value),
