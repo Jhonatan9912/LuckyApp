@@ -43,3 +43,20 @@ def referrals_summary():
     summary = get_referrals_summary(referrer_id=referrer_id)
 
     return jsonify({"ok": True, **summary})
+
+@bp.get("/referrals/top")
+@jwt_required()
+def referrals_top():
+    """
+    Devuelve el top de referidores con más referidos activos.
+    """
+    claims = get_jwt() or {}
+    role_id = claims.get("role_id") or claims.get("rid") or claims.get("role")
+
+    if int(role_id or 0) != 1:
+        return jsonify({"ok": False, "error": "Solo administradores"}), 403
+
+    from app.services.admin.referrals_service import get_top_referrers
+    top = get_top_referrers(limit=5)
+
+    return jsonify({"ok": True, "items": top})

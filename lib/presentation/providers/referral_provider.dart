@@ -22,7 +22,8 @@ class ReferralProvider extends ChangeNotifier {
   double pendingCop = 0.0;
   double paidCop = 0.0;
   double get heldCop => pendingCop;
-  
+  double inWithdrawalCop = 0.0; // NUEVO: “En retiro / En proceso”
+
   List<ReferralItem> items = [];
 
   Future<void> load({bool refresh = false}) async {
@@ -41,8 +42,28 @@ class ReferralProvider extends ChangeNotifier {
       pendingCop = summary.pendingCop;
       paidCop = summary.paidCop;
 
+      // Lee “En retiro” si ya viene en el summary
+      try {
+        final dyn = summary as dynamic;
+
+        // casos camelCase (si tu ReferralsApi mapea llaves)
+        final iw1 = (dyn.inWithdrawalCop as num?);
+
+        // fallback a snake_case directo (si summary es un Map/dto plano)
+        final iw2 = (dyn.in_withdrawal_cop as num?);
+
+        if (iw1 != null) {
+          inWithdrawalCop = iw1.toDouble();
+        } else if (iw2 != null) {
+          inWithdrawalCop = iw2.toDouble();
+        }
+      } catch (_) {
+        // Si no viene en el summary, lo dejamos en 0.0
+        inWithdrawalCop = 0.0;
+      }
+
       debugPrint(
-        '[provider] summary avail=$availableCop pend=$pendingCop paid=$paidCop',
+        '[provider] summary avail=$availableCop held=$pendingCop in_withdrawal=$inWithdrawalCop paid=$paidCop',
       );
 
       // Si tu ReferralSummary YA incluye montos del backend (available_cop, pending_cop, paid_cop),
@@ -76,7 +97,7 @@ class ReferralProvider extends ChangeNotifier {
 
         if (kDebugMode) {
           debugPrint(
-            '[referral_provider] availableCop=$availableCop pending=$comisionPendiente paid=$comisionPagada currency=$moneda',
+            '[referral_provider] (payouts) fallback avail=$availableCop held=$pendingCop in_withdrawal=$inWithdrawalCop paid=$paidCop currency=$moneda',
           );
         }
       } catch (e) {
@@ -93,7 +114,7 @@ class ReferralProvider extends ChangeNotifier {
     }
   }
 
-  bool get canWithdraw => availableCop > 0.0 || comisionPendiente > 0.0;
+  bool get canWithdraw => availableCop >= 100000.0;
 
   // Aliases usados por la UI existente
   String get payoutCurrency => moneda;

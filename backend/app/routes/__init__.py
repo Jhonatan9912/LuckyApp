@@ -9,7 +9,7 @@ from app.routes.reset.password_reset_routes import (
     password_reset_bp,      # /api/reset/...
     auth_reset_alias_bp,    # /api/auth/...  <-- alias que espera Flutter
 )
-
+from app.routes.payouts import payouts_bp
 from app.routes.games.games_routes import games_bp
 from app.routes.admin import bp as admin_bp
 from app.routes.admin.players_routes import admin_players_bp
@@ -20,6 +20,7 @@ from app.subscriptions.routes import subscriptions_bp
 from app.subscriptions.webhooks import webhooks_bp
 from app.routes.referrals.referrals_routes import referrals_bp
 from app.routes.dev_mock import dev_bp      
+from app.routes.payouts.banks_routes import meta_bp
 
 def register_routes(app):
     app.register_blueprint(identification_bp)
@@ -43,3 +44,5 @@ def register_routes(app):
     app.register_blueprint(webhooks_bp)
     app.register_blueprint(referrals_bp)
     app.register_blueprint(dev_bp)
+    app.register_blueprint(payouts_bp)
+    app.register_blueprint(meta_bp)

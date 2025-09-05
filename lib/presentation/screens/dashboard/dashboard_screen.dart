@@ -26,6 +26,7 @@ import 'package:base_app/presentation/widgets/subscription/subscription_sheet.da
 import 'package:base_app/presentation/providers/referral_provider.dart';
 import 'package:base_app/presentation/widgets/referrals/referral_payout_tile.dart';
 import 'package:base_app/presentation/screens/referrals/referrals_tab.dart';
+import 'package:base_app/presentation/widgets/payout_request_sheet.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -282,14 +283,19 @@ class _DashboardScreenState extends State<DashboardScreen>
                       Consumer<ReferralProvider>(
                         builder: (_, p, __) => ReferralPayoutTile(
                           code: _ctrl.referralCode,
-                          pending: p
-                              .payoutPending, // o p.comisionPendiente (equivalente en tu provider)
-                          onWithdraw: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Solicitud de retiro enviada'),
-                              ),
+                          minToWithdraw: 100000, // umbral de $100.000 COP
+                          onWithdraw: () async {
+                            final submitted = await showPayoutRequestSheet(
+                              context,
                             );
+
+                            if (submitted == true && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Solicitud de retiro enviada'),
+                                ),
+                              );
+                            }
                           },
                         ),
                       ),

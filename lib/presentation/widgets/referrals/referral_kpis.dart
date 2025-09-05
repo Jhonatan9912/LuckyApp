@@ -4,8 +4,12 @@ class ReferralKpis extends StatelessWidget {
   final int total;
   final int activos;
   final int? inactivos;
-  final double? comisionPendiente;
-  final double? comisionPagada;
+
+  // Montos
+  final double? disponible;
+  final double? retenida;
+  final double? enRetiro;
+  final double? pagada;
   final String? moneda;
 
   const ReferralKpis({
@@ -13,19 +17,23 @@ class ReferralKpis extends StatelessWidget {
     required this.total,
     required this.activos,
     this.inactivos,
-    this.comisionPendiente,
-    this.comisionPagada,
+    this.disponible,
+    this.retenida,
+    this.enRetiro,
+    this.pagada,
     this.moneda,
   });
 
   @override
   Widget build(BuildContext context) {
     final int inact = inactivos ?? (total - activos).clamp(0, total).toInt();
+    final String cur = moneda ?? '';
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       child: Column(
         children: [
+          // KPIs de referidos
           Row(
             children: [
               _box('Referidos', '$total'),
@@ -36,14 +44,29 @@ class ReferralKpis extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          if (comisionPendiente != null || comisionPagada != null)
+
+          // KPIs de comisiones
+          if (disponible != null ||
+              retenida != null ||
+              enRetiro != null ||
+              pagada != null)
             Row(
               children: [
-                _box('Pendiente', '${comisionPendiente?.toStringAsFixed(0)} ${moneda ?? ''}'),
+                _box('Disponible', '${disponible?.toStringAsFixed(0) ?? '0'} $cur'),
                 const SizedBox(width: 12),
-                _box('Pagado', '${comisionPagada?.toStringAsFixed(0)} ${moneda ?? ''}'),
+                _box('Retenida', '${retenida?.toStringAsFixed(0) ?? '0'} $cur'),
               ],
             ),
+          if (enRetiro != null || pagada != null) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _box('En retiro', '${enRetiro?.toStringAsFixed(0) ?? '0'} $cur'),
+                const SizedBox(width: 12),
+                _box('Pagada', '${pagada?.toStringAsFixed(0) ?? '0'} $cur'),
+              ],
+            ),
+          ],
         ],
       ),
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/intl.dart'; // ← FALTA ESTE IMPORT
 
 import 'presentation/screens/paywall/paywall_screen.dart';
 
@@ -26,12 +27,20 @@ import 'package:base_app/core/config/env.dart';
 import 'package:base_app/data/session/session_manager.dart';
 import 'package:base_app/presentation/providers/referral_provider.dart';
 import 'package:base_app/data/api/referrals_api.dart';
-
+import 'package:base_app/presentation/providers/payouts_provider.dart';
+import 'package:base_app/data/api/payouts_api.dart';
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   _setupLogging();
+
+  // Locale por defecto para Intl y formatos
+  // ignore: deprecated_member_use
+  Intl.defaultLocale = 'es_CO';
+
+  // ✅ Compartimos una sola sesión entre providers
+  final session = SessionManager();
 
   runApp(
     MultiProvider(
@@ -44,15 +53,17 @@ Future<void> main() async {
         ChangeNotifierProvider(
           create: (_) => SubscriptionProvider(
             api: SubscriptionsApi(baseUrl: Env.apiBaseUrl),
-            session: SessionManager(),
+            session: session,
           ),
         ),
         ChangeNotifierProvider(
           create: (_) => ReferralProvider(
-            api: ReferralsApi(
-              baseUrl: Env.apiBaseUrl,
-              session: SessionManager(),
-            ),
+            api: ReferralsApi(baseUrl: Env.apiBaseUrl, session: session),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => PayoutsProvider(
+            api: PayoutsApi(baseUrl: Env.apiBaseUrl, session: SessionManager()),
           ),
         ),
       ],
@@ -64,14 +75,12 @@ Future<void> main() async {
     final ctx = navigatorKey.currentContext;
     if (ctx == null) return;
 
-    // Toma las dependencias ANTES del primer await
     final subs = ctx.read<SubscriptionProvider>();
     final referrals = ctx.read<ReferralProvider>();
 
     await subs.configureBilling();
     await subs.refresh(force: true);
 
-    // (opcional) si quieres, valida que la app siga montada
     if (navigatorKey.currentState?.mounted != true) return;
 
     await referrals.load(refresh: true);

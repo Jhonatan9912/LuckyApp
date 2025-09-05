@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:base_app/presentation/screens/admin_dashboard/logic/referrals_controller.dart';
 import 'package:base_app/data/api/admin_referrals_api.dart';
 import 'package:base_app/data/api/api_service.dart';
+import 'package:base_app/data/models/top_referrer.dart'; // 👈 NUEVO
 
 class ReferralsBottomSheet extends StatefulWidget {
   const ReferralsBottomSheet({
@@ -22,7 +23,7 @@ class ReferralsBottomSheet extends StatefulWidget {
 
   /// Seleccionar/deseleccionar una comisión
   final void Function(int commissionId, bool selected)?
-      onToggleSelectCommission;
+  onToggleSelectCommission;
 
   /// Marcar un payout como pagado
   final void Function(int payoutId)? onMarkAsPaid;
@@ -34,18 +35,21 @@ class ReferralsBottomSheet extends StatefulWidget {
 class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
   late final ReferralsController _ctrl;
 
-@override
-void initState() {
-  super.initState();
+  @override
+  void initState() {
+    super.initState();
 
-  // 👇 aquí va exactamente
-  _ctrl = ReferralsController(
-    api: AdminReferralsApi(baseUrl: ApiService.defaultBaseUrl),
-  );
+    // 👇 aquí va exactamente
+    _ctrl = ReferralsController(
+      api: AdminReferralsApi(baseUrl: ApiService.defaultBaseUrl),
+    );
 
-  _ctrl.load(); // <- carga el resumen (no uses loadSummary)
-}
-
+    _ctrl.load(); // <- carga el resumen (no uses loadSummary)
+    _ctrl.loadTop();
+    debugPrint(
+      '[ReferralsBottomSheet] initState -> load() & loadTop() launched',
+    );
+  }
 
   @override
   void dispose() {
@@ -115,6 +119,9 @@ void initState() {
                             total: s?.total ?? 0,
                             active: s?.active ?? 0,
                             inactive: s?.inactive ?? 0,
+                            comisionPendiente: _ctrl.pendingLabel,
+                            comisionPagada: _ctrl.paidLabel,
+                            top: _ctrl.top, // 👈 NUEVO
                           ),
 
                           // 2) Comisiones (pendientes) — por ahora maqueta
@@ -190,7 +197,6 @@ void initState() {
     );
   }
 }
-
 
 // ———— Sub-widgets de UI (solo visual) ————
 
@@ -272,6 +278,9 @@ class _SummaryTab extends StatelessWidget {
     required this.total,
     required this.active,
     required this.inactive,
+    required this.comisionPendiente,
+    required this.comisionPagada,
+    required this.top, // 👈 NUEVO
   });
 
   final ScrollController scrollController;
@@ -280,6 +289,9 @@ class _SummaryTab extends StatelessWidget {
   final int total;
   final int active;
   final int inactive;
+  final String comisionPendiente;
+  final String comisionPagada;
+  final List<TopReferrer> top;
 
   @override
   Widget build(BuildContext context) {
@@ -288,10 +300,12 @@ class _SummaryTab extends StatelessWidget {
         controller: scrollController,
         padding: const EdgeInsets.all(16),
         children: const [
-          Center(child: Padding(
-            padding: EdgeInsets.all(24),
-            child: CircularProgressIndicator(),
-          )),
+          Center(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: CircularProgressIndicator(),
+            ),
+          ),
         ],
       );
     }
@@ -302,7 +316,10 @@ class _SummaryTab extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           const SizedBox(height: 8),
-          Text('No se pudo cargar el resumen:', style: Theme.of(context).textTheme.titleSmall),
+          Text(
+            'No se pudo cargar el resumen:',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
           const SizedBox(height: 8),
           Text(error!, style: const TextStyle(color: Colors.red)),
           const SizedBox(height: 16),
@@ -319,22 +336,28 @@ class _SummaryTab extends StatelessWidget {
           totalReferidos: '$total',
           activos: '$active',
           inactivos: '$inactive',
-          // aún no tenemos lógica de comisiones; deja maqueta
-          comisionPendiente: '\u2014', // — (em dash)
-          comisionPagada: '\u2014',
+          comisionPendiente: comisionPendiente,
+          comisionPagada: comisionPagada,
         ),
+
         const SizedBox(height: 12),
         const _SectionTitle('Top Referidos'),
         const SizedBox(height: 8),
-        // Por ahora, placeholders. Cuando tengamos endpoint de “top referidos” lo cambiamos.
-        const _ReferralCard(name: '—', phone: '—', status: 'FREE'),
-        const _ReferralCard(name: '—', phone: '—', status: 'PRO'),
-        const _ReferralCard(name: '—', phone: '—', status: 'FREE'),
+        if (top.isEmpty)
+          const Text('No hay datos aún.')
+        else
+          ...top.map(
+            (t) => _ReferralCard(
+              name: t.name,
+              phone:
+                  '${t.phone} • ${t.activeCount} ${t.activeCount == 1 ? 'activo' : 'activos'}',
+              status: t.status, // ← ahora muestra FREE/PRO
+            ),
+          ),
       ],
     );
   }
 }
-
 
 class _CommissionsTab extends StatelessWidget {
   const _CommissionsTab({

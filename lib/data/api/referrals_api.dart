@@ -53,11 +53,15 @@ class ReferralSummary {
   final double paidCop;
   final double totalCop;
 
+  // NUEVO: “En retiro / En proceso”
+  final double inWithdrawalCop;
+
   // (Opcional) si quieres tener también micros:
   final int availableMicros;
   final int pendingMicros;
   final int paidMicros;
   final int totalMicros;
+  final int inWithdrawalMicros;
 
   ReferralSummary({
     required this.total,
@@ -71,6 +75,8 @@ class ReferralSummary {
     this.pendingMicros = 0,
     this.paidMicros = 0,
     this.totalMicros = 0,
+    this.inWithdrawalCop = 0.0, // <-- NUEVO
+    this.inWithdrawalMicros = 0, // <-- NUEVO
   });
 
   factory ReferralSummary.fromJson(Map<String, dynamic> j) => ReferralSummary(
@@ -92,11 +98,19 @@ class ReferralSummary {
         ? (j['total_cop'] as num).toDouble()
         : double.tryParse('${j['total_cop']}') ?? 0.0,
 
+    // NUEVO: “En retiro” (acepta snake_case o camelCase)
+    inWithdrawalCop: (j['in_withdrawal_cop'] is num)
+        ? (j['in_withdrawal_cop'] as num).toDouble()
+        : (j['inWithdrawalCop'] is num)
+            ? (j['inWithdrawalCop'] as num).toDouble()
+            : double.tryParse('${j['in_withdrawal_cop'] ?? j['inWithdrawalCop']}') ?? 0.0,
+
     // micros (opcionales)
     availableMicros: (j['available_micros'] ?? 0) as int,
     pendingMicros: (j['pending_micros'] ?? 0) as int,
     paidMicros: (j['paid_micros'] ?? 0) as int,
     totalMicros: (j['total_micros'] ?? 0) as int,
+    inWithdrawalMicros: (j['in_withdrawal_micros'] ?? j['inWithdrawalMicros'] ?? 0) as int,
   );
 }
 
