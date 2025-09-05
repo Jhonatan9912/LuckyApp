@@ -9,10 +9,10 @@ PRO_CONDITION = "s.status = 'active'"
 
 def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
     """
-    Disponible (neto) = comisiones NO pagadas con event_time <= cutoff  -  payout_requests (pending|processing)
+    Disponible (neto) = comisiones NO pagadas con event_time <= cutoff  -  payout_requests (pending|requested|approved)
     Retenida          = comisiones NO pagadas con event_time > cutoff o event_time NULL
     Pagada            = status = 'paid'
-    En retiro         = payout_requests con status IN ('pending','processing')
+    En retiro         = payout_requests con status IN ('pending','requested','approved')
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=hold_days)
 
@@ -57,14 +57,15 @@ def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
           FROM referral_commissions
           WHERE referrer_user_id = :uid
         ),
-        payouts AS (
-          -- En retiro: solicitudes aún no liquidadas
-          SELECT
-            COALESCE(SUM(pr.amount_micros), 0) AS in_withdrawal_micros
-          FROM payout_requests pr
-          WHERE pr.user_id = :uid
-            AND pr.status IN ('pending','requested')
-        )
+      payouts AS (
+        -- En retiro: solicitudes aún no liquidadas
+        SELECT
+          COALESCE(SUM(pr.amount_micros), 0) AS in_withdrawal_micros
+        FROM payout_requests pr
+        WHERE pr.user_id = :uid
+          AND pr.status IN ('pending','requested','approved')
+      )
+
         SELECT
           c.total,
           c.activos,
