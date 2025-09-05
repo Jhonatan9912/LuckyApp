@@ -63,7 +63,7 @@ def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
             COALESCE(SUM(pr.amount_micros), 0) AS in_withdrawal_micros
           FROM payout_requests pr
           WHERE pr.user_id = :uid
-            AND pr.status IN ('pending','processing')
+            AND pr.status IN ('pending','requested')
         )
         SELECT
           c.total,

@@ -30,6 +30,7 @@ def my_referrals_summary():
     return jsonify(data), 200
 
 # GET /api/me/referrals/?limit=&offset=
+
 @referrals_bp.get("/")
 @jwt_required()
 def my_referrals_list():
