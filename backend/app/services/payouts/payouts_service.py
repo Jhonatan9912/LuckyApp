@@ -308,8 +308,7 @@ def list_commission_requests(
         SELECT
             pr.id,
             pr.user_id,
-            COALESCE(u.full_name,
-                     CONCAT(COALESCE(u.first_name,''),' ',COALESCE(u.last_name,''))) AS user_name,
+           u.name AS user_name,
             -- Etiqueta de periodo (mes/año) a partir de created_at
             to_char(pr.created_at AT TIME ZONE 'UTC', 'Mon YYYY') AS month_label,
             pr.amount_micros,
