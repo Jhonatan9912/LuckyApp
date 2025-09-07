@@ -9,7 +9,9 @@ from app.services.payouts.payouts_service import (
     ALLOWED_BANK_KINDS,
 )
 
-payouts_bp = Blueprint("payouts", __name__, url_prefix="/api/me/payouts")
+# Alineado con el cliente móvil:
+# ReferralsApi -> /api/me/referrals/payouts/requests
+payouts_bp = Blueprint("payouts", __name__, url_prefix="/api/me/referrals/payouts")
 
 
 @payouts_bp.post("/requests")
@@ -19,16 +21,30 @@ def create_request():
     user_id = identity.get("id") if isinstance(identity, dict) else int(identity)
 
     data = request.get_json(silent=True) or {}
-    account_type   = (data.get("account_type") or "").strip().lower()
-    account_number = (data.get("account_number") or "").strip()
-    # normalizamos aquí para pasar consistente al service
-    account_kind   = (data.get("account_kind") or None)
+
+    # Soporta payload anidado en data{} y plano (compatibilidad)
+    flat = data
+    inner = data.get("data") if isinstance(data.get("data"), dict) else {}
+
+    # account_type llega a nivel superior según el cliente actual
+    account_type = (flat.get("account_type") or "").strip().lower()
+
+    # Estos pueden venir en data{} o plano
+    account_number = (inner.get("account_number") or flat.get("account_number") or "").strip()
+
+    account_kind = inner.get("account_kind") or flat.get("account_kind") or None
     if isinstance(account_kind, str):
         account_kind = account_kind.strip().lower()
-    bank_code      = (data.get("bank_code") or None)
+
+    bank_code = inner.get("bank_code") or flat.get("bank_code") or None
     if isinstance(bank_code, str):
         bank_code = bank_code.strip().upper()
-    observations   = (data.get("observations") or "").strip() or None
+
+    observations = (inner.get("observations") or flat.get("observations") or "").strip() or None
+
+    # Toleramos amount_cop aunque hoy el service toma TODO el disponible.
+    # Si luego soportas retiros parciales, úsalo en el service.
+    amount_cop = flat.get("amount_cop")
 
     # Validaciones rápidas (las de negocio profundas las hace el service)
     if account_type not in ALLOWED_TYPES:
@@ -54,7 +70,7 @@ def create_request():
             bank_code=bank_code,
             observations=observations,
         )
-        # El service ya devuelve status="pending"
+        # El service devuelve status="requested"
         return jsonify({"ok": True, "request": out}), 201
 
     except ValueError as e:

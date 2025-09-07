@@ -61,6 +61,9 @@ class _PayoutRequestFormState extends State<_PayoutRequestForm> {
     super.initState();
     Future.microtask(() {
       if (!mounted) return;
+      // 🔹 limpia errores previos del provider
+      context.read<PayoutsProvider>().clearErrors();
+      // 🔹 carga bancos
       context.read<PayoutsProvider>().loadBanks(force: true);
     });
   }
@@ -271,7 +274,7 @@ class _PayoutRequestFormState extends State<_PayoutRequestForm> {
                   );
                 }
 
-                if (p.error != null) {
+                if (p.banksError != null) {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -285,7 +288,7 @@ class _PayoutRequestFormState extends State<_PayoutRequestForm> {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        'Error cargando bancos: ${p.error}',
+                        'Error cargando bancos: ${p.banksError}',
                         style: const TextStyle(color: Colors.red),
                       ),
                     ],
@@ -456,6 +459,17 @@ class _PayoutRequestFormState extends State<_PayoutRequestForm> {
                                 final navigator = Navigator.of(context);
                                 final messenger = ScaffoldMessenger.of(context);
                                 final focusScope = FocusScope.of(context);
+                                // Bloquea el envío si ya no cumple el mínimo de $100.000 (por carrera o refresh)
+                                if (!referrals.canWithdraw) {
+                                  messenger.showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Tu saldo disponible aún no alcanza \$100.000',
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
 
                                 // 1) Submit
                                 final ok = await p.submit(input);
@@ -479,7 +493,7 @@ class _PayoutRequestFormState extends State<_PayoutRequestForm> {
                                   messenger.showSnackBar(
                                     SnackBar(
                                       content: Text(
-                                        p.error ??
+                                        p.submitError ??
                                             'No se pudo enviar la solicitud',
                                       ),
                                     ),

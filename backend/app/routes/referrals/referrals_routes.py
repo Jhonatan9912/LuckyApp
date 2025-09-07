@@ -56,3 +56,20 @@ def my_referrals_payouts_summary():
     currency = (request.args.get("currency") or "COP").upper()
     data = get_payout_totals(user_id, currency=currency)
     return jsonify(data), 200
+
+@referrals_bp.post("/referrals/dev/mature")
+@jwt_required()
+def dev_mature_referral_commissions():
+    """
+    DEV ONLY: promueve comisiones pending -> available usando minutos o días.
+    Ej: POST /api/referrals/dev/mature?minutes=1
+    """
+    minutes = request.args.get("minutes", type=int)
+    days = request.args.get("days", type=int)
+
+    # (opcional) valida rol/admin si quieres reforzar seguridad
+    # user_id = int(get_jwt_identity())
+
+    from app.services.referrals.payouts_service import mature_commissions
+    updated = mature_commissions(days=days, minutes=minutes)
+    return {"updated": updated, "minutes": minutes, "days": days}, 200

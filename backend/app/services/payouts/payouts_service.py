@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from app.db.database import db
 from app.models.payout_request import PayoutRequest
+from app.services.constants import ACTIVE_PAYOUT_REQUEST_STATUSES
+from sqlalchemy import text, bindparam
+
 
 # Conversión y mínimos
 MICROS_PER_COP = 1_000_000
@@ -86,32 +89,14 @@ def _pri_schema_info() -> Dict[str, Any]:
         "amount_col": amount_col,
     }
 
-
 def _pick_available_commissions(user_id: int, schema: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Trae y bloquea (FOR UPDATE SKIP LOCKED) las comisiones retirables:
-    - status='available'
-    - o status='pending' con ≥ 3 días de antigüedad
-    Excluye comisiones ya asociadas en payout_request_items (en cualquiera de las columnas que existan).
+    Trae (y bloquea con FOR UPDATE SKIP LOCKED) comisiones retirables:
+      - status = 'available'
+      - o status = 'pending' con >= 3 días
+    Excluye comisiones ya ligadas a payout_requests con estado activo.
     """
-    filters = []
-    if schema["has_ref_col"]:
-        filters.append("pri.referral_commission_id = rc.id")
-    if schema["has_comm_col"]:
-        filters.append("pri.commission_id = rc.id")
-
-    if len(filters) == 2:
-        not_exists = (
-            "NOT EXISTS (SELECT 1 FROM public.payout_request_items pri "
-            f"WHERE ({filters[0]} OR {filters[1]}))"
-        )
-    else:
-        not_exists = (
-            "NOT EXISTS (SELECT 1 FROM public.payout_request_items pri "
-            f"WHERE {filters[0]})"
-        )
-
-    sql = f"""
+    sql = text("""
         SELECT rc.id, rc.commission_micros
         FROM public.referral_commissions rc
         WHERE rc.referrer_user_id = :uid
@@ -122,13 +107,28 @@ def _pick_available_commissions(user_id: int, schema: Dict[str, Any]) -> List[Di
                 AND (rc.event_time IS NULL OR rc.event_time <= now() - interval '3 days')
              )
           )
-          AND {not_exists}
-        ORDER BY rc.id
+          AND NOT EXISTS (
+                SELECT 1
+                FROM public.payout_request_items pri
+                JOIN public.payout_requests pr
+                  ON pr.id = pri.payout_request_id
+                WHERE (pri.referral_commission_id = rc.id OR pri.commission_id = rc.id)
+                  AND pr.user_id = :uid
+                  AND pr.status::text IN :active_statuses   -- enum → texto por seguridad
+          )
+        ORDER BY rc.event_time ASC NULLS LAST, rc.id ASC
         FOR UPDATE SKIP LOCKED
-    """
-    rows = db.session.execute(text(sql), {"uid": user_id}).mappings().all()
-    return [dict(r) for r in rows]
+    """).bindparams(
+        bindparam("active_statuses", expanding=True),
+    )
 
+    params = {
+        "uid": user_id,
+        "active_statuses": ACTIVE_PAYOUT_REQUEST_STATUSES,  # ['requested','approved','pending']
+    }
+
+    rows = db.session.execute(sql, params).mappings().all()
+    return [dict(r) for r in rows]
 
 def create_payout_request(
     *,
@@ -144,7 +144,7 @@ def create_payout_request(
       1) Suma comisiones retirables del usuario (bloqueadas).
       2) Inserta payout_requests con amount_micros = suma.
       3) Inserta payout_request_items (detalle) usando columnas reales (y NOT NULL).
-      4) Marca esas comisiones como 'pending'.
+      4) Marca esas comisiones como 'in_withdrawal' (bloqueadas para retiro).
     Commit/rollback manual.
     """
     # ---------- Validaciones previas ----------
@@ -212,7 +212,7 @@ def create_payout_request(
             account_number=num,
             amount_micros=total_micros,
             currency_code=CURRENCY_CODE,
-            status="pending",
+            status="requested",   # ← AQUÍ
             observations=notes,
             requested_at=now,
             created_at=now,
@@ -256,12 +256,12 @@ def create_payout_request(
                 params["amt"] = it["commission_micros"]
             db.session.execute(insert_sql, params)
 
-            # Marcar comisión como pending
+            # Marcar comisión como EN RETIRO (bloqueada para no volver a "disponible")
             db.session.execute(
                 text(
                     """
                     UPDATE public.referral_commissions
-                    SET status = 'pending'
+                    SET status = 'in_withdrawal'
                     WHERE id = :cid
                     """
                 ),
@@ -274,7 +274,7 @@ def create_payout_request(
             "id": req.id,
             "amount_micros": total_micros,
             "currency_code": CURRENCY_CODE,
-            "status": "pending",
+            "status": "requested",   # ← AQUÍ
             "requested_at": now.isoformat(),
         }
 

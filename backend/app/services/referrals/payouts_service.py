@@ -1,9 +1,10 @@
 # app/services/referrals/payouts_service.py
 import os
 from decimal import Decimal
+from datetime import datetime, timezone, timedelta
+
 from sqlalchemy import text
 from app.db.database import db
-from datetime import datetime, timezone, timedelta
 
 DEFAULT_CURRENCY = "COP"
 
@@ -14,22 +15,27 @@ def get_maturity_days() -> int:
     Prod: 3 (por ventana de reembolso)
     Dev/Sandbox: configurable y corto para pruebas (0 o 1).
     """
-    env = (os.getenv('ENV', '') or '').lower()
-    if env in ('dev', 'sandbox', 'staging'):
-        return int(os.getenv('MATURITY_DAYS', '1'))
-    return int(os.getenv('MATURITY_DAYS', '3'))
+    env = (os.getenv("ENV", "") or "").lower()
+    if env in ("dev", "sandbox", "staging"):
+        return int(os.getenv("MATURITY_DAYS", "1"))
+    return int(os.getenv("MATURITY_DAYS", "3"))
 
-def mature_commissions(days: int | None = None) -> int:
+
+def mature_commissions(days: int | None = None, minutes: int | None = None) -> int:
     """
-    Pasa comisiones de pending → available si:
+    Promueve comisiones de pending → available si:
       - amount_micros > 0
-      - event_time <= now - days
-    Devuelve cuántas filas actualizó.
-    """
-    if days is None:
-        days = get_maturity_days()
+      - event_time <= now() - (minutes o days)
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    Si 'minutes' viene, tiene prioridad (útil en staging/QA).
+    Si 'minutes' es None y 'days' es None, usa get_maturity_days().
+    """
+    if minutes is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=int(minutes))
+    else:
+        if days is None:
+            days = get_maturity_days()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
 
     res = db.session.execute(
         text("""
@@ -39,17 +45,17 @@ def mature_commissions(days: int | None = None) -> int:
                AND amount_micros > 0
                AND event_time <= :cutoff
         """),
-        {"cutoff": cutoff.isoformat()}
+        {"cutoff": cutoff},  # ← pasa datetime, que SQLAlchemy adapta
     )
     db.session.commit()
-
     return int(res.rowcount or 0)
+
 
 def reject_commissions_for_token(purchase_token: str) -> int:
     """
     Marca como 'rejected' todas las comisiones PENDIENTES asociadas al purchase_token.
     Se usa cuando llega RTDN con notificationType=12 (REVOKED/Refund).
-    Devuelve cuántas filas actualizó.
+    Devuelve cuántas filas se actualizaron.
     """
     if not purchase_token:
         return 0
@@ -61,7 +67,7 @@ def reject_commissions_for_token(purchase_token: str) -> int:
              WHERE purchase_token = :token
                AND status = 'pending'
         """),
-        {"token": purchase_token}
+        {"token": purchase_token},
     )
     db.session.commit()
     return int(res.rowcount or 0)
@@ -69,54 +75,55 @@ def reject_commissions_for_token(purchase_token: str) -> int:
 
 def get_payout_totals(referrer_user_id: int, currency: str = DEFAULT_CURRENCY) -> dict:
     """
-    Devuelve:
+    Devuelve totales para tablero/referrals:
       - currency
-      - pending:   suma en micros → unidades
-      - available: suma en micros → unidades (listo para retiro)
-      - paid:      suma en micros → unidades (pagado históricamente)
-      - visible_total: pending + available (lo que muestras al usuario de inmediato)
+      - pending   (micros → unidades)
+      - available (micros → unidades)
+      - paid      (micros → unidades)
+      - visible_total = pending + available
     """
     row_p = db.session.execute(
         text("""
             SELECT COALESCE(SUM(commission_micros),0) AS pend,
                    COALESCE(MAX(currency_code), :cur) AS cur
-            FROM referral_commissions
-            WHERE referrer_user_id = :uid AND status = 'pending'
+              FROM referral_commissions
+             WHERE referrer_user_id = :uid AND status = 'pending'
         """),
-        {"uid": referrer_user_id, "cur": currency}
+        {"uid": referrer_user_id, "cur": currency},
     ).mappings().first()
 
     row_a = db.session.execute(
         text("""
             SELECT COALESCE(SUM(commission_micros),0) AS avail
-            FROM referral_commissions
-            WHERE referrer_user_id = :uid AND status = 'available'
+              FROM referral_commissions
+             WHERE referrer_user_id = :uid AND status = 'available'
         """),
-        {"uid": referrer_user_id}
+        {"uid": referrer_user_id},
     ).mappings().first()
 
     row_paid = db.session.execute(
         text("""
             SELECT COALESCE(SUM(commission_micros),0) AS paid
-            FROM referral_commissions
-            WHERE referrer_user_id = :uid AND status = 'paid'
+              FROM referral_commissions
+             WHERE referrer_user_id = :uid AND status = 'paid'
         """),
-        {"uid": referrer_user_id}
+        {"uid": referrer_user_id},
     ).mappings().first()
 
-    pend_micros  = (row_p or {}).get("pend", 0) or 0
+    pend_micros = (row_p or {}).get("pend", 0) or 0
     avail_micros = (row_a or {}).get("avail", 0) or 0
-    paid_micros  = (row_paid or {}).get("paid", 0) or 0
+    paid_micros = (row_paid or {}).get("paid", 0) or 0
     cur = (row_p or {}).get("cur") or currency
 
     to_units = lambda x: float(Decimal(x) / Decimal(1_000_000))
     return {
         "currency": cur,
         "pending": to_units(pend_micros),
-        "available": to_units(avail_micros),        # ← para habilitar el botón
+        "available": to_units(avail_micros),
         "paid": to_units(paid_micros),
-        "visible_total": to_units(pend_micros + avail_micros),  # ← lo que ves desde el día 0
+        "visible_total": to_units(pend_micros + avail_micros),
     }
+
 
 def _get_commission_percent() -> float:
     """
@@ -151,7 +158,7 @@ def _get_referrer_user_id(referred_user_id: int) -> int | None:
              ORDER BY created_at ASC
              LIMIT 1
         """),
-        {"rid": referred_user_id}
+        {"rid": referred_user_id},
     ).first()
     return int(row[0]) if row and row[0] is not None else None
 
@@ -176,7 +183,7 @@ def register_referral_commission(
     if not referrer_id:
         return False  # no hay a quién pagar
 
-    percent = _get_commission_percent()  # p.ej. 40
+    percent = _get_commission_percent()  # p. ej. 40
     commission_micros = int(round(amount_micros * (percent / 100.0)))
     when = (event_time or datetime.now(timezone.utc)).isoformat()
 
@@ -207,7 +214,7 @@ def register_referral_commission(
             "currency_code": currency_code,
             "percent": percent,
             "commission_micros": commission_micros,
-        }
+        },
     )
     inserted = res.rowcount and res.rowcount > 0
     if inserted:

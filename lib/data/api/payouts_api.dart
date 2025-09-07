@@ -25,8 +25,14 @@ class PayoutsApi {
     };
   }
 
+  String _join(String path) {
+    if (baseUrl.endsWith('/')) {
+      return '${baseUrl.substring(0, baseUrl.length - 1)}$path';
+    }
+    return '$baseUrl$path';
+  }
+
   /// GET /api/meta/banks?active=1[&entity_type=BANK]
-  /// Ajusta los nombres de query si tu backend usa otros (ej. type=).
   Future<List<Bank>> fetchBanks({
     bool onlyActive = true,
     String? entityType, // 'BANK' | 'SEDPE' | 'CF'
@@ -37,8 +43,7 @@ class PayoutsApi {
       query['entity_type'] = entityType;
     }
 
-    final uri =
-        Uri.parse('$baseUrl/api/meta/banks').replace(queryParameters: query);
+    final uri = Uri.parse(_join('/api/meta/banks')).replace(queryParameters: query);
     final res = await http.get(uri, headers: await _headers()).timeout(_timeout);
 
     if (kDebugMode) {
@@ -55,9 +60,7 @@ class PayoutsApi {
       }
 
       if (data is List) {
-        return data
-            .map((e) => Bank.fromJson(e as Map<String, dynamic>))
-            .toList();
+        return data.map((e) => Bank.fromJson(e as Map<String, dynamic>)).toList();
       }
       if (data is Map && data['items'] is List) {
         return (data['items'] as List)
@@ -70,21 +73,46 @@ class PayoutsApi {
     throw Exception('No se pudo cargar bancos (${res.statusCode}).');
   }
 
-  /// POST /api/me/payouts/requests
-  /// Devuelve true si el backend confirma la creación; de lo contrario lanza Exception con el mensaje.
+  /// POST /api/me/referrals/payouts/requests
+  /// Construye el payload con el shape que espera el backend:
+  /// {
+  ///   "account_type": "bank|nequi|daviplata|other",
+  ///   "data": {
+  ///     "account_number": "...",
+  ///     "account_kind": "savings|checking", // solo si bank
+  ///     "bank_code": "BANCOLOMBIA",         // solo si bank
+  ///     "observations": "..."               // opcional
+  ///   }
+  /// }
   Future<bool> submitPayoutRequest(PayoutRequestInput input) async {
-    final uri = Uri.parse('$baseUrl/api/me/payouts/requests');
+    final uri = Uri.parse(_join('/api/me/referrals/payouts/requests'));
 
-    final payload = input.toJson();
+    // Armamos el payload exactamente como lo consume tu ruta
+    final Map<String, dynamic> payload = {
+      'account_type': input.accountType,
+      'data': {
+        'account_number': input.accountNumber,
+        if (input.accountType.toLowerCase() == 'bank') ...{
+          if (input.accountKind != null && input.accountKind!.isNotEmpty)
+            'account_kind': input.accountKind,
+          if (input.bankCode != null && input.bankCode!.isNotEmpty)
+            'bank_code': input.bankCode,
+        },
+        if (input.observations != null && input.observations!.trim().isNotEmpty)
+          'observations': input.observations,
+      },
+      // Si en el futuro soportas retiros parciales:
+      // 'amount_cop': input.amountCop,
+    };
+
+    final headers = await _headers();
     final res = await http
-        .post(uri, headers: await _headers(), body: json.encode(payload))
+        .post(uri, headers: headers, body: json.encode(payload))
         .timeout(_timeout);
 
     if (kDebugMode) {
-      debugPrint(
-          '[PayoutsApi.submitPayoutRequest] POST $uri -> ${res.statusCode}');
-      debugPrint(
-          '[PayoutsApi.submitPayoutRequest] payload: ${json.encode(payload)}');
+      debugPrint('[PayoutsApi.submitPayoutRequest] POST $uri -> ${res.statusCode}');
+      debugPrint('[PayoutsApi.submitPayoutRequest] payload: ${json.encode(payload)}');
       debugPrint('[PayoutsApi.submitPayoutRequest] body: ${res.body}');
     }
 
@@ -95,14 +123,9 @@ class PayoutsApi {
       try {
         final body = json.decode(res.body);
         if (body is Map<String, dynamic>) {
-          // Formato estándar de nuestras rutas: { ok: true, request: {...} }
           if (body['ok'] == true) return true;
-
-          // Aceptar variantes donde venga el objeto de la solicitud
           if (body['request'] is Map) return true;
           if (body['id'] != null || body['request_id'] != null) return true;
-
-          // Si viene ok=false con error, lo propagamos
           if (body['ok'] == false && body['error'] != null) {
             throw Exception(body['error'].toString());
           }

@@ -8,105 +8,79 @@ class ReferralProvider extends ChangeNotifier {
   bool _loading = false;
   bool get loading => _loading;
 
+  // Contadores
   int total = 0;
   int activos = 0;
   int inactivos = 0;
 
-  // Totales de comisión (payouts endpoint)
-  double comisionPendiente = 0.0;
-  double comisionPagada = 0.0;
+  // Totales de comisión (resumen de payouts histórico)
+  double comisionPendiente = 0.0; // pendiente por pagar (histórico)
+  double comisionPagada = 0.0;    // ya pagada (histórico)
   String moneda = 'COP';
 
-  // NUEVO: montos que la vista usa directamente
-  double availableCop = 0.0; // “Comisión disponible” que quieres mostrar
-  double pendingCop = 0.0;
-  double paidCop = 0.0;
+  // Montos operativos que usa la UI
+  double availableCop = 0.0;      // Disponible para retiro (liberado)
+  double pendingCop = 0.0;        // Retenida por 3 días (aún no disponible)
+  double inWithdrawalCop = 0.0;   // En proceso de retiro
+  double paidCop = 0.0;           // Total pagado (acumulado)
   double get heldCop => pendingCop;
-  double inWithdrawalCop = 0.0; // NUEVO: “En retiro / En proceso”
 
   List<ReferralItem> items = [];
 
+  /// Carga todo el estado visible (resumen + lista + totales de payouts)
   Future<void> load({bool refresh = false}) async {
     if (_loading) return;
     _loading = true;
     notifyListeners();
 
     try {
+      // 1) Resumen principal (fuente de verdad para saldos actuales)
       final summary = await api.fetchSummary();
       total = summary.total;
       activos = summary.activos;
       inactivos = summary.inactivos;
 
-      // ← clave
-      availableCop = summary.availableCop;
-      pendingCop = summary.pendingCop;
-      paidCop = summary.paidCop;
+      // Valores fuertes desde el backend (NO usar dynamic ni duplicar asignaciones)
+      availableCop   = summary.availableCop;
+      pendingCop     = summary.pendingCop;
+      inWithdrawalCop = summary.inWithdrawalCop;
+      paidCop        = summary.paidCop;
+      moneda         = summary.currency ?? 'COP';
 
-      // Lee “En retiro” si ya viene en el summary
-      try {
-        final dyn = summary as dynamic;
-
-        // casos camelCase (si tu ReferralsApi mapea llaves)
-        final iw1 = (dyn.inWithdrawalCop as num?);
-
-        // fallback a snake_case directo (si summary es un Map/dto plano)
-        final iw2 = (dyn.in_withdrawal_cop as num?);
-
-        if (iw1 != null) {
-          inWithdrawalCop = iw1.toDouble();
-        } else if (iw2 != null) {
-          inWithdrawalCop = iw2.toDouble();
-        }
-      } catch (_) {
-        // Si no viene en el summary, lo dejamos en 0.0
-        inWithdrawalCop = 0.0;
-      }
-
-      debugPrint(
-        '[provider] summary avail=$availableCop held=$pendingCop in_withdrawal=$inWithdrawalCop paid=$paidCop',
-      );
-
-      // Si tu ReferralSummary YA incluye montos del backend (available_cop, pending_cop, paid_cop),
-      // los tomamos aquí. Si no, este bloque se salta sin romper.
-      try {
-        final dyn = summary as dynamic;
-        final a = dyn.availableCop;
-        final p = dyn.pendingCop;
-        final d = dyn.paidCop;
-        if (a is num) availableCop = a.toDouble();
-        if (p is num) pendingCop = p.toDouble();
-        if (d is num) paidCop = d.toDouble();
-      } catch (_) {
-        // summary no trae montos; seguimos con fallback de payouts
+      if (kDebugMode) {
+        debugPrint(
+          '[referral_provider] summary '
+          'avail=$availableCop held=$pendingCop in_withdrawal=$inWithdrawalCop paid=$paidCop currency=$moneda',
+        );
       }
 
       // 2) Lista de referidos
       items = await api.fetchList(limit: 50, offset: 0);
 
-      // 3) Totales de comisiones (payouts)
+      // 3) Totales de payouts (histórico). NO tocar available/pending aquí.
+      //    Solo mostramos métricas históricas si las necesitas en otra vista.
       try {
         final payouts = await api.fetchPayoutsSummary();
         comisionPendiente = payouts.pending;
         comisionPagada = payouts.paid;
-        moneda = payouts.currency;
-
-        // Fallback: si summary no trajo availableCop (>0) usa el pending de payouts
-        if (availableCop <= 0.0 && comisionPendiente > 0.0) {
-          availableCop = comisionPendiente;
+        // Si trae currency y está vacía la actual, úsala; si no, deja la del summary.
+        if ((moneda.isEmpty || moneda == 'COP') && (payouts.currency).isNotEmpty) {
+          moneda = payouts.currency;
         }
-
         if (kDebugMode) {
           debugPrint(
-            '[referral_provider] (payouts) fallback avail=$availableCop held=$pendingCop in_withdrawal=$inWithdrawalCop paid=$paidCop currency=$moneda',
+            '[referral_provider] payouts '
+            'pending(historic)=$comisionPendiente paid(historic)=$comisionPagada currency=$moneda',
           );
         }
       } catch (e) {
-        debugPrint('[referral_provider] ERROR payouts: $e');
-        // No tocamos availableCop aquí; si vino en summary, se mantiene.
+        if (kDebugMode) {
+          debugPrint('[referral_provider] ERROR fetchPayoutsSummary: $e');
+        }
       }
     } catch (e) {
       if (kDebugMode) {
-        debugPrint('Error cargando referidos: $e');
+        debugPrint('[referral_provider] ERROR load(): $e');
       }
     } finally {
       _loading = false;
@@ -114,10 +88,54 @@ class ReferralProvider extends ChangeNotifier {
     }
   }
 
+  /// Umbral mínimo de retiro: $100.000 COP.
   bool get canWithdraw => availableCop >= 100000.0;
 
-  // Aliases usados por la UI existente
+  // Aliases usados por UI existente (si los necesitas)
   String get payoutCurrency => moneda;
   double get payoutPending => comisionPendiente;
   double get payoutPaid => comisionPagada;
+
+  /// Crea una solicitud de retiro. NO mueve saldos en cliente.
+  /// El backend debe:
+  /// - Descontar atómicamente de `available` el monto enviado.
+  /// - Aumentar `in_withdrawal` (en retiro) con ese monto.
+  /// - Devolver el nuevo resumen para que `load()` lo refleje.
+  Future<void> requestPayout({
+    required double amountCop,
+    required String accountType,              // 'bank' | 'nequi' | 'daviplata' | 'other'
+    required Map<String, dynamic> payoutData, // número, titular, banco, etc.
+  }) async {
+    if (amountCop <= 0) {
+      throw Exception('Monto inválido');
+    }
+    if (amountCop > availableCop) {
+      throw Exception('El monto solicitado supera tu disponible');
+    }
+    if (!canWithdraw) {
+      throw Exception('Aún no alcanzas \$100.000 para retirar');
+    }
+
+    _loading = true;
+    notifyListeners();
+    try {
+      await api.createPayoutRequest(
+        amountCop: amountCop,
+        accountType: accountType,
+        payoutData: payoutData,
+      );
+
+      // IMPORTANTÍSIMO: recargar desde el backend para reflejar
+      // available=0 y enRetiro=monto (o lo que corresponda).
+      await load(refresh: true);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[referral_provider] requestPayout ERROR: $e');
+      }
+      rethrow;
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
 }

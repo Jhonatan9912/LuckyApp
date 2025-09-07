@@ -2,26 +2,29 @@ from typing import List, Dict, Any
 from sqlalchemy import text
 from app.db.database import db  # tu SQLAlchemy()
 from datetime import datetime, timezone, timedelta
+from app.services.constants import ACTIVE_PAYOUT_REQUEST_STATUSES, HELD_COMMISSION_STATUSES
+from sqlalchemy import text, bindparam 
 
 # Cambia esta condición si tu lógica PRO es distinta (status/expires_at).
 PRO_CONDITION = "s.status = 'active'"
 
-
 def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
     """
-    Disponible (neto) = comisiones NO pagadas con event_time <= cutoff  -  payout_requests (pending|requested|approved)
-    Retenida          = comisiones NO pagadas con event_time > cutoff o event_time NULL
-    Pagada            = status = 'paid'
-    En retiro         = payout_requests con status IN ('pending','requested','approved')
+    Disponible (neto): available - lo que está ligado a payout_requests activos.
+    Retenida:          status en HELD_COMMISSION_STATUSES.
+    Pagada:            status='paid'.
+    En retiro:         comisiones ligadas a payout_requests con estado activo.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=hold_days)
+    # Si no usas 'cutoff' aquí, no lo calcules para evitar confusiones.
+    # cutoff = datetime.now(timezone.utc) - timedelta(days=hold_days)
 
     sql = text("""
         WITH base AS (
           SELECT r.id,
                  r.referred_user_id,
                  EXISTS (
-                   SELECT 1 FROM user_subscriptions s
+                   SELECT 1
+                   FROM user_subscriptions s
                    WHERE s.user_id = r.referred_user_id
                      AND (s.status = 'active')
                  ) AS pro_active
@@ -36,36 +39,24 @@ def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
         ),
         sums AS (
           SELECT
-            -- Disponible (bruto): no pagado y con event_time definido y <= cutoff
-            COALESCE(SUM(CASE
-              WHEN status <> 'paid'
-               AND event_time IS NOT NULL
-               AND event_time <= :cutoff
-              THEN commission_micros END), 0) AS available_micros_gross,
-
-            -- Retenida: no pagado y (event_time NULL o > cutoff)
-            COALESCE(SUM(CASE
-              WHEN status <> 'paid'
-               AND (event_time IS NULL OR event_time > :cutoff)
-              THEN commission_micros END), 0) AS held_micros,
-
-            COALESCE(SUM(CASE
-              WHEN status = 'paid'
-              THEN commission_micros END), 0) AS paid_micros,
-
+            COALESCE(SUM(CASE WHEN status = 'available' THEN commission_micros END), 0) AS available_micros_gross,
+            COALESCE(SUM(CASE WHEN status IN :held_statuses THEN commission_micros END), 0) AS held_micros,
+            COALESCE(SUM(CASE WHEN status = 'paid' THEN commission_micros END), 0) AS paid_micros,
             COALESCE(SUM(commission_micros), 0) AS total_micros
           FROM referral_commissions
           WHERE referrer_user_id = :uid
         ),
-      payouts AS (
-        -- En retiro: solicitudes aún no liquidadas
-        SELECT
-          COALESCE(SUM(pr.amount_micros), 0) AS in_withdrawal_micros
-        FROM payout_requests pr
-        WHERE pr.user_id = :uid
-          AND pr.status IN ('pending','requested','approved')
-      )
-
+        payouts AS (
+          SELECT
+            COALESCE(SUM(rc.commission_micros), 0) AS in_withdrawal_micros
+          FROM payout_request_items pri
+          JOIN payout_requests pr
+            ON pr.id = pri.payout_request_id
+          JOIN referral_commissions rc
+            ON rc.id = COALESCE(pri.referral_commission_id, pri.commission_id)
+          WHERE pr.user_id = :uid
+            AND pr.status IN :active_req_statuses
+        )
         SELECT
           c.total,
           c.activos,
@@ -77,19 +68,28 @@ def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
           GREATEST(s.available_micros_gross - p.in_withdrawal_micros, 0) AS available_micros_net
         FROM counts c
         CROSS JOIN sums s
-        CROSS JOIN payouts p;
-    """)
+        CROSS JOIN payouts p
+    """).bindparams(
+        bindparam("held_statuses", expanding=True),
+        bindparam("active_req_statuses", expanding=True),
+    )
 
-    row = db.session.execute(sql, {"uid": user_id, "cutoff": cutoff}).mappings().one()
+    params = {
+        "uid": user_id,
+        "held_statuses": HELD_COMMISSION_STATUSES,
+        "active_req_statuses": ACTIVE_PAYOUT_REQUEST_STATUSES,
+    }
 
-    total = int(row["total"] or 0)
-    activos = int(row["activos"] or 0)
+    row = db.session.execute(sql, params).mappings().one()
+
+    total    = int(row["total"] or 0)
+    activos  = int(row["activos"] or 0)
     inactivos = max(total - activos, 0)
 
     def m2c(v): return float(v or 0) / 1_000_000.0
 
     available_micros_gross = int(row["available_micros_gross"] or 0)
-    available_micros_net   = int(row["available_micros_net"] or 0)   # ✅ usado para 'available_cop'
+    available_micros_net   = int(row["available_micros_net"] or 0)
     held_micros            = int(row["held_micros"] or 0)
     paid_micros            = int(row["paid_micros"] or 0)
     total_micros           = int(row["total_micros"] or 0)
@@ -99,24 +99,20 @@ def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
         "total": total,
         "activos": activos,
         "inactivos": inactivos,
-
-        # micros (por si los necesitas en otra vista)
-        "available_micros": available_micros_net,            # ✅ ahora es NETO
-        "available_micros_gross": available_micros_gross,    # opcional: bruto (solo info)
+        "available_micros": available_micros_net,
+        "available_micros_gross": available_micros_gross,
         "held_micros": held_micros,
-        "in_withdrawal_micros": in_withdrawal_micros,        # ✅ NUEVO
+        "in_withdrawal_micros": in_withdrawal_micros,
         "paid_micros": paid_micros,
         "total_micros": total_micros,
-
-        # COP (frontend)
-        "available_cop": m2c(available_micros_net),          # ✅ NETO (lo que debe ver el usuario como Disponible)
-        "available_gross_cop": m2c(available_micros_gross),  # opcional: bruto (no restado)
-        "pending_cop": m2c(held_micros),                     # tu “Retenida”
-        "in_withdrawal_cop": m2c(in_withdrawal_micros),      # ✅ NUEVO “En retiro”
+        "available_cop": m2c(available_micros_net),
+        "available_gross_cop": m2c(available_micros_gross),
+        "pending_cop": m2c(held_micros),
+        "in_withdrawal_cop": m2c(in_withdrawal_micros),
         "paid_cop": m2c(paid_micros),
         "total_cop": m2c(total_micros),
-
-        "__debug_stamp": "summary_v3_net_available_minus_in_withdrawal",
+        "currency": "COP",
+        "__debug_stamp": "summary_v5_by_status_and_active_requests",
     }
 
 def promote_mature_commissions(days: int = 3) -> int:
@@ -203,7 +199,7 @@ def link_referral_on_signup(referral_code: str | None, new_user_id: int) -> None
     db.session.execute(sql, {"code": referral_code, "new_uid": new_user_id})
     db.session.commit()
 
-  # =======================
+# =======================
 #  COMISIONES (LEDGER)
 # =======================
 
@@ -227,7 +223,6 @@ def _get_commission_percent() -> float:
     except Exception:
         return 0.0
 
-
 def _get_referrer_user_id(referred_user_id: int) -> int | None:
     """
     Quién refirió al usuario (si existe).
@@ -244,7 +239,6 @@ def _get_referrer_user_id(referred_user_id: int) -> int | None:
         {"rid": referred_user_id}
     ).first()
     return int(row[0]) if row and row[0] is not None else None
-
 
 def register_referral_commission(
     *,
@@ -266,7 +260,7 @@ def register_referral_commission(
     if not referrer_id:
         return False  # no hay a quién pagar
 
-    percent = _get_commission_percent()  # p. ej. 50
+    percent = _get_commission_percent()  # p. ej. 40
     commission_micros = int(round(amount_micros * (percent / 100.0)))
     when = (event_time or datetime.now(timezone.utc)).isoformat()
 
@@ -305,7 +299,6 @@ def register_referral_commission(
     else:
         db.session.rollback()  # nada que hacer, ya existía
     return bool(inserted)
-
 
 def get_payouts_summary_for_referrer(referrer_user_id: int) -> dict:
     """

@@ -9,22 +9,34 @@ class PayoutsProvider extends ChangeNotifier {
 
   PayoutsProvider({required this.api});
 
+  // Estados
   bool loadingBanks = false;
   bool submitting = false;
-  String? error;
-  List<Bank> _banks = [];
 
+  // ⚠️ Errores separados para no mezclar mensajes en la UI
+  String? banksError;   // errores al cargar bancos
+  String? submitError;  // errores al enviar la solicitud
+
+  List<Bank> _banks = [];
   List<Bank> get banks => _banks;
+
+  /// Limpia errores manualmente (por si el caller lo necesita)
+  void clearErrors() {
+    banksError = null;
+    submitError = null;
+    notifyListeners();
+  }
 
   Future<void> loadBanks({bool force = false}) async {
     if (!force && _banks.isNotEmpty) return;
     loadingBanks = true;
-    error = null;
+    banksError = null; // solo tocamos el error de bancos
     notifyListeners();
+
     try {
       _banks = await api.fetchBanks(onlyActive: true);
     } catch (e) {
-      error = e.toString();
+      banksError = e.toString();
       _banks = [];
     } finally {
       loadingBanks = false;
@@ -38,13 +50,14 @@ class PayoutsProvider extends ChangeNotifier {
 
   Future<bool> submit(PayoutRequestInput input) async {
     submitting = true;
-    error = null;
-    notifyListeners();  
+    submitError = null; // solo tocamos el error de submit
+    notifyListeners();
+
     try {
       final ok = await api.submitPayoutRequest(input);
       return ok;
     } catch (e) {
-      error = e.toString();
+      submitError = e.toString();
       return false;
     } finally {
       submitting = false;

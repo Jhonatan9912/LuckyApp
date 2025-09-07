@@ -21,14 +21,19 @@ class ReferralPayoutTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = context.watch<ReferralProvider>();
+    final isLoading = p.loading;
+
     final currency = (p.payoutCurrency).toUpperCase();
+    final symbol = currency == 'COP' ? r'$' : '';
+    final fmt = NumberFormat.currency(
+      locale: 'es_CO',
+      symbol: symbol,
+      decimalDigits: 0,
+    );
 
     final available = p.availableCop;
     final held = p.heldCop;
     final inWithdrawal = p.inWithdrawalCop;
-
-    final symbol = currency == 'COP' ? r'$' : '';
-    final fmt = NumberFormat.currency(locale: 'es_CO', symbol: symbol, decimalDigits: 0);
 
     final surface = Theme.of(context).colorScheme.surface;
     final border = Colors.black12;
@@ -38,7 +43,7 @@ class ReferralPayoutTile extends StatelessWidget {
     final canWithdraw = available >= minToWithdraw;
     final c = code?.trim();
 
-    // ---------- SUBTITLE: línea compacta y moderna ----------
+    // ---------- SUBTITLE compacto ----------
     final subtitle = Wrap(
       spacing: 12,
       runSpacing: 2,
@@ -51,6 +56,18 @@ class ReferralPayoutTile extends StatelessWidget {
         _stat(context, 'En retiro', fmt.format(inWithdrawal), primary),
       ],
     );
+
+    Future<void> openSheetAndRefresh() async {
+      if (onWithdraw != null) {
+        onWithdraw!();
+        return;
+      }
+      // Abrir hoja para solicitar retiro
+      await showPayoutRequestSheet(context);
+      // Tras cerrar la hoja, refrescar para traer saldos actualizados desde backend
+      if (!context.mounted) return;
+      await context.read<ReferralProvider>().load(refresh: true);
+    }
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 6),
@@ -69,7 +86,9 @@ class ReferralPayoutTile extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  (c == null || c.isEmpty) ? 'Programa de referidos' : 'Código: $c',
+                  (c == null || c.isEmpty)
+                      ? 'Programa de referidos'
+                      : 'Código: $c',
                   style: const TextStyle(fontWeight: FontWeight.w800),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -100,9 +119,19 @@ class ReferralPayoutTile extends StatelessWidget {
                 width: double.infinity,
                 child: canWithdraw
                     ? FilledButton.icon(
-                        onPressed: onWithdraw ?? () => showPayoutRequestSheet(context),
-                        icon: const Icon(Icons.payments),
-                        label: const Text('Solicitar retiro'),
+                        onPressed: isLoading ? null : openSheetAndRefresh,
+                        icon: isLoading
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.payments),
+                        label: Text(
+                          isLoading ? 'Procesando...' : 'Solicitar retiro',
+                        ),
                       )
                     : Text(
                         'Mínimo para retirar: ${fmt.format(minToWithdraw)}',
@@ -120,22 +149,29 @@ class ReferralPayoutTile extends StatelessWidget {
   // Punto separador sutil
   Widget _dot() => const Text('•', style: TextStyle(color: Colors.black38));
 
-  // Label tenue + monto con semibold y color del tema (sin cajas, sin negritas en el label)
-  Widget _stat(BuildContext context, String label, String value, Color amountColor) {
+  // Label tenue + monto con semibold y color del tema
+  Widget _stat(
+    BuildContext context,
+    String label,
+    String value,
+    Color amountColor,
+  ) {
     return RichText(
       text: TextSpan(
         style: DefaultTextStyle.of(context).style.copyWith(height: 1.2),
         children: [
           TextSpan(
             text: '$label: ',
-            style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w500),
+            style: const TextStyle(
+              color: Colors.black54,
+              fontWeight: FontWeight.w500,
+            ),
           ),
           TextSpan(
             text: value,
             style: TextStyle(
               color: amountColor,
               fontWeight: FontWeight.w600,
-              // Cifras tabulares para una alineación más “finita”
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
