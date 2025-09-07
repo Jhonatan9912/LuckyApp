@@ -9,14 +9,12 @@ import 'package:base_app/core/network/api_client.dart';
 class AuthApi {
   final String baseUrl;
   final http.Client _client;
-  final ApiClient? _apiClient; // ← opcional: si lo pasas, usaremos ApiClient para /me y /logout
+  final ApiClient?
+  _apiClient; // ← opcional: si lo pasas, usaremos ApiClient para /me y /logout
 
-  AuthApi({
-    required this.baseUrl,
-    http.Client? client,
-    ApiClient? apiClient,
-  })  : _client = client ?? http.Client(),
-        _apiClient = apiClient;
+  AuthApi({required this.baseUrl, http.Client? client, ApiClient? apiClient})
+    : _client = client ?? http.Client(),
+      _apiClient = apiClient;
 
   Future<Map<String, dynamic>> loginWithPhone({
     required String phone,
@@ -95,26 +93,77 @@ class AuthApi {
     }
   }
 
-Future<Map<String, dynamic>> me(String token) async {
-  // Si tenemos ApiClient, lo usamos PERO sin auto-refresh.
-  if (_apiClient != null) {
-    const path = '/api/auth/me';
+  Future<Map<String, dynamic>> me(String token) async {
+   // Si tenemos ApiClient, lo usamos CON auto-refresh (auth:true).
+    if (_apiClient != null) {
+      const path = '/api/auth/me';
 
-    // 👉 Enviamos Authorization manual SOLO si tenemos access.
-    //    auth:false evita que ApiClient haga refresh en 401.
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      if (token.isNotEmpty) 'Authorization': 'Bearer $token',
-    };
+      // 👉 Enviamos Authorization manual SOLO si tenemos access.
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      };
+      try {
+        appLogger.i({'event': 'me_request', 'url': '$baseUrl$path'});
 
+        final res = await _apiClient
+            .get(
+              path,
+              headers: headers,
+              auth: true,
+            )
+            .timeout(const Duration(seconds: 10));
+
+        if (kDebugMode) {
+          appLogger.d({
+            'event': 'me_response',
+            'status': res.statusCode,
+            'body': res.body,
+          });
+        } else {
+          appLogger.d({'event': 'me_response', 'status': res.statusCode});
+        }
+
+        final body = jsonDecode(res.body.isEmpty ? '{}' : res.body);
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          return Map<String, dynamic>.from(body);
+        } else {
+          final msg = (body is Map && body['error'] != null)
+              ? body['error'].toString()
+              : 'Token inválido o expirado';
+          throw AuthException(msg, statusCode: res.statusCode);
+        }
+      } on SocketException {
+        throw AuthException('No hay conexión con el servidor');
+      } on TimeoutException {
+        throw AuthException('Tiempo de espera agotado');
+      } on FormatException {
+        throw AuthException('Respuesta inválida del servidor');
+      } on AuthException {
+        rethrow;
+      } catch (e, st) {
+        appLogger.e({
+          'event': 'me_unhandled',
+          'error': e.toString(),
+          'stack': st.toString(),
+        });
+        throw AuthException('Error inesperado al validar sesión');
+      }
+    }
+
+    // Fallback: http.Client con Authorization manual (sin auto-refresh).
+    final uri = Uri.parse('$baseUrl/api/auth/me');
     try {
-      appLogger.i({'event': 'me_request', 'url': '$baseUrl$path'});
+      appLogger.i({'event': 'me_request', 'url': uri.toString()});
 
-      final res = await _apiClient
+      final res = await _client
           .get(
-            path,
-            headers: headers,
-            auth: false, // ⬅️ CLAVE: NO auto-refresh aquí
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+            },
           )
           .timeout(const Duration(seconds: 10));
 
@@ -154,58 +203,6 @@ Future<Map<String, dynamic>> me(String token) async {
       throw AuthException('Error inesperado al validar sesión');
     }
   }
-
-  // Fallback: http.Client con Authorization manual (sin auto-refresh).
-  final uri = Uri.parse('$baseUrl/api/auth/me');
-  try {
-    appLogger.i({'event': 'me_request', 'url': uri.toString()});
-
-    final res = await _client
-        .get(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
-          },
-        )
-        .timeout(const Duration(seconds: 10));
-
-    if (kDebugMode) {
-      appLogger.d({
-        'event': 'me_response',
-        'status': res.statusCode,
-        'body': res.body,
-      });
-    } else {
-      appLogger.d({'event': 'me_response', 'status': res.statusCode});
-    }
-
-    final body = jsonDecode(res.body.isEmpty ? '{}' : res.body);
-    if (res.statusCode >= 200 && res.statusCode < 300) {
-      return Map<String, dynamic>.from(body);
-    } else {
-      final msg = (body is Map && body['error'] != null)
-          ? body['error'].toString()
-          : 'Token inválido o expirado';
-      throw AuthException(msg, statusCode: res.statusCode);
-    }
-  } on SocketException {
-    throw AuthException('No hay conexión con el servidor');
-  } on TimeoutException {
-    throw AuthException('Tiempo de espera agotado');
-  } on FormatException {
-    throw AuthException('Respuesta inválida del servidor');
-  } on AuthException {
-    rethrow;
-  } catch (e, st) {
-    appLogger.e({
-      'event': 'me_unhandled',
-      'error': e.toString(),
-      'stack': st.toString(),
-    });
-    throw AuthException('Error inesperado al validar sesión');
-  }
-}
 
   // === RESET DE CONTRASEÑA === (por TELÉFONO; deja o elimina según tu app)
 
@@ -339,19 +336,43 @@ Future<Map<String, dynamic>> me(String token) async {
   }
 
   // --- Logout ---
-Future<void> logout({required String token}) async {
-  // Si hay ApiClient, úsalo para enviar el ACCESS actual (él lo inyecta).
-  if (_apiClient != null) {
-    const path = '/api/auth/logout';
-    try {
-      appLogger.i({'event': 'logout_request', 'url': '$baseUrl$path'});
+  Future<void> logout({required String token}) async {
+    // Si hay ApiClient, úsalo para enviar el ACCESS actual (él lo inyecta).
+    if (_apiClient != null) {
+      const path = '/api/auth/logout';
+      try {
+        appLogger.i({'event': 'logout_request', 'url': '$baseUrl$path'});
 
-      await _apiClient
+        await _apiClient
+            .post(
+              path,
+              headers: const {'Content-Type': 'application/json'},
+              json: true,
+              auth: true, // ← ApiClient añade Authorization
+            )
+            .timeout(const Duration(seconds: 10));
+      } catch (e, st) {
+        appLogger.e({
+          'event': 'logout_unhandled',
+          'error': e.toString(),
+          'stack': st.toString(),
+        });
+      }
+      return;
+    }
+
+    // Fallback retrocompatible: http.Client con Authorization manual.
+    final uri = Uri.parse('$baseUrl/api/auth/logout');
+    try {
+      appLogger.i({'event': 'logout_request', 'url': uri.toString()});
+
+      await _client
           .post(
-            path,
-            headers: const {'Content-Type': 'application/json'},
-            json: true,
-            auth: true, // ← ApiClient añade Authorization
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
           )
           .timeout(const Duration(seconds: 10));
     } catch (e, st) {
@@ -361,32 +382,7 @@ Future<void> logout({required String token}) async {
         'stack': st.toString(),
       });
     }
-    return;
   }
-
-  // Fallback retrocompatible: http.Client con Authorization manual.
-  final uri = Uri.parse('$baseUrl/api/auth/logout');
-  try {
-    appLogger.i({'event': 'logout_request', 'url': uri.toString()});
-
-    await _client
-        .post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-        )
-        .timeout(const Duration(seconds: 10));
-  } catch (e, st) {
-    appLogger.e({
-      'event': 'logout_unhandled',
-      'error': e.toString(),
-      'stack': st.toString(),
-    });
-  }
-}
-
 
   void close() => _client.close();
 
@@ -618,7 +614,7 @@ Future<void> logout({required String token}) async {
     }
   }
 
-    /// Intercambia un refresh token (largo) por un nuevo access token (corto).
+  /// Intercambia un refresh token (largo) por un nuevo access token (corto).
   Future<Map<String, dynamic>> refresh(String refreshToken) async {
     final uri = Uri.parse('$baseUrl/api/auth/refresh');
 

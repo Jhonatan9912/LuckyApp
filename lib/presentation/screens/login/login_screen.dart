@@ -92,7 +92,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         final pass = passwordController.text;
 
                         // Capturas ANTES de awaits
-                        final ctx = context; // BuildContext capturado
+                        final ctx = context;
                         final subs = ctx.read<SubscriptionProvider>();
                         final navigator = Navigator.of(
                           ctx,
@@ -118,7 +118,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               .loginWithPhone(phone: phone, password: pass)
                               .timeout(const Duration(seconds: 12));
 
-                          // Token
+                          // Access token
                           var token = (json['access_token'] ??
                                       json['token'] ??
                                       json['jwt'] ??
@@ -132,10 +132,17 @@ class _LoginScreenState extends State<LoginScreen> {
                             throw AuthException('Token no recibido del servidor');
                           }
 
+                          // Refresh token (nuevo)
+                          final refresh = (json['refresh_token'] ??
+                                  json['refreshToken'])
+                              ?.toString()
+                              .trim();
+
                           // Usuario
                           int? userId, roleId;
                           if (json['user'] is Map) {
-                            final user = (json['user'] as Map).cast<String, dynamic>();
+                            final user =
+                                (json['user'] as Map).cast<String, dynamic>();
                             userId = (user['id'] as num?)?.toInt();
                             roleId = (user['role_id'] as num?)?.toInt();
                           } else {
@@ -152,17 +159,22 @@ class _LoginScreenState extends State<LoginScreen> {
                           });
                           await _session.saveSession(
                             token: token,
+                            refreshToken:
+                                (refresh != null && refresh.isNotEmpty)
+                                    ? refresh
+                                    : null,
                             userId: userId,
                             roleId: roleId,
                           );
 
-                          // Verifica persistencia ANTES de navegar
+                          // Verifica persistencia
                           final saved = await _session.getToken();
                           if (saved == null || saved.isEmpty) {
-                            throw AuthException('No se pudo persistir la sesión local');
+                            throw AuthException(
+                                'No se pudo persistir la sesión local');
                           }
 
-                          // 🔁 Refresca suscripción (ya sin RevenueCat)
+                          // 🔁 Refresca suscripción
                           try {
                             await subs.refresh(force: true);
                           } catch (e) {
@@ -183,8 +195,10 @@ class _LoginScreenState extends State<LoginScreen> {
                           }());
 
                           // Navegación inmediata
-                          final target = (roleId == 1) ? '/admin' : '/dashboard';
-                          navigator.pushNamedAndRemoveUntil(target, (_) => false);
+                          final target =
+                              (roleId == 1) ? '/admin' : '/dashboard';
+                          navigator.pushNamedAndRemoveUntil(
+                              target, (_) => false);
                         } on AuthException catch (e) {
                           if (!ctx.mounted) return;
                           await AppDialogs.error(

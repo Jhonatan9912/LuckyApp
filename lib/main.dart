@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:intl/intl.dart'; // ← FALTA ESTE IMPORT
+import 'package:intl/intl.dart';
 
 import 'presentation/screens/paywall/paywall_screen.dart';
 
@@ -29,6 +29,11 @@ import 'package:base_app/presentation/providers/referral_provider.dart';
 import 'package:base_app/data/api/referrals_api.dart';
 import 'package:base_app/presentation/providers/payouts_provider.dart';
 import 'package:base_app/data/api/payouts_api.dart';
+
+// 👇 IMPORTS QUE FALTABAN
+import 'package:base_app/core/network/api_client.dart';
+import 'package:base_app/data/api/auth_api.dart';
+
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
@@ -36,11 +41,12 @@ Future<void> main() async {
   _setupLogging();
 
   // Locale por defecto para Intl y formatos
-  // ignore: deprecated_member_use
   Intl.defaultLocale = 'es_CO';
 
-  // ✅ Compartimos una sola sesión entre providers
+  // ✅ Compartimos una sola sesión + apiClient globales
   final session = SessionManager();
+  final apiClient = ApiClient(baseUrl: Env.apiBaseUrl, session: session);
+  final authApi = AuthApi(baseUrl: Env.apiBaseUrl, apiClient: apiClient);
 
   runApp(
     MultiProvider(
@@ -63,9 +69,13 @@ Future<void> main() async {
         ),
         ChangeNotifierProvider(
           create: (_) => PayoutsProvider(
-            api: PayoutsApi(baseUrl: Env.apiBaseUrl, session: SessionManager()),
+            api: PayoutsApi(baseUrl: Env.apiBaseUrl, session: session),
           ),
         ),
+        // 👇 Exponemos instancias compartidas
+        Provider<AuthApi>.value(value: authApi),
+        Provider<ApiClient>.value(value: apiClient),
+        Provider<SessionManager>.value(value: session),
       ],
       child: const BaseApp(),
     ),
