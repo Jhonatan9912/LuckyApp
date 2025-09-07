@@ -625,18 +625,14 @@ class _KpiBox extends StatelessWidget {
             const SizedBox(height: 4),
             Row(
               children: [
-                Flexible(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      value,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: txt.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    value, // 👈 aquí usas amount directamente
+                    textAlign: TextAlign.right,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
                   ),
                 ),
                 if (badge != null) ...[
@@ -748,9 +744,9 @@ class _CommissionTileState extends State<_CommissionTile> {
         subtitle: Text('Periodo: ${widget.month}'),
         // 👇 el trailing ya no desborda
         trailing: ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 116),
+          constraints: const BoxConstraints(minWidth: 156),
           child: Column(
-            mainAxisSize: MainAxisSize.min, // 👈 clave: no ocupe todo el alto
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Flexible(
