@@ -8,16 +8,17 @@ from sqlalchemy import text, bindparam
 # Cambia esta condición si tu lógica PRO es distinta (status/expires_at).
 PRO_CONDITION = "s.status = 'active'"
 
+# app/services/referrals/referral_service.py  (o donde esté)
+from sqlalchemy import text
+from app.db.database import db
+
 def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
     """
-    Disponible (neto): available - lo que está ligado a payout_requests activos.
-    Retenida:          status en HELD_COMMISSION_STATUSES.
-    Pagada:            status='paid'.
-    En retiro:         comisiones ligadas a payout_requests con estado activo.
+    Disponible:   suma de status='available'  (NO resta lo 'En retiro')
+    Retenida:     suma de status en ('pending','grace','hold','approved','accrued')
+    En retiro:    suma de status='in_withdrawal'
+    Pagada:       suma de status='paid'
     """
-    # Si no usas 'cutoff' aquí, no lo calcules para evitar confusiones.
-    # cutoff = datetime.now(timezone.utc) - timedelta(days=hold_days)
-
     sql = text("""
         WITH base AS (
           SELECT r.id,
@@ -26,7 +27,7 @@ def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
                    SELECT 1
                    FROM user_subscriptions s
                    WHERE s.user_id = r.referred_user_id
-                     AND (s.status = 'active')
+                     AND s.status = 'active'
                  ) AS pro_active
           FROM referrals r
           WHERE r.referrer_user_id = :uid
@@ -39,48 +40,27 @@ def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
         ),
         sums AS (
           SELECT
-            COALESCE(SUM(CASE WHEN status = 'available' THEN commission_micros END), 0) AS available_micros_gross,
-            COALESCE(SUM(CASE WHEN status IN :held_statuses THEN commission_micros END), 0) AS held_micros,
+            COALESCE(SUM(CASE WHEN status = 'available' THEN commission_micros END), 0) AS available_micros,
+            COALESCE(SUM(CASE WHEN status IN ('pending','grace','hold','approved','accrued') THEN commission_micros END), 0) AS held_micros,
+            COALESCE(SUM(CASE WHEN status = 'in_withdrawal' THEN commission_micros END), 0) AS in_withdrawal_micros,
             COALESCE(SUM(CASE WHEN status = 'paid' THEN commission_micros END), 0) AS paid_micros,
             COALESCE(SUM(commission_micros), 0) AS total_micros
           FROM referral_commissions
           WHERE referrer_user_id = :uid
-        ),
-        payouts AS (
-          SELECT
-            COALESCE(SUM(rc.commission_micros), 0) AS in_withdrawal_micros
-          FROM payout_request_items pri
-          JOIN payout_requests pr
-            ON pr.id = pri.payout_request_id
-          JOIN referral_commissions rc
-            ON rc.id = COALESCE(pri.referral_commission_id, pri.commission_id)
-          WHERE pr.user_id = :uid
-            AND pr.status IN :active_req_statuses
         )
         SELECT
           c.total,
           c.activos,
-          s.available_micros_gross,
+          s.available_micros,
           s.held_micros,
+          s.in_withdrawal_micros,
           s.paid_micros,
-          s.total_micros,
-          p.in_withdrawal_micros,
-          GREATEST(s.available_micros_gross - p.in_withdrawal_micros, 0) AS available_micros_net
+          s.total_micros
         FROM counts c
         CROSS JOIN sums s
-        CROSS JOIN payouts p
-    """).bindparams(
-        bindparam("held_statuses", expanding=True),
-        bindparam("active_req_statuses", expanding=True),
-    )
+    """)
 
-    params = {
-        "uid": user_id,
-        "held_statuses": HELD_COMMISSION_STATUSES,
-        "active_req_statuses": ACTIVE_PAYOUT_REQUEST_STATUSES,
-    }
-
-    row = db.session.execute(sql, params).mappings().one()
+    row = db.session.execute(sql, {"uid": user_id}).mappings().one()
 
     total    = int(row["total"] or 0)
     activos  = int(row["activos"] or 0)
@@ -88,31 +68,34 @@ def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
 
     def m2c(v): return float(v or 0) / 1_000_000.0
 
-    available_micros_gross = int(row["available_micros_gross"] or 0)
-    available_micros_net   = int(row["available_micros_net"] or 0)
-    held_micros            = int(row["held_micros"] or 0)
-    paid_micros            = int(row["paid_micros"] or 0)
-    total_micros           = int(row["total_micros"] or 0)
-    in_withdrawal_micros   = int(row["in_withdrawal_micros"] or 0)
+    available_micros     = int(row["available_micros"] or 0)
+    held_micros          = int(row["held_micros"] or 0)
+    in_withdrawal_micros = int(row["in_withdrawal_micros"] or 0)
+    paid_micros          = int(row["paid_micros"] or 0)
+    total_micros         = int(row["total_micros"] or 0)
 
     return {
         "total": total,
         "activos": activos,
         "inactivos": inactivos,
-        "available_micros": available_micros_net,
-        "available_micros_gross": available_micros_gross,
+
+        # ← Disponible real (se va sumando con cada maduración)
+        "available_micros": available_micros,
+        "available_micros_gross": available_micros,  # alias por compatibilidad
+
         "held_micros": held_micros,
         "in_withdrawal_micros": in_withdrawal_micros,
         "paid_micros": paid_micros,
         "total_micros": total_micros,
-        "available_cop": m2c(available_micros_net),
-        "available_gross_cop": m2c(available_micros_gross),
+
+        "available_cop": m2c(available_micros),
+        "available_gross_cop": m2c(available_micros),
         "pending_cop": m2c(held_micros),
         "in_withdrawal_cop": m2c(in_withdrawal_micros),
         "paid_cop": m2c(paid_micros),
         "total_cop": m2c(total_micros),
         "currency": "COP",
-        "__debug_stamp": "summary_v5_by_status_and_active_requests",
+        "__debug_stamp": "summary_v6_available_without_subtracting_withdrawal",
     }
 
 def promote_mature_commissions(days: int = 3) -> int:
