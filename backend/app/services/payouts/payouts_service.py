@@ -281,3 +281,60 @@ def create_payout_request(
     except Exception:
         db.session.rollback()
         raise
+
+def list_commission_requests(
+    *,
+    status: Optional[str] = None,   # 'requested' | 'processing' | 'paid' | None (todas)
+    limit: int = 50,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    """
+    Lista solicitudes de retiro (payout_requests) para panel Admin.
+    Devuelve: id, user_id, user_name, month_label, amount_micros, currency, status, created_at
+    """
+    # Sanitiza estado
+    allowed_status = {"requested", "processing", "paid", "rejected", "approved", "pending"}
+    where_status = ""
+    params: Dict[str, Any] = {"limit": max(1, min(limit, 200)), "offset": max(0, offset)}
+
+    if status:
+        st = status.strip().lower()
+        if st not in allowed_status:
+            raise ValueError("status inválido")
+        where_status = "AND pr.status::text = :status"
+        params["status"] = st
+
+    sql = text(f"""
+        SELECT
+            pr.id,
+            pr.user_id,
+            COALESCE(u.full_name,
+                     CONCAT(COALESCE(u.first_name,''),' ',COALESCE(u.last_name,''))) AS user_name,
+            -- Etiqueta de periodo (mes/año) a partir de created_at
+            to_char(pr.created_at AT TIME ZONE 'UTC', 'Mon YYYY') AS month_label,
+            pr.amount_micros,
+            pr.currency_code AS currency,
+            pr.status::text    AS status,
+            pr.created_at
+        FROM public.payout_requests pr
+        LEFT JOIN public.users u ON u.id = pr.user_id
+        WHERE 1=1
+          {where_status}
+        ORDER BY pr.created_at DESC, pr.id DESC
+        LIMIT :limit OFFSET :offset
+    """)
+
+    rows = db.session.execute(sql, params).mappings().all()
+    return [
+        {
+            "id": int(r["id"]),
+            "user_id": int(r["user_id"]),
+            "user_name": (r["user_name"] or "Usuario").strip(),
+            "month_label": (r["month_label"] or "").strip(),
+            "amount_micros": int(r["amount_micros"] or 0),
+            "currency": (r["currency"] or "COP"),
+            "status": (r["status"] or "").strip(),
+            "created_at": (r["created_at"].isoformat() if r["created_at"] else None),
+        }
+        for r in rows
+    ]

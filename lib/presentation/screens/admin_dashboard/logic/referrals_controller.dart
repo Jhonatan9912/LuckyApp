@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:base_app/data/api/admin_referrals_api.dart';
 import 'package:base_app/data/models/referrals_summary.dart';
 import 'package:base_app/data/models/top_referrer.dart';
+import 'package:base_app/domain/models/commission_request.dart';
 
 /// Controlador (ChangeNotifier) para manejar el estado del resumen de referidos.
 ///
@@ -101,6 +102,32 @@ class ReferralsController extends ChangeNotifier {
 
   List<TopReferrer> _top = [];
   List<TopReferrer> get top => _top;
+
+  // ===== Comisiones (solicitudes de retiro) =====
+  bool _loadingCommissions = false;
+  String? _commissionsError;
+  List<CommissionRequest> _commissions = [];
+
+  bool get loadingCommissions => _loadingCommissions;
+  String? get commissionsError => _commissionsError;
+  List<CommissionRequest> get commissions => _commissions;
+
+  /// Carga solicitudes de retiro desde payout_requests (admin).
+  /// `status` puede ser: null (todas), 'requested', 'processing', 'paid', etc.
+  Future<void> loadCommissions({String? status}) async {
+    _loadingCommissions = true;
+    _commissionsError = null;
+    notifyListeners();
+    try {
+      _commissions = await api.fetchCommissionRequests(status: status);
+    } catch (e) {
+      _commissionsError = e.toString();
+      _commissions = [];
+    } finally {
+      _loadingCommissions = false;
+      notifyListeners();
+    }
+  }
 
   Future<void> loadTop() async {
     debugPrint('[ReferralsController] loadTop() called');

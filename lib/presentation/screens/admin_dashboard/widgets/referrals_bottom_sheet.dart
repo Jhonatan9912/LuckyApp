@@ -4,6 +4,7 @@ import 'package:base_app/presentation/screens/admin_dashboard/logic/referrals_co
 import 'package:base_app/data/api/admin_referrals_api.dart';
 import 'package:base_app/data/api/api_service.dart';
 import 'package:base_app/data/models/top_referrer.dart'; // 👈 NUEVO
+import 'package:base_app/domain/models/commission_request.dart';
 
 class ReferralsBottomSheet extends StatefulWidget {
   const ReferralsBottomSheet({
@@ -34,6 +35,8 @@ class ReferralsBottomSheet extends StatefulWidget {
 
 class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
   late final ReferralsController _ctrl;
+  String? _statusFilter =
+      'requested'; // null=Todos | 'requested'=Pendientes | 'paid'=Pagados
 
   @override
   void initState() {
@@ -46,8 +49,9 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
 
     _ctrl.load(); // <- carga el resumen (no uses loadSummary)
     _ctrl.loadTop();
+    _ctrl.loadCommissions(status: _statusFilter);
     debugPrint(
-      '[ReferralsBottomSheet] initState -> load() & loadTop() launched',
+      '[ReferralsBottomSheet] initState -> load(), loadTop(), loadCommissions(status=$_statusFilter)',
     );
   }
 
@@ -93,7 +97,14 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                const _FiltersRow(),
+                _FiltersRow(
+                  selectedStatus: _statusFilter,
+                  onChange: (newStatus) {
+                    setState(() => _statusFilter = newStatus);
+                    _ctrl.loadCommissions(status: newStatus);
+                  },
+                ),
+
                 const SizedBox(height: 8),
                 const Divider(height: 1),
 
@@ -127,6 +138,9 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
                           // 2) Comisiones (pendientes) — por ahora maqueta
                           _CommissionsTab(
                             scrollController: scroll,
+                            items: _ctrl.commissions,
+                            loading: _ctrl.loadingCommissions,
+                            error: _ctrl.commissionsError,
                             onToggleSelect: widget.onToggleSelectCommission,
                             onOpenUser: widget.onOpenUser,
                           ),
@@ -221,7 +235,11 @@ class _Handle extends StatelessWidget {
 }
 
 class _FiltersRow extends StatelessWidget {
-  const _FiltersRow();
+  const _FiltersRow({required this.selectedStatus, required this.onChange});
+
+  /// null = Todos, 'requested' = Pendientes, 'paid' = Pagados
+  final String? selectedStatus;
+  final void Function(String? newStatus) onChange;
 
   @override
   Widget build(BuildContext context) {
@@ -230,12 +248,40 @@ class _FiltersRow extends StatelessWidget {
       child: Wrap(
         spacing: 8,
         runSpacing: -6,
-        children: const [
-          _Chip(label: 'Todos'),
-          _Chip(label: 'Pendientes'),
-          _Chip(label: 'Pagados'),
-          _Chip(label: 'Este mes'),
-          _Chip(label: 'Últimos 90 días'),
+        children: [
+          _Chip(
+            label: 'Todos',
+            selected: selectedStatus == null,
+            onTap: () => onChange(null),
+          ),
+          _Chip(
+            label: 'Pendientes',
+            selected: selectedStatus == 'requested',
+            onTap: () => onChange('requested'),
+          ),
+          _Chip(
+            label: 'Pagados',
+            selected: selectedStatus == 'paid',
+            onTap: () => onChange('paid'),
+          ),
+          _Chip(
+            label: 'Este mes',
+            selected: false,
+            onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Filtro por fecha: próximamente')),
+              );
+            },
+          ),
+          _Chip(
+            label: 'Últimos 90 días',
+            selected: false,
+            onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Filtro por fecha: próximamente')),
+              );
+            },
+          ),
         ],
       ),
     );
@@ -243,13 +289,20 @@ class _FiltersRow extends StatelessWidget {
 }
 
 class _Chip extends StatelessWidget {
-  const _Chip({required this.label});
+  const _Chip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
   final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
   @override
   Widget build(BuildContext context) {
     return FilterChip(
-      selected: label == 'Pendientes',
-      onSelected: (_) {},
+      selected: selected,
+      onSelected: (_) => onTap(),
       label: Text(label),
     );
   }
@@ -362,48 +415,84 @@ class _SummaryTab extends StatelessWidget {
 class _CommissionsTab extends StatelessWidget {
   const _CommissionsTab({
     required this.scrollController,
+    required this.items,
+    required this.loading,
+    this.error,
     this.onToggleSelect,
     this.onOpenUser,
   });
 
   final ScrollController scrollController;
+  final List<CommissionRequest> items;
+  final bool loading;
+  final String? error;
   final void Function(int id, bool selected)? onToggleSelect;
   final void Function(int userId)? onOpenUser;
 
+  String _fmtCop(double v) {
+    final s = v.toStringAsFixed(0);
+    final re = RegExp(r'\B(?=(\d{3})+(?!\d))');
+    return '\$${s.replaceAllMapped(re, (m) => '.')}';
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (loading) {
+      return ListView(
+        controller: scrollController,
+        padding: const EdgeInsets.all(16),
+        children: const [
+          SizedBox(height: 8),
+          Center(child: CircularProgressIndicator()),
+        ],
+      );
+    }
+
+    if (error != null) {
+      return ListView(
+        controller: scrollController,
+        padding: const EdgeInsets.all(16),
+        children: [
+          const _SectionTitle('Pendientes por pagar'),
+          const SizedBox(height: 8),
+          Text(
+            'Error cargando comisiones: $error',
+            style: const TextStyle(color: Colors.red),
+          ),
+        ],
+      );
+    }
+
+    if (items.isEmpty) {
+      return ListView(
+        controller: scrollController,
+        padding: const EdgeInsets.all(16),
+        children: const [
+          _SectionTitle('Pendientes por pagar'),
+          SizedBox(height: 8),
+          Text('No hay solicitudes por ahora.'),
+        ],
+      );
+    }
+
     return ListView(
       controller: scrollController,
       padding: const EdgeInsets.all(16),
       children: [
         const _SectionTitle('Pendientes por pagar'),
         const SizedBox(height: 8),
-        _CommissionTile(
-          id: 1,
-          userName: 'María P. (PRO)',
-          userId: 101,
-          month: 'Ago 2025',
-          amount: '\$15.000',
-          onOpenUser: onOpenUser,
-          onToggleSelect: onToggleSelect,
-        ),
-        _CommissionTile(
-          id: 2,
-          userName: 'Carlos R. (PRO)',
-          userId: 102,
-          month: 'Ago 2025',
-          amount: '\$15.000',
-          onOpenUser: onOpenUser,
-          onToggleSelect: onToggleSelect,
-        ),
-        _CommissionTile(
-          id: 3,
-          userName: 'Laura G. (PRO)',
-          userId: 103,
-          month: 'Sep 2025',
-          amount: '\$15.000',
-          onOpenUser: onOpenUser,
-          onToggleSelect: onToggleSelect,
+        ...items.map(
+          (it) => _CommissionTile(
+            id: it.id,
+            userName: it.userName,
+            userId: it.userId,
+            month: it.monthLabel.isNotEmpty
+                ? it.monthLabel
+                : '${it.createdAt.day}/${it.createdAt.month}/${it.createdAt.year}',
+            amount: _fmtCop(it.amountCop),
+            onOpenUser: onOpenUser,
+            onToggleSelect: onToggleSelect,
+          ),
         ),
       ],
     );

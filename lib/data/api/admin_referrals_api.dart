@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:base_app/data/session/session_manager.dart';
 import 'package:base_app/data/models/referrals_summary.dart';
 import 'package:base_app/data/models/top_referrer.dart';
+import 'package:base_app/domain/models/commission_request.dart';
 
 /// API para endpoints de referidos del admin.
 class AdminReferralsApi {
@@ -86,5 +87,54 @@ class AdminReferralsApi {
 
     final items = (body['items'] as List).cast<Map<String, dynamic>>();
     return items.map((e) => TopReferrer.fromMap(e)).toList();
+  }
+
+  /// GET /api/admin/referrals/commission-requests
+  /// Devuelve lista de solicitudes de retiro (payout_requests).
+  Future<List<CommissionRequest>> fetchCommissionRequests({
+    String? status, // 'requested' | 'processing' | 'paid' | etc.
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final token = await SessionManager().getToken();
+
+    final uri = Uri.parse('$baseUrl/api/admin/referrals/commission-requests')
+        .replace(
+          queryParameters: {
+            if (status != null && status.isNotEmpty) 'status': status,
+            'limit': '$limit',
+            'offset': '$offset',
+          },
+        );
+
+    if (kDebugMode) {
+      debugPrint('[admin/referrals/commission-requests] -> GET $uri');
+    }
+
+    final res = await http
+        .get(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (kDebugMode) {
+      debugPrint(
+        '[admin/referrals/commission-requests] ${res.statusCode} ${res.body}',
+      );
+    }
+
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+
+    final body = json.decode(res.body) as Map<String, dynamic>;
+    if (body['ok'] != true) throw Exception('Respuesta no OK');
+
+    final items = (body['items'] as List).cast<Map<String, dynamic>>();
+    return items.map((e) => CommissionRequest.fromJson(e)).toList();
   }
 }
