@@ -6,6 +6,8 @@ from .routes import register_routes
 from .db.database import init_db
 from dotenv import load_dotenv
 import os
+from .cli import register_cli
+
 def _as_bool(v, default=False):
     if v is None:
         return default
@@ -126,5 +128,8 @@ def create_app():
     @app.get("/metrics")
     def metrics():
         return metrics_http_response()
+
+    # Registrar comandos CLI (mature-commissions)
+    register_cli(app)
 
     return app
