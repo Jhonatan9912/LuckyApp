@@ -112,7 +112,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     final subtitle = isPro
         ? 'Gracias por tu suscripción.'
         : (price != null
-            ? 'Accede a PRO por $price / mes'
+            ? 'Accede a PRO'
             : (productLoaded
                 ? 'Selecciona tu plan'
                 : 'Cargando planes…'));
@@ -149,7 +149,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
                         child: Text(
                           _purchasing
                               ? 'Procesando...'
-                              : 'Comprar PRO (${price ?? 'mensual'})',
+                              : 'Comprar suscripción PRO'
                         ),
                       ),
                     ),
