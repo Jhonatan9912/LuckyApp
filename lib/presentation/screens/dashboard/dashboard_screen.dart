@@ -27,6 +27,7 @@ import 'package:base_app/presentation/providers/referral_provider.dart';
 import 'package:base_app/presentation/widgets/referrals/referral_payout_tile.dart';
 import 'package:base_app/presentation/screens/referrals/referrals_tab.dart';
 import 'package:base_app/presentation/widgets/payout_request_sheet.dart';
+import 'package:base_app/presentation/widgets/notifications/notifications_bottom_sheet.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -719,24 +720,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
         builder: (_) {
           final items = _ctrl.notifications;
-          return SizedBox(
-            height: MediaQuery.of(context).size.height * 0.75,
-            child: ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const Divider(height: 16),
-              itemBuilder: (_, i) {
-                final n = items[i];
-                return ListTile(
-                  title: Text('${n['title'] ?? ''}'),
-                  subtitle: Text('${n['body'] ?? ''}'),
-                  trailing: (n['read'] == true)
-                      ? const Icon(Icons.mark_email_read_outlined)
-                      : const Icon(Icons.mark_email_unread_outlined),
-                );
-              },
-            ),
-          );
+          return NotificationsBottomSheet(items: items);
         },
       );
     } finally {

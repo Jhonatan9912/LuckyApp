@@ -5,6 +5,9 @@ import 'package:base_app/data/api/admin_referrals_api.dart';
 import 'package:base_app/data/api/api_service.dart';
 import 'package:base_app/data/models/top_referrer.dart'; // 👈 NUEVO
 import 'package:base_app/domain/models/commission_request.dart';
+import 'package:base_app/presentation/screens/admin_dashboard/widgets/user_detail_sheet.dart';
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 
 class ReferralsBottomSheet extends StatefulWidget {
   const ReferralsBottomSheet({
@@ -141,8 +144,20 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
                             items: _ctrl.commissions,
                             loading: _ctrl.loadingCommissions,
                             error: _ctrl.commissionsError,
-                            onToggleSelect: widget.onToggleSelectCommission,
-                            onOpenUser: widget.onOpenUser,
+                            onToggleSelect: (id, selected) {
+                              // Buscar el item sin usar .empty()
+                              CommissionRequest? found;
+                              for (final e in _ctrl.commissions) {
+                                if (e.id == id) {
+                                  found = e;
+                                  break;
+                                }
+                              }
+                              final amount = found?.amountCop ?? 0.0;
+                              _handleToggleSelect(id, selected, amount);
+                            },
+                            onOpenUser: (uid, rid) =>
+                                _openUserDetail(context, uid, rid),
                           ),
 
                           // 3) Pagos (histórico / pendientes por confirmar) — por ahora maqueta
@@ -159,7 +174,8 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
                 // Barra de acciones fija para pagar seleccionados (maqueta)
                 SafeArea(
                   top: false,
-                  child: Container(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 10,
@@ -176,27 +192,58 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
                     ),
                     child: Row(
                       children: [
-                        const Expanded(
+                        // Resumen selección
+                        Expanded(
                           child: Align(
                             alignment: Alignment.centerLeft,
-                            child: _SelectedSummaryBadge(
-                              count: 3,
-                              total: '\$45.000',
-                            ),
+                            child: _selectedIds.isEmpty
+                                ? const _SelectedSummaryBadge(
+                                    count: 0,
+                                    total: '\$0',
+                                  )
+                                : _SelectedSummaryBadge(
+                                    count: _selectedIds.length,
+                                    total: _fmtCop(_selectedTotal),
+                                  ),
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Flexible(
-                          child: FilledButton.icon(
-                            onPressed: widget.onPaySelected,
-                            icon: const Icon(Icons.payments_outlined),
-                            label: const Text('Pagar seleccionados'),
-                            style: FilledButton.styleFrom(
+
+                        // Botón Rechazar (solo si hay selección)
+                        if (_selectedIds.isNotEmpty) ...[
+                          OutlinedButton.icon(
+                            onPressed: (_selectedIds.isEmpty || _ctrl.rejecting)
+                                ? null
+                                : _handleRejectSelected,
+                            icon: const Icon(Icons.block),
+                            label: Text(
+                              _ctrl.rejecting ? 'Rechazando…' : 'Rechazar',
+                            ),
+                            style: OutlinedButton.styleFrom(
                               minimumSize: const Size(0, 44),
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 12,
                               ),
+                              foregroundColor: Colors.red.shade700,
+                              side: BorderSide(color: Colors.red.shade200),
                             ),
+                          ),
+
+                          const SizedBox(width: 8),
+                        ],
+
+                        // Botón Pagar
+                        FilledButton.icon(
+                          onPressed:
+                              (_selectedIds.isNotEmpty &&
+                                  !_ctrl.rejecting /* && !_ctrl.paying */ )
+                              ? _handlePaySelected
+                              : null,
+                          icon: const Icon(Icons.payments_outlined),
+                          label: const Text('Pagar seleccionados'),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 44),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
                           ),
                         ),
                       ],
@@ -209,6 +256,182 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
         );
       },
     );
+  }
+
+  Future<void> _openUserDetail(
+    BuildContext context,
+    int userId,
+    int requestId,
+  ) async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.75,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          builder: (ctx, scroll) {
+            return ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
+              child: UserDetailSheet(
+                ctrl: _ctrl,
+                userId: userId,
+                requestId: requestId, // 👈 ahora sí
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // --- selección local de solicitudes ---
+  final Set<int> _selectedIds = <int>{};
+  double _selectedTotal = 0;
+
+  // formatea COP sin decimales
+  String _fmtCop(double v) {
+    final s = v.toStringAsFixed(0);
+    final re = RegExp(r'\B(?=(\d{3})+(?!\d))');
+    return '\$${s.replaceAllMapped(re, (m) => '.')}';
+  }
+
+  // manejar toggle desde cada tile
+  void _handleToggleSelect(int id, bool selected, double amountCop) {
+    setState(() {
+      if (selected) {
+        if (_selectedIds.add(id)) _selectedTotal += amountCop;
+      } else {
+        if (_selectedIds.remove(id)) _selectedTotal -= amountCop;
+      }
+    });
+
+    // si te pasaron callback externo, notifícalo
+    widget.onToggleSelectCommission?.call(id, selected);
+  }
+
+  // acciones
+  Future<void> _handlePaySelected() async {
+    if (_selectedIds.isEmpty) return;
+
+    // 1) Abre modal para nota + adjuntos
+    final result = await showModalBottomSheet<_PayBatchResult>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => _PaySelectedSheet(
+        preselectedCount: _selectedIds.length,
+        preselectedTotalLabel: _fmtCop(_selectedTotal),
+      ),
+    );
+
+    if (!mounted || result == null) return;
+
+    // 2) Loading ligero
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      // 3) Llama al controller para crear el lote y marcar pagadas
+      final out = await _ctrl.createPayoutBatch(
+        requestIds: _selectedIds.toList(),
+        note: result.note,
+        files: result.files,
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context); // cierra loading
+
+      // 4) Limpia selección local y refresca listas
+      setState(() {
+        _selectedIds.clear();
+        _selectedTotal = 0;
+      });
+      await _ctrl.loadCommissions(status: _statusFilter);
+      await _ctrl.load();
+
+      // 5) Feedback
+      if (!mounted) return;
+      final batchId = out?['batch_id'];
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Pago creado (lote #$batchId). Solicitudes marcadas como pagadas.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // cierra loading
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('No se pudo crear el pago: $e')));
+      }
+    }
+  }
+
+  void _handleRejectSelected() async {
+    if (_selectedIds.isEmpty || _ctrl.rejecting) return;
+
+    // 1) Pedimos el motivo en un modal con formulario
+    final reason = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => const _RejectReasonSheet(),
+    );
+
+    if (!mounted || reason == null || reason.trim().isEmpty) return;
+
+    // 2) (Opcional) loading simple
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      // 3) Llama a tu controller para rechazar en backend
+      await _ctrl.rejectSelected(_selectedIds.toList(), reason.trim());
+
+      if (!mounted) return;
+      Navigator.pop(context); // cierra loading
+
+      // 4) Limpia selección y refresca
+      setState(() {
+        _selectedIds.clear();
+        _selectedTotal = 0;
+      });
+      _ctrl.loadCommissions(status: _statusFilter);
+      _ctrl.load(); // KPIs
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Solicitudes rechazadas')));
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // cierra loading
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('No se pudo rechazar: $e')));
+      }
+    }
   }
 }
 
@@ -427,7 +650,7 @@ class _CommissionsTab extends StatelessWidget {
   final bool loading;
   final String? error;
   final void Function(int id, bool selected)? onToggleSelect;
-  final void Function(int userId)? onOpenUser;
+  final void Function(int userId, int requestId)? onOpenUser;
 
   String _fmtCop(double v) {
     final s = v.toStringAsFixed(0);
@@ -489,7 +712,8 @@ class _CommissionsTab extends StatelessWidget {
             month: it.monthLabel.isNotEmpty
                 ? it.monthLabel
                 : '${it.createdAt.day}/${it.createdAt.month}/${it.createdAt.year}',
-            amount: _fmtCop(it.amountCop),
+            amount: _fmtCop(it.amountCop), // para mostrar
+            amountValue: it.amountCop, // 👈 para sumar
             onOpenUser: onOpenUser,
             onToggleSelect: onToggleSelect,
           ),
@@ -631,8 +855,8 @@ class _KpiBox extends StatelessWidget {
                     value, // 👈 aquí usas amount directamente
                     textAlign: TextAlign.right,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
                 if (badge != null) ...[
@@ -707,6 +931,7 @@ class _CommissionTile extends StatefulWidget {
     required this.userId,
     required this.month,
     required this.amount,
+    required this.amountValue,
     this.onOpenUser,
     this.onToggleSelect,
   });
@@ -716,7 +941,8 @@ class _CommissionTile extends StatefulWidget {
   final int userId;
   final String month;
   final String amount;
-  final void Function(int userId)? onOpenUser;
+  final double amountValue;
+  final void Function(int userId, int requestId)? onOpenUser;
   final void Function(int id, bool selected)? onToggleSelect;
 
   @override
@@ -731,8 +957,11 @@ class _CommissionTileState extends State<_CommissionTile> {
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
-        dense: true, // 👈 hace el tile más compacto (ayuda al alto)
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        // 👇 da más alto al tile automáticamente
+        isThreeLine: true,
+        minVerticalPadding: 12,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+
         leading: Checkbox(
           value: selected,
           onChanged: (v) {
@@ -740,39 +969,103 @@ class _CommissionTileState extends State<_CommissionTile> {
             widget.onToggleSelect?.call(widget.id, selected);
           },
         ),
+
         title: Text(widget.userName),
         subtitle: Text('Periodo: ${widget.month}'),
-        // 👇 el trailing ya no desborda
-        trailing: ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 156),
+
+        // dentro de _CommissionTileState.build, reemplaza SOLO el trailing:
+        // 👇 reemplaza el trailing actual por este bloque
+        trailing: SizedBox(
+          width: 168, // un pelín más ancho ayuda a no truncar
+          height: 56, // altura tope del ListTile
           child: Column(
-            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
+              // Parte superior: ocupa el espacio disponible
+              Expanded(
+                child: Align(
                   alignment: Alignment.centerRight,
-                  child: Text(
-                    widget.amount,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Monto (con elipsis por si es largo)
+                      Flexible(
+                        child: Text(
+                          widget.amount,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      // Icono de desglose
+                      IconButton(
+                        tooltip: 'Ver desglose',
+                        icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 28,
+                          height: 28,
+                        ),
+                        onPressed: () {
+                          final s = context
+                              .findAncestorStateOfType<
+                                _ReferralsBottomSheetState
+                              >();
+                          if (s == null) return;
+                          showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            useSafeArea: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (_) => DraggableScrollableSheet(
+                              expand: false,
+                              initialChildSize: 0.92,
+                              minChildSize: 0.5,
+                              maxChildSize: 0.98,
+                              builder: (ctx, scroll) => ClipRRect(
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(24),
+                                ),
+                                child: UserDetailSheet(
+                                  ctrl: s._ctrl,
+                                  userId: widget.userId, // solicitante
+                                  requestId:
+                                      widget.id, // solicitud (para el desglose)
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 ),
               ),
 
-              const SizedBox(height: 6),
+              // Separación mínima
+              const SizedBox(height: 2),
+
+              // Botón “Ver usuario” con altura contenida
               SizedBox(
-                height: 32, // 👈 fija alto del botón
+                height: 24, // 🔧 baja de 28/30 -> 24 para caber en 56px total
                 child: OutlinedButton(
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     minimumSize: Size.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity:
-                        VisualDensity.compact, // 👈 reduce padding interno
+                    visualDensity: VisualDensity.compact,
                   ),
-                  onPressed: () => widget.onOpenUser?.call(widget.userId),
-                  child: const Text('Ver usuario'),
+                  onPressed: () =>
+                      widget.onOpenUser?.call(widget.userId, widget.id),
+                  child: const Text(
+                    'Ver usuario',
+                    style: TextStyle(fontSize: 12),
+                  ), // 🔧 fuente menor
                 ),
               ),
             ],
@@ -879,6 +1172,251 @@ class _Badge extends StatelessWidget {
           style: Theme.of(
             context,
           ).textTheme.labelSmall?.copyWith(color: Colors.orange),
+        ),
+      ),
+    );
+  }
+}
+
+class _RejectReasonSheet extends StatefulWidget {
+  const _RejectReasonSheet();
+
+  @override
+  State<_RejectReasonSheet> createState() => _RejectReasonSheetState();
+}
+
+class _RejectReasonSheetState extends State<_RejectReasonSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final view = MediaQuery.of(context).viewInsets;
+    return Padding(
+      padding: EdgeInsets.only(bottom: view.bottom),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Rechazar solicitudes',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _ctrl,
+                  maxLines: 4,
+                  maxLength: 300,
+                  decoration: const InputDecoration(
+                    labelText: 'Motivo del rechazo',
+                    hintText: 'Describe brevemente el motivo…',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) {
+                      return 'Escribe un motivo';
+                    }
+                    if (v.trim().length < 5) {
+                      return 'Motivo demasiado corto';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancelar'),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.red.shade600,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(100, 44),
+                      ),
+                      onPressed: () {
+                        if (!_formKey.currentState!.validate()) return;
+                        Navigator.pop(context, _ctrl.text.trim());
+                      },
+                      child: const Text('Rechazar'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PayBatchResult {
+  final String note;
+  final List<File> files;
+  const _PayBatchResult({required this.note, required this.files});
+}
+
+class _PaySelectedSheet extends StatefulWidget {
+  const _PaySelectedSheet({
+    required this.preselectedCount,
+    required this.preselectedTotalLabel,
+  });
+
+  final int preselectedCount;
+  final String preselectedTotalLabel;
+
+  @override
+  State<_PaySelectedSheet> createState() => _PaySelectedSheetState();
+}
+
+class _PaySelectedSheetState extends State<_PaySelectedSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _noteCtrl = TextEditingController();
+  final List<File> _files = [];
+
+  @override
+  void dispose() {
+    _noteCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickFiles() async {
+    final res = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withReadStream: false,
+      withData: false,
+    );
+    if (res == null) return;
+
+    final paths = res.files.map((f) => f.path).whereType<String>().toList();
+    setState(() {
+      for (final p in paths) {
+        final f = File(p);
+        if (f.existsSync()) _files.add(f);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final view = MediaQuery.of(context).viewInsets;
+    return Padding(
+      padding: EdgeInsets.only(bottom: view.bottom),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.payments_outlined,
+                      color: Colors.deepPurple,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Confirmar pago de seleccionados',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const Spacer(),
+                    _Badge(text: '${widget.preselectedCount}'),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Total a pagar: ${widget.preselectedTotalLabel}',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+
+                TextFormField(
+                  controller: _noteCtrl,
+                  maxLines: 3,
+                  maxLength: 300,
+                  decoration: const InputDecoration(
+                    labelText: 'Nota (opcional)',
+                    hintText: 'Ej. Transferencia Banco X #123…',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // Adjuntos
+                Row(
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _pickFiles,
+                      icon: const Icon(Icons.attach_file_outlined),
+                      label: const Text('Adjuntar evidencia'),
+                    ),
+                    const SizedBox(width: 12),
+                    if (_files.isNotEmpty)
+                      Expanded(
+                        child: Text(
+                          _files
+                              .map(
+                                (f) =>
+                                    f.path.split(Platform.pathSeparator).last,
+                              )
+                              .join(' • '),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                ),
+
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancelar'),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton.icon(
+                      icon: const Icon(Icons.check),
+                      onPressed: () {
+                        if (!_formKey.currentState!.validate()) return;
+                        Navigator.pop(
+                          context,
+                          _PayBatchResult(
+                            note: _noteCtrl.text.trim(),
+                            files: List<File>.from(_files),
+                          ),
+                        );
+                      },
+                      label: const Text('Confirmar pago'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

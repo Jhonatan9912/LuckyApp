@@ -5,19 +5,18 @@ import 'package:base_app/data/api/admin_referrals_api.dart';
 import 'package:base_app/data/models/referrals_summary.dart';
 import 'package:base_app/data/models/top_referrer.dart';
 import 'package:base_app/domain/models/commission_request.dart';
+import 'package:base_app/data/models/admin_user_detail.dart';
+import 'package:base_app/data/models/commission_breakdown.dart';
+import 'dart:io';
 
-/// Controlador (ChangeNotifier) para manejar el estado del resumen de referidos.
-///
-/// Uso típico:
-/// final ctrl = ReferralsController(api: AdminReferralsApi(baseUrl: kApiBase));
-/// await ctrl.load();
-/// AnimatedBuilder(animation: ctrl, builder: ...)
-
+/// Controlador para resumen de referidos, top, comisiones,
+/// detalle de usuario y desglose por solicitud.
 class ReferralsController extends ChangeNotifier {
   ReferralsController({required this.api});
 
   final AdminReferralsApi api;
 
+  // ===== Resumen =====
   ReferralsSummary? _summary;
   ReferralsSummary? get summary => _summary;
 
@@ -27,9 +26,6 @@ class ReferralsController extends ChangeNotifier {
   String? _error;
   String? get error => _error;
 
-  // -------------------------
-  // Networking
-  // -------------------------
   /// Carga el resumen desde el backend.
   Future<void> load() async {
     if (_loading) return;
@@ -48,7 +44,7 @@ class ReferralsController extends ChangeNotifier {
     }
   }
 
-  /// Limpia errores y datos (por ejemplo, al hacer pull-to-refresh antes de llamar a [load]).
+  /// Limpia errores y datos.
   void reset() {
     _summary = null;
     _error = null;
@@ -56,38 +52,27 @@ class ReferralsController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // -------------------------
-  // Getters de conveniencia (UI)
-  // -------------------------
+  // Getters convenientes para UI
   int get total => _summary?.total ?? 0;
   int get active => _summary?.active ?? 0;
   int get inactive => _summary?.inactive ?? 0;
 
-  /// Comisiones en COP (valores enteros)
   int get pendingCop => _summary?.pendingCop ?? 0;
   int get paidCop => _summary?.paidCop ?? 0;
 
-  /// Moneda (p.ej. "COP")
   String get currency => _summary?.currency ?? 'COP';
 
-  // Labels numéricos para chips/KPIs
   String get totalLabel => total.toString();
   String get activeLabel => active.toString();
   String get inactiveLabel => inactive.toString();
 
-  // Formateadores simples para mostrar en el cuadro de resumen
-  // (no dependemos de intl; usamos puntos para miles estilo es_CO)
   String get pendingLabel => _fmtCop(pendingCop);
   String get paidLabel => _fmtCop(paidCop);
 
-  // Alias para que el UI pueda llamar _ctrl.loadSummary();
   Future<void> loadSummary() => load();
 
-  // -------------------------
-  // Helpers
-  // -------------------------
   String _fmtCop(int value) {
-    // Convierte 15000 -> "$15.000"
+    // 15000 -> "$15.000"
     final s = value.abs().toString();
     final buf = StringBuffer();
     for (int i = 0; i < s.length; i++) {
@@ -100,10 +85,25 @@ class ReferralsController extends ChangeNotifier {
     return '$sign\$${buf.toString()}';
   }
 
+  // ===== Top referidos =====
   List<TopReferrer> _top = [];
   List<TopReferrer> get top => _top;
 
-  // ===== Comisiones (solicitudes de retiro) =====
+  Future<void> loadTop() async {
+    debugPrint('[ReferralsController] loadTop() called');
+    try {
+      final items = await api.fetchTopReferrers();
+      debugPrint('[ReferralsController] fetched top: len=${items.length}');
+      _top = items;
+    } catch (e, st) {
+      debugPrint('[ReferralsController] loadTop ERROR: $e');
+      debugPrint(st.toString());
+      _top = [];
+    }
+    notifyListeners();
+  }
+
+  // ===== Comisiones (solicitudes) =====
   bool _loadingCommissions = false;
   String? _commissionsError;
   List<CommissionRequest> _commissions = [];
@@ -112,8 +112,6 @@ class ReferralsController extends ChangeNotifier {
   String? get commissionsError => _commissionsError;
   List<CommissionRequest> get commissions => _commissions;
 
-  /// Carga solicitudes de retiro desde payout_requests (admin).
-  /// `status` puede ser: null (todas), 'requested', 'processing', 'paid', etc.
   Future<void> loadCommissions({String? status}) async {
     _loadingCommissions = true;
     _commissionsError = null;
@@ -129,18 +127,171 @@ class ReferralsController extends ChangeNotifier {
     }
   }
 
-  Future<void> loadTop() async {
-    debugPrint('[ReferralsController] loadTop() called');
-    try {
-      final items = await api.fetchTopReferrers();
-      debugPrint('[ReferralsController] fetched top: len=${items.length}');
-      _top = items;
-    } catch (e, st) {
-      debugPrint('[ReferralsController] loadTop ERROR: $e');
-      debugPrint(st.toString()); // 👈 usa el stack trace
-      _top = [];
-    }
+  // === Estado de pago en progreso ===
+  bool _paying = false;
+  bool get paying => _paying;
 
+  // ===== Detalle de usuario (Ver usuario) =====
+  final Map<int, AdminUserDetail> _userDetailCache = {};
+  AdminUserDetail? _currentUserDetail;
+  bool _loadingUserDetail = false;
+  String? _userDetailError;
+
+  AdminUserDetail? get currentUserDetail => _currentUserDetail;
+  bool get loadingUserDetail => _loadingUserDetail;
+  String? get userDetailError => _userDetailError;
+
+  void clearUserDetail() {
+    _currentUserDetail = null;
+    _userDetailError = null;
+    _loadingUserDetail = false;
     notifyListeners();
   }
+
+  Future<AdminUserDetail?> loadUserDetail(
+    int userId, {
+    bool force = false,
+  }) async {
+    if (!force && _userDetailCache.containsKey(userId)) {
+      _currentUserDetail = _userDetailCache[userId];
+      _userDetailError = null;
+      _loadingUserDetail = false;
+      notifyListeners();
+      return _currentUserDetail;
+    }
+
+    _loadingUserDetail = true;
+    _userDetailError = null;
+    _currentUserDetail = null;
+    notifyListeners();
+
+    try {
+      final detail = await api.fetchUserDetail(userId);
+      _userDetailCache[userId] = detail;
+      _currentUserDetail = detail;
+      return detail;
+    } catch (e, st) {
+      debugPrint('loadUserDetail ERROR: $e\n$st');
+      _userDetailError = e.toString();
+      _currentUserDetail = null;
+      return null;
+    } finally {
+      _loadingUserDetail = false;
+      notifyListeners();
+    }
+  }
+
+  // === Estado de rechazo en progreso ===
+  bool _rejecting = false;
+  bool get rejecting => _rejecting;
+
+  // ===== Desglose por solicitud =====
+  final Map<int, CommissionRequestBreakdown> _breakdownCache = {};
+  CommissionRequestBreakdown? _currentBreakdown;
+  bool _loadingBreakdown = false;
+  String? _breakdownError;
+
+  CommissionRequestBreakdown? get currentBreakdown => _currentBreakdown;
+  bool get loadingBreakdown => _loadingBreakdown;
+  String? get breakdownError => _breakdownError;
+
+  void clearBreakdown() {
+    _currentBreakdown = null;
+    _breakdownError = null;
+    _loadingBreakdown = false;
+    notifyListeners();
+  }
+
+  Future<CommissionRequestBreakdown?> loadCommissionBreakdown(
+    int requestId, {
+    bool force = false,
+  }) async {
+    if (!force && _breakdownCache.containsKey(requestId)) {
+      _currentBreakdown = _breakdownCache[requestId];
+      _breakdownError = null;
+      _loadingBreakdown = false;
+      notifyListeners();
+      return _currentBreakdown;
+    }
+
+    _loadingBreakdown = true;
+    _breakdownError = null;
+    _currentBreakdown = null;
+    notifyListeners();
+
+    try {
+      final br = await api.fetchCommissionBreakdown(requestId);
+      _breakdownCache[requestId] = br;
+      _currentBreakdown = br;
+      return br;
+    } catch (e, st) {
+      debugPrint('loadCommissionBreakdown ERROR: $e\n$st');
+      _breakdownError = e.toString();
+      _currentBreakdown = null;
+      return null;
+    } finally {
+      _loadingBreakdown = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> rejectSelected(List<int> requestIds, String reason) async {
+    if (_rejecting) return;
+    _rejecting = true;
+    notifyListeners();
+
+    final failures = <int, Object>{};
+
+    try {
+      // Llamadas secuenciales: más seguras si el backend toca saldos en transacción.
+      for (final id in requestIds) {
+        try {
+          await api.rejectPayoutRequest(id: id, reason: reason);
+        } catch (e) {
+          failures[id] = e;
+        }
+      }
+
+      if (failures.isNotEmpty) {
+        // Lanza un error compacto para que la vista muestre Snackbar.
+        final ids = failures.keys.join(', ');
+        throw Exception('No se pudo rechazar: $ids');
+      }
+      // Refrescar listas/métricas tras rechazar
+      await loadCommissions(); // por defecto traerá las actuales (puedes pasar status)
+      await load(); // KPIs
+    } finally {
+      _rejecting = false;
+      notifyListeners();
+    }
+  }
+
+Future<Map<String, dynamic>?> createPayoutBatch({
+  required List<int> requestIds,
+  String note = '',
+  List<File> files = const [], // ✅ aquí
+}) async {
+  if (_paying) return null;
+  _paying = true;
+  notifyListeners();
+
+  try {
+    final result = await api.createPayoutBatch(
+      requestIds: requestIds,
+      note: note,
+      files: files, // ✅ ahora coincide con la API
+    );
+
+    await loadCommissions(status: 'requested');
+    await load();
+    return result;
+  } catch (e, st) {
+    debugPrint('createPayoutBatch ERROR: $e\n$st');
+    rethrow;
+  } finally {
+    _paying = false;
+    notifyListeners();
+  }
+}
+
 }

@@ -47,7 +47,9 @@ dependencies:
   flutter_markdown: ^0.6.18
   in_app_purchase: ^3.2.0
   url_launcher: ^6.3.0
-
+  meta: ^1.15.0
+  file_picker: ^8.0.0
+  
 dev_dependencies:
   flutter_test:
     sdk: flutter

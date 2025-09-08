@@ -750,6 +750,59 @@ class DashboardController extends ChangeNotifier {
 
   List<Map<String, dynamic>> get notifications => _notifications;
   int get unreadCount => _unreadCount;
+  int? _toInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v.toString());
+  }
+
+  Map<String, dynamic> _normalizeNotification(Map raw) {
+    final m = raw.cast<String, dynamic>();
+
+    // Algunas APIs devuelven todo en "data"
+    final data = (m['data'] is Map)
+        ? (m['data'] as Map).cast<String, dynamic>()
+        : <String, dynamic>{};
+
+    // id puede venir como id, nid, notification_id
+    final id = _toInt(
+      m['id'] ?? m['nid'] ?? m['notification_id'] ?? data['id'],
+    );
+
+    // kind puede venir en data.type, type o kind
+    final kind = (data['type'] ?? m['type'] ?? m['kind'] ?? '').toString();
+
+    // título/cuerpo
+    final title = (m['title'] ?? data['title'] ?? '').toString();
+    final body = (m['body'] ?? data['body'] ?? m['message'] ?? '').toString();
+
+    // leído
+    final read =
+        (m['read'] == true) || (m['is_read'] == true) || (data['read'] == true);
+
+    // fecha
+    final createdAt = (m['created_at'] ?? data['created_at'] ?? m['date'] ?? '')
+        .toString();
+
+    // payload adicional común (mapea claves típicas de rechazos)
+    final payload = <String, dynamic>{
+      ...((m['payload'] is Map)
+          ? (m['payload'] as Map).cast<String, dynamic>()
+          : const <String, dynamic>{}),
+      ...data,
+    };
+
+    return {
+      'id': id ?? -1, // evita nulls
+      'kind': kind,
+      'title': title,
+      'body': body,
+      'read': read,
+      'created_at': createdAt,
+      'payload': payload,
+    };
+  }
 
   // ======= Cargar notificaciones =======
   Future<void> loadNotifications() async {
@@ -757,24 +810,30 @@ class DashboardController extends ChangeNotifier {
 
     final res = await _gamesApi.getNotifications(
       token: _authToken,
-      unreadOnly: false, // traemos todas y filtramos aquí
+      unreadOnly: false,
       page: 1,
       perPage: 100,
     );
 
-    if (res['ok'] == true) {
-      final data = res['data'];
-      // Acepta tanto objeto {items, ...} como lista directa
-      final List list = (data is Map<String, dynamic>)
-          ? (data['items'] as List? ?? const [])
-          : (data as List? ?? const []);
+    if (res['ok'] != true) return;
 
-      _notifications = list
-          .map((e) => (e as Map).cast<String, dynamic>())
-          .toList();
-      _unreadCount = _notifications.where((n) => n['read'] == false).length;
-      notifyListeners();
-    }
+    final data = res['data'];
+
+    // Acepta { items: [...] } o una lista directa
+    final List rawList = (data is Map<String, dynamic>)
+        ? (data['items'] as List? ?? const [])
+        : (data as List? ?? const []);
+
+    // Normaliza todos los items
+    _notifications = rawList
+        .whereType<Map>()
+        .map<Map<String, dynamic>>((e) => _normalizeNotification(e))
+        .toList();
+
+    // Recalcula badge
+    _unreadCount = _notifications.where((n) => n['read'] == false).length;
+
+    notifyListeners();
   }
 
   Future<void> loadHistory({int page = 1, int perPage = 50}) async {
@@ -908,8 +967,10 @@ class DashboardController extends ChangeNotifier {
     // Asegúrate de que _notifications tenga {id, read}
     final ids = _notifications
         .where((n) => n['read'] == false || n['read'] == null)
-        .map<int>((n) => (n['id'] as num).toInt())
+        .map<int>((n) => _toInt(n['id']) ?? -1)
+        .where((id) => id > 0)
         .toList();
+
     if (ids.isEmpty) return;
 
     final res = await _gamesApi.markNotificationsRead(

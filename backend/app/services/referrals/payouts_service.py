@@ -5,6 +5,11 @@ from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import text
 from app.db.database import db
+from werkzeug.exceptions import BadRequest
+import json
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
+from flask import current_app
 
 DEFAULT_CURRENCY = "COP"
 
@@ -22,14 +27,6 @@ def get_maturity_days() -> int:
 
 
 def mature_commissions(days: int | None = None, minutes: int | None = None) -> int:
-    """
-    Promueve comisiones de pending → available si:
-      - amount_micros > 0
-      - event_time <= now() - (minutes o days)
-
-    Si 'minutes' viene, tiene prioridad (útil en staging/QA).
-    Si 'minutes' es None y 'days' es None, usa get_maturity_days().
-    """
     if minutes is not None:
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=int(minutes))
     else:
@@ -37,41 +34,34 @@ def mature_commissions(days: int | None = None, minutes: int | None = None) -> i
             days = get_maturity_days()
         cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
 
-    res = db.session.execute(
-        text("""
-            UPDATE referral_commissions
-               SET status = 'available'
-             WHERE status = 'pending'
-               AND amount_micros > 0
-               AND event_time <= :cutoff
-        """),
-        {"cutoff": cutoff},  # ← pasa datetime, que SQLAlchemy adapta
-    )
-    db.session.commit()
-    return int(res.rowcount or 0)
+    with db.session.begin_nested():
+        res = db.session.execute(
+            text("""
+                UPDATE referral_commissions
+                   SET status = 'available'
+                 WHERE status = 'pending'
+                   AND amount_micros > 0
+                   AND event_time <= :cutoff
+            """),
+            {"cutoff": cutoff},
+        )
+        return int(res.rowcount or 0)
 
 
 def reject_commissions_for_token(purchase_token: str) -> int:
-    """
-    Marca como 'rejected' todas las comisiones PENDIENTES asociadas al purchase_token.
-    Se usa cuando llega RTDN con notificationType=12 (REVOKED/Refund).
-    Devuelve cuántas filas se actualizaron.
-    """
     if not purchase_token:
         return 0
-
-    res = db.session.execute(
-        text("""
-            UPDATE referral_commissions
-               SET status = 'rejected'
-             WHERE purchase_token = :token
-               AND status = 'pending'
-        """),
-        {"token": purchase_token},
-    )
-    db.session.commit()
-    return int(res.rowcount or 0)
-
+    with db.session.begin_nested():
+        res = db.session.execute(
+            text("""
+                UPDATE referral_commissions
+                   SET status = 'rejected'
+                 WHERE purchase_token = :token
+                   AND status = 'pending'
+            """),
+            {"token": purchase_token},
+        )
+        return int(res.rowcount or 0)
 
 def get_payout_totals(referrer_user_id: int, currency: str = DEFAULT_CURRENCY) -> dict:
     """
@@ -222,3 +212,161 @@ def register_referral_commission(
     else:
         db.session.rollback()
     return bool(inserted)
+
+def reject_payout_request(*, request_id: int, reason: str, admin_id: int | None) -> dict:
+    """
+    Rechaza una solicitud de retiro y revierte comisiones:
+      - referral_commissions: status -> 'available' y payout_request_id = NULL
+      - payout_request_items: elimina filas (si existe la tabla)
+      - payout_requests: status -> 'rejected' (+ auditoría si existen columnas)
+      - notificación (jsonb si aplica)
+    Manejo de transacción: SIEMPRE SAVEPOINT (begin_nested) aquí.
+    El commit real lo hace la ruta.
+    """
+    if not reason or len(reason.strip()) < 5:
+        raise BadRequest("Motivo inválido")
+
+    with db.session.begin_nested():
+        # --- 0) Esquema dinámico ---
+        pri_exists = db.session.execute(sa.text("""
+            SELECT 1
+              FROM information_schema.tables
+             WHERE table_schema='public' AND table_name='payout_request_items'
+             LIMIT 1
+        """)).scalar() is not None
+
+        pr_cols = db.session.execute(sa.text("""
+            SELECT column_name
+              FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='payout_requests'
+               AND column_name IN ('rejected_by','rejected_reason','rejected_at','admin_note')
+        """)).mappings().all()
+        pr_have = {c["column_name"] for c in pr_cols}
+
+        # --- 1) Lock + datos del request ---
+        req = db.session.execute(
+            sa.text("""
+                SELECT id, user_id, amount_micros, currency_code, status
+                  FROM payout_requests
+                 WHERE id = :rid
+                 FOR UPDATE
+            """),
+            {"rid": request_id},
+        ).mappings().first()
+        if not req:
+            raise BadRequest("Solicitud no encontrada")
+
+        status = (req["status"] or "").lower()
+        if status not in ("requested", "processing", "pending", "approved"):
+            raise BadRequest(f"No se puede rechazar en estado '{status}'")
+
+        user_id = int(req["user_id"])
+        amount_micros = int(req["amount_micros"] or 0)
+        currency_code = (req["currency_code"] or "COP").upper()
+
+        # --- 2) Revertir comisiones a 'available' ---
+        db.session.execute(
+            sa.text("""
+                UPDATE referral_commissions
+                   SET status = 'available', payout_request_id = NULL
+                 WHERE payout_request_id = :rid
+            """),
+            {"rid": request_id},
+        )
+
+        if pri_exists:
+            db.session.execute(
+                sa.text("""
+                    UPDATE referral_commissions rc
+                       SET status = 'available', payout_request_id = NULL
+                      FROM payout_request_items pri
+                     WHERE pri.payout_request_id = :rid
+                       AND rc.id = COALESCE(pri.commission_id, pri.referral_commission_id)
+                """),
+                {"rid": request_id},
+            )
+            db.session.execute(
+                sa.text("DELETE FROM payout_request_items WHERE payout_request_id = :rid"),
+                {"rid": request_id},
+            )
+
+        # --- 3) Marcar payout_request como 'rejected' ---
+        if {"rejected_by", "rejected_reason", "rejected_at"} & pr_have:
+            if "rejected_by" in pr_have:
+                db.session.execute(
+                    sa.text("""
+                        UPDATE payout_requests
+                           SET status = 'rejected',
+                               rejected_by = :admin_id,
+                               rejected_reason = :reason,
+                               rejected_at = NOW(),
+                               updated_at = NOW()
+                         WHERE id = :rid
+                    """),
+                    {"rid": request_id, "reason": reason, "admin_id": admin_id},
+                )
+            else:
+                db.session.execute(
+                    sa.text("""
+                        UPDATE payout_requests
+                           SET status = 'rejected',
+                               rejected_reason = :reason,
+                               rejected_at = NOW(),
+                               updated_at = NOW()
+                         WHERE id = :rid
+                    """),
+                    {"rid": request_id, "reason": reason},
+                )
+        elif "admin_note" in pr_have:
+            db.session.execute(
+                sa.text("""
+                    UPDATE payout_requests
+                       SET status = 'rejected',
+                           admin_note = :reason,
+                           updated_at = NOW()
+                     WHERE id = :rid
+                """),
+                {"rid": request_id, "reason": reason},
+            )
+        else:
+            db.session.execute(
+                sa.text("""
+                    UPDATE payout_requests
+                       SET status = 'rejected', updated_at = NOW()
+                     WHERE id = :rid
+                """),
+                {"rid": request_id},
+            )
+
+        # --- 4) Notificación ---
+        payload = {
+            "type": "withdrawal_rejected",
+            "payout_request_id": request_id,
+            "amount_cop": int(round(amount_micros / 1_000_000)),
+            "currency": currency_code,
+            "reason": reason,
+            "rejected_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            db.session.execute(
+                sa.text("""
+                    INSERT INTO notifications (user_id, title, body, data, is_read, created_at)
+                    VALUES (:uid, :title, :body, :data, false, NOW())
+                """).bindparams(sa.bindparam("data", type_=JSONB)),
+                {
+                    "uid": user_id,
+                    "title": "Tu retiro fue rechazado",
+                    "body": "Hemos devuelto el dinero a Disponible.",
+                    "data": payload,
+                },
+            )
+        except Exception:
+            current_app.logger.exception("notify withdrawal_rejected failed")
+
+    # (sin commit aquí; lo hace la ruta)
+    return {
+        "request_id": request_id,
+        "user_id": user_id,
+        "amount_micros": amount_micros,
+        "status": "rejected",
+    }

@@ -21,15 +21,10 @@ def create_request():
     user_id = identity.get("id") if isinstance(identity, dict) else int(identity)
 
     data = request.get_json(silent=True) or {}
-
-    # Soporta payload anidado en data{} y plano (compatibilidad)
     flat = data
     inner = data.get("data") if isinstance(data.get("data"), dict) else {}
 
-    # account_type llega a nivel superior según el cliente actual
-    account_type = (flat.get("account_type") or "").strip().lower()
-
-    # Estos pueden venir en data{} o plano
+    account_type   = (flat.get("account_type") or "").strip().lower()
     account_number = (inner.get("account_number") or flat.get("account_number") or "").strip()
 
     account_kind = inner.get("account_kind") or flat.get("account_kind") or None
@@ -42,22 +37,15 @@ def create_request():
 
     observations = (inner.get("observations") or flat.get("observations") or "").strip() or None
 
-    # Toleramos amount_cop aunque hoy el service toma TODO el disponible.
-    # Si luego soportas retiros parciales, úsalo en el service.
-    amount_cop = flat.get("amount_cop")
-
-    # Validaciones rápidas (las de negocio profundas las hace el service)
     if account_type not in ALLOWED_TYPES:
         return jsonify({"ok": False, "error": "account_type inválido"}), 400
     if not account_number:
         return jsonify({"ok": False, "error": "account_number requerido"}), 400
-
     if account_type == "bank":
         if not bank_code:
             return jsonify({"ok": False, "error": "bank_code requerido para cuenta bancaria"}), 400
         if not account_kind or account_kind not in ALLOWED_BANK_KINDS:
             return jsonify({"ok": False, "error": "account_kind debe ser 'savings' o 'checking'"}), 400
-
     if observations and len(observations) > 500:
         return jsonify({"ok": False, "error": "observations demasiado largas (máx 500)"}), 400
 
@@ -70,13 +58,11 @@ def create_request():
             bank_code=bank_code,
             observations=observations,
         )
-        # El service devuelve status="requested"
-        return jsonify({"ok": True, "request": out}), 201
-
+        db.session.commit()  # 👈 COMMIT REAL DEL REQUEST HTTP
+        return jsonify({"ok": True, "item": out}), 201
     except ValueError as e:
         db.session.rollback()
         return jsonify({"ok": False, "error": str(e)}), 400
-
     except Exception as e:
         db.session.rollback()
         current_app.logger.exception("create_payout_request failed")

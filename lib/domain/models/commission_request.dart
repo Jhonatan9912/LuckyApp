@@ -1,13 +1,14 @@
 // lib/domain/models/commission_request.dart
 class CommissionRequest {
-  final int id;           // payout_requests.id
+  final int id; // payout_requests.id
   final int userId;
-  final String userName;  // "Nombre (PRO)" si así lo mandas desde backend
+  final String userName; // "Nombre (PRO)" si así lo mandas desde backend
   final String monthLabel; // "Sep 2025" (o vacío si no aplica)
   final int amountMicros; // monto total en micros
-  final String currency;  // p.ej. 'COP'
-  final String status;    // 'requested' | 'processing' | 'paid' | etc.
+  final String currency; // p.ej. 'COP'
+  final String status; // 'requested' | 'processing' | 'paid' | etc.
   final DateTime createdAt;
+  final String adminNote;
 
   const CommissionRequest({
     required this.id,
@@ -18,6 +19,7 @@ class CommissionRequest {
     required this.currency,
     required this.status,
     required this.createdAt,
+    required this.adminNote,
   });
 
   double get amountCop => amountMicros / 1_000_000.0;
@@ -38,6 +40,7 @@ class CommissionRequest {
       currency: (j['currency'] ?? j['currency_code'] ?? 'COP').toString(),
       status: (j['status'] ?? '').toString(),
       createdAt: asDate(j['created_at'] ?? j['createdAt']),
+      adminNote: (j['admin_note'] ?? '').toString(), // 👈 CORREGIDO
     );
   }
 }
