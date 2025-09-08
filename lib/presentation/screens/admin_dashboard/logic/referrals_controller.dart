@@ -59,8 +59,8 @@ class ReferralsController extends ChangeNotifier {
   int get active => _summary?.active ?? 0;
   int get inactive => _summary?.inactive ?? 0;
 
-  int get pendingCop => _summary?.pendingCop ?? 0;
-  int get paidCop => _summary?.paidCop ?? 0;
+  int get pendingCop => _pendingCopFromCommissions ?? _summary?.pendingCop ?? 0;
+  int get paidCop => _paidCopFromPayouts ?? _summary?.paidCop ?? 0;
 
   String get currency => _summary?.currency ?? 'COP';
 
@@ -111,7 +111,7 @@ class ReferralsController extends ChangeNotifier {
   bool _loadingCommissions = false;
   String? _commissionsError;
   List<CommissionRequest> _commissions = [];
-
+  int? _pendingCopFromCommissions; // total pendiente calculado desde la lista
   bool get loadingCommissions => _loadingCommissions;
   String? get commissionsError => _commissionsError;
   List<CommissionRequest> get commissions => _commissions;
@@ -123,6 +123,19 @@ class ReferralsController extends ChangeNotifier {
     notifyListeners();
     try {
       _commissions = await api.fetchCommissionRequests(status: status);
+      // Si estamos viendo las pendientes, recalculamos el KPI "Pendiente"
+      if (status == null || status == 'requested' || status == 'pending') {
+        final total = _commissions
+            .where((c) {
+              final s = c.status.toLowerCase();
+              return s == 'requested' || s == 'pending';
+            })
+            .fold<double>(0.0, (sum, c) => sum + (c.amountCop));
+        _pendingCopFromCommissions = total.round();
+      } else {
+        // En otros filtros no sobreescribimos: usamos el summary del backend
+        _pendingCopFromCommissions = null;
+      }
     } catch (e) {
       _commissionsError = e.toString();
       _commissions = [];
@@ -136,6 +149,7 @@ class ReferralsController extends ChangeNotifier {
   bool _loadingPayouts = false;
   String? _payoutsError;
   List<PayoutBatch> _payouts = [];
+  int? _paidCopFromPayouts; // total pagado calculado desde los lotes de pago
 
   bool get loadingPayouts => _loadingPayouts;
   String? get payoutsError => _payoutsError;
@@ -147,6 +161,34 @@ class ReferralsController extends ChangeNotifier {
     notifyListeners();
     try {
       _payouts = await api.fetchPayoutBatches();
+      // ➜ Total pagado hasta hoy (inclusive) desde la lista de pagos
+      final now = DateTime.now();
+      bool isSameDay(DateTime a, DateTime b) =>
+          a.year == b.year && a.month == b.month && a.day == b.day;
+
+      int parseCopLabel(String s) {
+        final digits = s.replaceAll(RegExp(r'[^\d]'), '');
+        return int.tryParse(digits) ?? 0;
+      }
+
+      // Suma usando createdAt <= hoy y el total del lote
+      int sum = 0;
+      for (final b in _payouts) {
+        final dt = b.createdAt; // puede ser null
+        if (dt == null) continue;
+        final isBeforeToday = dt.isBefore(
+          DateTime(now.year, now.month, now.day, 23, 59, 59),
+        );
+        final isToday = isSameDay(dt, now);
+        if (isBeforeToday || isToday) {
+          // Si tu modelo tiene un numérico (p. ej. b.totalCop o b.totalCopValue), úsalo.
+          // final amount = (b.totalCop ?? b.totalCopValue ?? 0);
+          // Si no, parsea la etiqueta (ya la usas en el UI):
+          final amount = parseCopLabel(b.totalCopLabel);
+          sum += amount;
+        }
+      }
+      _paidCopFromPayouts = sum;
     } catch (e) {
       _payoutsError = e.toString();
       _payouts = [];
