@@ -8,6 +8,8 @@ import 'package:base_app/domain/models/commission_request.dart';
 import 'package:base_app/presentation/screens/admin_dashboard/widgets/user_detail_sheet.dart';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:base_app/data/models/payout_batch.dart';
+import 'package:base_app/data/models/payout_batch_detail.dart';
 
 class ReferralsBottomSheet extends StatefulWidget {
   const ReferralsBottomSheet({
@@ -160,11 +162,8 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
                                 _openUserDetail(context, uid, rid),
                           ),
 
-                          // 3) Pagos (histórico / pendientes por confirmar) — por ahora maqueta
-                          _PayoutsTab(
-                            scrollController: scroll,
-                            onMarkAsPaid: widget.onMarkAsPaid,
-                          ),
+                          // 3) Pagos (lista real sin botón "Marcar pagado")
+                          _PayoutsTab(scrollController: scroll),
                         ],
                       );
                     },
@@ -723,42 +722,438 @@ class _CommissionsTab extends StatelessWidget {
   }
 }
 
-class _PayoutsTab extends StatelessWidget {
-  const _PayoutsTab({required this.scrollController, this.onMarkAsPaid});
+class _PayoutsTab extends StatefulWidget {
+  const _PayoutsTab({required this.scrollController});
   final ScrollController scrollController;
-  final void Function(int payoutId)? onMarkAsPaid;
+
+  @override
+  State<_PayoutsTab> createState() => _PayoutsTabState();
+}
+
+class _PayoutsTabState extends State<_PayoutsTab> {
+  bool _requestedOnce = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final s = context.findAncestorStateOfType<_ReferralsBottomSheetState>();
+    if (s == null) return;
+    final ctrl = s._ctrl;
+
+    if (!_requestedOnce &&
+        !ctrl.loadingPayouts &&
+        ctrl.payouts.isEmpty &&
+        ctrl.payoutsError == null) {
+      _requestedOnce = true;
+      // Ejecuta después del frame actual, fuera del build.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ctrl.loadPayouts();
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      controller: scrollController,
-      padding: const EdgeInsets.all(16),
-      children: [
-        const _SectionTitle('Pagos realizados / por confirmar'),
-        const SizedBox(height: 8),
-        _PayoutTile(
-          payoutId: 501,
-          date: '01 Sep 2025',
-          items: 3,
-          total: '\$45.000',
-          stateLabel: 'Transferencia enviada',
-          onMarkAsPaid: onMarkAsPaid,
+    final s = context.findAncestorStateOfType<_ReferralsBottomSheetState>();
+    if (s == null) return const Center(child: Text('No controller'));
+    final ctrl = s._ctrl;
+
+    return AnimatedBuilder(
+      animation: ctrl,
+      builder: (_, __) {
+        if (ctrl.loadingPayouts) {
+          return ListView(
+            controller: widget.scrollController,
+            padding: const EdgeInsets.all(16),
+            children: const [
+              SizedBox(height: 8),
+              Center(child: CircularProgressIndicator()),
+            ],
+          );
+        }
+
+        if (ctrl.payoutsError != null) {
+          return ListView(
+            controller: widget.scrollController,
+            padding: const EdgeInsets.all(16),
+            children: [
+              const _SectionTitle('Pagos realizados'),
+              const SizedBox(height: 8),
+              Text(
+                'Error cargando pagos: ${ctrl.payoutsError}',
+                style: const TextStyle(color: Colors.red),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: ctrl.loadPayouts,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Reintentar'),
+              ),
+            ],
+          );
+        }
+
+        final items = ctrl.payouts;
+        if (items.isEmpty) {
+          return ListView(
+            controller: widget.scrollController,
+            padding: const EdgeInsets.all(16),
+            children: const [
+              _SectionTitle('Pagos realizados'),
+              SizedBox(height: 8),
+              Text('Aún no hay lotes de pago.'),
+            ],
+          );
+        }
+
+        return ListView(
+          controller: widget.scrollController,
+          padding: const EdgeInsets.all(16),
+          children: [
+            const _SectionTitle('Pagos realizados'),
+            const SizedBox(height: 8),
+            ...items.map(
+              (b) => _PayoutTilePaid(
+                batch: b,
+                onViewDetails: () => _openBatchDetails(context, ctrl, b.id),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _openBatchDetails(
+    BuildContext context,
+    ReferralsController ctrl,
+    int batchId,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.92,
+        minChildSize: 0.5,
+        maxChildSize: 0.98,
+        builder: (ctx, scroll) => ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          child: _PayoutDetailsSheet(ctrl: ctrl, batchId: batchId),
         ),
-        _PayoutTile(
-          payoutId: 502,
-          date: '15 Ago 2025',
-          items: 7,
-          total: '\$105.000',
-          stateLabel: 'Completado',
-          completed: true,
-          onMarkAsPaid: onMarkAsPaid,
+      ),
+    );
+  }
+}
+
+class _PayoutTilePaid extends StatelessWidget {
+  const _PayoutTilePaid({required this.batch, required this.onViewDetails});
+
+  final PayoutBatch batch;
+  final VoidCallback onViewDetails;
+
+  String _fmtDate(DateTime? dt) {
+    if (dt == null) return '-';
+    return '${dt.day.toString().padLeft(2, '0')}/'
+        '${dt.month.toString().padLeft(2, '0')}/'
+        '${dt.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // cuántas solicitudes trae el lote (compat con modelo viejo)
+    final int reqs = batch.items;
+
+    // TÍTULO: si hay 1 solicitud -> nombre; si >1 -> "N solicitantes"
+    final String title = (reqs == 1)
+        ? ((batch.firstUserName?.trim().isNotEmpty ?? false)
+              ? batch.firstUserName!.trim()
+              : 'Usuario #${batch.firstUserId ?? batch.id}')
+        : '$reqs solicitantes';
+
+    // Fecha y etiqueta:
+    //  - si el lote trae 1 solicitud y tenemos public_code del usuario -> mostrar ese código
+    //  - de lo contrario, mostrar el código del lote (PB-000xxx)
+    final String dateStr = _fmtDate(batch.createdAt);
+    final String batchCode =
+        batch.code ?? 'PB-${batch.id.toString().padLeft(6, '0')}';
+    final String userCode = (batch.firstUserCode?.trim().isNotEmpty ?? false)
+        ? batch.firstUserCode!.trim()
+        : '';
+    final String label = (reqs == 1 && userCode.isNotEmpty)
+        ? userCode
+        : batchCode;
+
+    // Total (ya formateado en el modelo)
+    final String totalStr = batch.totalCopLabel;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: ListTile(
+        isThreeLine: true,
+        leading: CircleAvatar(
+          backgroundColor: Colors.green.shade50,
+          child: const Icon(Icons.check_circle, color: Colors.green),
+        ),
+        // 👇 deja de decir "Lote #..."
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(dateStr), // Fecha
+            Text('$label • Total $totalStr'),
+          ],
+        ),
+        trailing: FilledButton.tonal(
+          onPressed: onViewDetails,
+          child: const Text('Ver detalles'),
+        ),
+      ),
+    );
+  }
+}
+
+class _PayoutDetailsSheet extends StatefulWidget {
+  const _PayoutDetailsSheet({required this.ctrl, required this.batchId});
+  final ReferralsController ctrl;
+  final int batchId;
+
+  @override
+  State<_PayoutDetailsSheet> createState() => _PayoutDetailsSheetState();
+}
+
+class _PayoutDetailsSheetState extends State<_PayoutDetailsSheet> {
+  @override
+  void initState() {
+    super.initState();
+    // carga detalles del lote al abrir
+    // ignore: discarded_futures
+    widget.ctrl.loadPayoutBatchDetails(widget.batchId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: AnimatedBuilder(
+        animation: widget.ctrl,
+        builder: (_, __) {
+          final loading = widget.ctrl.loadingBatchDetails;
+          final err = widget.ctrl.batchDetailsError;
+          final details = widget.ctrl.currentBatchDetails;
+
+          return Column(
+            children: [
+              // Header
+              Container(
+                height: 24,
+                alignment: Alignment.center,
+                child: Container(
+                  width: 40,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.black12,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.receipt_long_outlined, color: Colors.deepPurple),
+                    const SizedBox(width: 8),
+                    Text('Detalle del pago', style: Theme.of(context).textTheme.titleMedium),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Cerrar',
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+
+              if (loading) ...[
+                const SizedBox(height: 24),
+                const Center(child: CircularProgressIndicator()),
+                const SizedBox(height: 24),
+              ] else if (err != null) ...[
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text('No se pudo cargar: $err', style: const TextStyle(color: Colors.red)),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => widget.ctrl.loadPayoutBatchDetails(widget.batchId),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Reintentar'),
+                ),
+                const SizedBox(height: 16),
+              ] else if (details == null) ...[
+                const SizedBox(height: 24),
+                const Text('Sin datos'),
+              ] else ...[
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      // Cabecera del lote
+                      _SectionTitle('Lote #${details.batch.id}'),
+                      const SizedBox(height: 8),
+                      _KeyValueRow(
+                        label: 'Fecha',
+                        value: _fmtLongDate(details.batch.createdAt),
+                      ),
+                      _KeyValueRow(
+                        label: 'Total',
+                        value: details.batch.totalCopLabel,
+                      ),
+                      _KeyValueRow(
+                        label: 'Solicitudes',
+                        value: '${details.batch.items}',
+                      ),
+                      const SizedBox(height: 16),
+                      const Divider(),
+                      const SizedBox(height: 10),
+
+                      // TODAS las solicitudes (lectura)
+                      const _SectionTitle('Solicitudes'),
+                      const SizedBox(height: 8),
+                      ...details.requests.map((r) => _RequestReadOnlyCard(r: r)),
+
+                      const SizedBox(height: 16),
+
+                      // Evidencias (muestra la primera)
+                      if (details.files.isNotEmpty) ...[
+                        const _SectionTitle('Evidencia'),
+                        const SizedBox(height: 8),
+                        _buildEvidence(details),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  String _fmtLongDate(DateTime? dt) {
+    if (dt == null) return '-';
+    final d = '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+    final t = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    return '$d • $t';
+  }
+
+  Widget _buildEvidence(PayoutBatchDetails details) {
+    final f = details.files.first;
+    final base = ApiService.defaultBaseUrl;
+    final fullUrl = '$base${f.url}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(f.name, style: Theme.of(context).textTheme.labelMedium),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: AspectRatio(
+            aspectRatio: 4 / 3,
+            child: Image.network(
+              fullUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                color: Colors.black12,
+                alignment: Alignment.center,
+                child: const Text('No se pudo cargar la imagen'),
+              ),
+            ),
+          ),
         ),
       ],
     );
   }
 }
 
-// ———— Cards/ListTiles estilizados ————
+class _RequestReadOnlyCard extends StatelessWidget {
+  const _RequestReadOnlyCard({required this.r});
+  final dynamic r; // el item de details.requests
+
+  String _fmtLongDate(DateTime? dt) {
+    if (dt == null) return '-';
+    final d = '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+    final t = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    return '$d • $t';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final String name = ((r.userName ?? '').trim().isNotEmpty)
+        ? (r.userName ?? '').trim()
+        : 'Usuario #${r.userId ?? r.id}';
+    final code = (r.userCode ?? '').trim();
+    final doc  = (r.documentId ?? '').trim();
+    final date = _fmtLongDate(r.createdAt);
+    final amount = r.amountLabel; // viene formateado
+
+    return Card(
+      color: const Color(0xFFFFF7EB),
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _KeyValueRow(label: 'Nombre', value: name),
+            _KeyValueRow(label: 'Código', value: code.isEmpty ? '-' : code),
+            _KeyValueRow(label: 'Cédula', value: doc.isEmpty ? '-' : doc),
+            _KeyValueRow(label: 'Fecha de solicitud', value: date),
+            _KeyValueRow(label: 'Monto', value: amount),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _KeyValueRow extends StatelessWidget {
+  const _KeyValueRow({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final txt = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 140,
+            child: Text(
+              label,
+              style: txt.labelMedium?.copyWith(color: Colors.black54),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: txt.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              textAlign: TextAlign.right,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _SummaryHeader extends StatelessWidget {
   const _SummaryHeader({
@@ -1071,52 +1466,6 @@ class _CommissionTileState extends State<_CommissionTile> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _PayoutTile extends StatelessWidget {
-  const _PayoutTile({
-    required this.payoutId,
-    required this.date,
-    required this.items,
-    required this.total,
-    required this.stateLabel,
-    this.completed = false,
-    this.onMarkAsPaid,
-  });
-
-  final int payoutId;
-  final String date;
-  final int items;
-  final String total;
-  final String stateLabel;
-  final bool completed;
-  final void Function(int payoutId)? onMarkAsPaid;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: completed
-              ? Colors.green.shade50
-              : Colors.orange.shade50,
-          child: Icon(
-            completed ? Icons.check_circle : Icons.schedule_send,
-            color: completed ? Colors.green : Colors.orange,
-          ),
-        ),
-        title: Text('Lote #$payoutId • $date'),
-        subtitle: Text('$items comisiones • Total $total'),
-        trailing: completed
-            ? const SizedBox.shrink()
-            : FilledButton.tonal(
-                onPressed: () => onMarkAsPaid?.call(payoutId),
-                child: const Text('Marcar pagado'),
-              ),
       ),
     );
   }

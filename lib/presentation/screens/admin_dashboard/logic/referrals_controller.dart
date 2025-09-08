@@ -8,6 +8,8 @@ import 'package:base_app/domain/models/commission_request.dart';
 import 'package:base_app/data/models/admin_user_detail.dart';
 import 'package:base_app/data/models/commission_breakdown.dart';
 import 'dart:io';
+import 'package:base_app/data/models/payout_batch.dart';
+import 'package:base_app/data/models/payout_batch_detail.dart';
 
 /// Controlador para resumen de referidos, top, comisiones,
 /// detalle de usuario y desglose por solicitud.
@@ -127,7 +129,40 @@ class ReferralsController extends ChangeNotifier {
     }
   }
 
+  // ===== Pagos (lotes ya hechos) =====
+  bool _loadingPayouts = false;
+  String? _payoutsError;
+  List<PayoutBatch> _payouts = [];
+
+  bool get loadingPayouts => _loadingPayouts;
+  String? get payoutsError => _payoutsError;
+  List<PayoutBatch> get payouts => _payouts;
+
+  Future<void> loadPayouts() async {
+    _loadingPayouts = true;
+    _payoutsError = null;
+    notifyListeners();
+    try {
+      _payouts = await api.fetchPayoutBatches();
+    } catch (e) {
+      _payoutsError = e.toString();
+      _payouts = [];
+    } finally {
+      _loadingPayouts = false;
+      notifyListeners();
+    }
+  }
+
   // === Estado de pago en progreso ===
+  // ===== Detalle de lote de pago =====
+  PayoutBatchDetails? _currentBatchDetails;
+  bool _loadingBatchDetails = false;
+  String? _batchDetailsError;
+
+  PayoutBatchDetails? get currentBatchDetails => _currentBatchDetails;
+  bool get loadingBatchDetails => _loadingBatchDetails;
+  String? get batchDetailsError => _batchDetailsError;
+
   bool _paying = false;
   bool get paying => _paying;
 
@@ -266,30 +301,57 @@ class ReferralsController extends ChangeNotifier {
     }
   }
 
-Future<Map<String, dynamic>?> createPayoutBatch({
-  required List<int> requestIds,
-  String note = '',
-  List<File> files = const [], // ✅ aquí
-}) async {
-  if (_paying) return null;
-  _paying = true;
+  Future<Map<String, dynamic>?> createPayoutBatch({
+    required List<int> requestIds,
+    String note = '',
+    List<File> files = const [], // ✅ aquí
+  }) async {
+    if (_paying) return null;
+    _paying = true;
+    notifyListeners();
+
+    try {
+      final result = await api.createPayoutBatch(
+        requestIds: requestIds,
+        note: note,
+        files: files, // ✅ ahora coincide con la API
+      );
+
+      await loadCommissions(status: 'requested');
+      await loadPayouts();
+      await load();
+      return result;
+    } catch (e, st) {
+      debugPrint('createPayoutBatch ERROR: $e\n$st');
+      rethrow;
+    } finally {
+      _paying = false;
+      notifyListeners();
+    }
+  }
+  Future<PayoutBatchDetails?> loadPayoutBatchDetails(int batchId, {bool force = false}) async {
+  if (!force && _currentBatchDetails?.batch.id == batchId) {
+    _batchDetailsError = null;
+    _loadingBatchDetails = false;
+    notifyListeners();
+    return _currentBatchDetails;
+  }
+
+  _loadingBatchDetails = true;
+  _batchDetailsError = null;
+  _currentBatchDetails = null;
   notifyListeners();
 
   try {
-    final result = await api.createPayoutBatch(
-      requestIds: requestIds,
-      note: note,
-      files: files, // ✅ ahora coincide con la API
-    );
-
-    await loadCommissions(status: 'requested');
-    await load();
-    return result;
+    final details = await api.fetchPayoutBatchDetails(batchId);
+    _currentBatchDetails = details;
+    return details;
   } catch (e, st) {
-    debugPrint('createPayoutBatch ERROR: $e\n$st');
-    rethrow;
+    debugPrint('loadPayoutBatchDetails ERROR: $e\n$st');
+    _batchDetailsError = e.toString();
+    return null;
   } finally {
-    _paying = false;
+    _loadingBatchDetails = false;
     notifyListeners();
   }
 }

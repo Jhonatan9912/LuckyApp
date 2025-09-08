@@ -10,6 +10,8 @@ import 'package:base_app/domain/models/commission_request.dart';
 import 'package:base_app/data/models/admin_user_detail.dart';
 import 'package:base_app/data/models/commission_breakdown.dart';
 import 'dart:io';
+import 'package:base_app/data/models/payout_batch.dart';
+import 'package:base_app/data/models/payout_batch_detail.dart';
 
 /// API para endpoints de referidos del admin.
 class AdminReferralsApi {
@@ -330,4 +332,85 @@ class AdminReferralsApi {
     }
     return (body['item'] ?? body) as Map<String, dynamic>;
   }
+
+  Future<List<PayoutBatch>> fetchPayoutBatches({
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final token = await SessionManager().getToken();
+    final uri = Uri.parse(
+      '$baseUrl/api/admin/referrals/payout-batches',
+    ).replace(queryParameters: {'limit': '$limit', 'offset': '$offset'});
+
+    if (kDebugMode) debugPrint('[admin/referrals/payout-batches] GET $uri');
+
+    final res = await http
+        .get(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (kDebugMode) {
+      debugPrint(
+        '[admin/referrals/payout-batches] ${res.statusCode} ${res.body}',
+      );
+    }
+
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+
+    final decoded = json.decode(res.body);
+    List<dynamic> items;
+    if (decoded is List) {
+      items = decoded;
+    } else if (decoded is Map<String, dynamic>) {
+      final anyList = decoded['items'] ?? decoded['data'] ?? [];
+      if (anyList is! List) {
+        throw Exception('Formato inesperado en payout-batches');
+      }
+      items = anyList;
+    } else {
+      throw Exception('Formato inesperado en payout-batches');
+    }
+
+    return PayoutBatch.listFromJson(items);
+  }
+
+Future<PayoutBatchDetails> fetchPayoutBatchDetails(int batchId) async {
+  final token = await SessionManager().getToken();
+  final uri = Uri.parse(
+    '$baseUrl/api/admin/referrals/payout-batches/$batchId/details',
+  );
+
+  if (kDebugMode) debugPrint('[admin/referrals/payout-batches/details] GET $uri');
+
+  final res = await http
+      .get(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+      )
+      .timeout(const Duration(seconds: 15));
+
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+
+  final decoded = json.decode(res.body);
+  final map = decoded is Map<String, dynamic>
+      ? (decoded['item'] ?? decoded) as Map<String, dynamic>
+      : (throw Exception('Formato inesperado en details'));
+
+  return PayoutBatchDetails.fromJson(map); // usa el constructor que tengas
+}
+
 }

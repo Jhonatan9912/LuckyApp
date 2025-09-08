@@ -14,6 +14,8 @@ from app.services.admin.referrals_payouts_service import (
 )
 # 👇 rechazar debe venir del servicio core, que restaura 'available' y notifica
 from app.services.referrals.payouts_service import reject_payout_request
+from pathlib import Path
+from flask import send_file
 
 # ---------------------------------------------------------------------
 # GET /api/admin/referrals/summary  -> resumen global (o por referrer_id)
@@ -267,4 +269,207 @@ def admin_create_payout_batch():
         current_app.logger.exception("admin_create_payout_batch failed")
         return jsonify({"ok": False, "error": str(e)}), 500
     
-    
+from sqlalchemy import text
+
+@bp.get("/referrals/payout-batches")
+@jwt_required()
+def admin_list_payout_batches():
+    # Guard admin
+    claims = get_jwt() or {}
+    role_id = claims.get("role_id") or claims.get("rid") or claims.get("role")
+    if int(role_id or 0) != 1:
+        return jsonify({"ok": False, "error": "Solo administradores"}), 403
+
+    try:
+        limit  = int(request.args.get("limit",  "50"))
+        offset = int(request.args.get("offset", "0"))
+
+        sql = text("""
+            WITH base AS (
+            SELECT
+                pb.id,
+                pb.created_at,
+                pb.currency_code AS currency,
+                COALESCE(
+                pb.total_micros,
+                SUM(COALESCE(pbi.amount_micros, pr.amount_micros))
+                ) AS total_micros,
+                COUNT(DISTINCT pbi.payout_request_id) AS requests_count,
+                MIN(pr.user_id)           AS first_user_id,
+                MIN(u.name)               AS first_user_name,
+                MIN(u.public_code)        AS first_user_code,        -- 👈 NUEVO
+                EXISTS (
+                SELECT 1 FROM payout_payment_files pf WHERE pf.batch_id = pb.id
+                ) AS has_files
+            FROM payout_payment_batches pb
+            LEFT JOIN payout_payment_batch_items pbi ON pbi.batch_id = pb.id
+            LEFT JOIN payout_requests pr            ON pr.id = pbi.payout_request_id
+            LEFT JOIN users u                       ON u.id = pr.user_id
+            GROUP BY pb.id, pb.created_at, pb.currency_code, pb.total_micros
+            )
+            SELECT
+            id,
+            created_at,
+            currency,
+            requests_count                                   AS items,
+            (total_micros / 1000000)::bigint                 AS total_cop,
+            has_files,
+            first_user_id,
+            first_user_name,
+            first_user_code,                                  -- 👈 NUEVO
+            ('PB-' || lpad(id::text, 6, '0'))               AS code
+            FROM base
+            ORDER BY id DESC
+            LIMIT :limit OFFSET :offset
+        """)
+
+
+        rows = db.session.execute(sql, {"limit": limit, "offset": offset}).mappings().all()
+
+        items = []
+        for r in rows:
+            items.append({
+                "id":           int(r["id"]),
+                "created_at":   r["created_at"].isoformat() if r["created_at"] else None,
+                "currency":     r["currency"] or "COP",
+                "items":        int(r["items"] or 0),
+                "total_cop":    int(r["total_cop"] or 0),
+                "has_files":    bool(r["has_files"]),
+                "first_user_id":   int(r["first_user_id"]) if r["first_user_id"] is not None else None,
+                "first_user_name": r["first_user_name"],
+                "first_user_code": r["first_user_code"],     # 👈 NUEVO
+                "code":            r["code"],
+            })
+
+
+        return jsonify(items), 200   # tu Flutter ya soporta lista “plana”
+    except Exception as e:
+        current_app.logger.exception("admin_list_payout_batches failed")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@bp.get("/referrals/payout-batches/<int:batch_id>/details")
+@jwt_required()
+def admin_payout_batch_details(batch_id: int):
+    # Guard admin
+    claims = get_jwt() or {}
+    role_id = claims.get("role_id") or claims.get("rid") or claims.get("role")
+    if int(role_id or 0) != 1:
+        return jsonify({"ok": False, "error": "Solo administradores"}), 403
+
+    try:
+        # HEAD
+        head_sql = text("""
+            WITH head AS (
+              SELECT
+                pb.id,
+                pb.created_at,
+                pb.currency_code AS currency,
+                COUNT(DISTINCT pbi.payout_request_id) AS items,
+                COALESCE(pb.total_micros, SUM(COALESCE(pbi.amount_micros, pr.amount_micros))) AS total_micros
+              FROM payout_payment_batches pb
+              LEFT JOIN payout_payment_batch_items pbi ON pbi.batch_id = pb.id
+              LEFT JOIN payout_requests pr            ON pr.id = pbi.payout_request_id
+              WHERE pb.id = :bid
+              GROUP BY pb.id, pb.created_at, pb.currency_code, pb.total_micros
+            )
+            SELECT id, created_at, currency, items,
+                   (total_micros / 1000000)::bigint AS total_cop
+            FROM head
+        """)
+        h = db.session.execute(head_sql, {"bid": batch_id}).mappings().first()
+        if not h:
+            return jsonify({"ok": False, "error": "Batch no encontrado"}), 404
+
+        batch = {
+            "id":         int(h["id"]),
+            "created_at": h["created_at"].isoformat() if h["created_at"] else None,
+            "currency":   h["currency"] or "COP",
+            "total_cop":  int(h["total_cop"] or 0),
+            "items":      int(h["items"] or 0),
+        }
+
+        # REQUESTS
+        req_sql = text("""
+            SELECT
+              pr.id                                         AS request_id,
+              pr.user_id,
+              u.name                                        AS user_name,
+              u.public_code                                 AS user_code,
+              u.identification_number                       AS document_id,
+              (COALESCE(pbi.amount_micros, pr.amount_micros) / 1000000)::bigint AS amount_cop,
+              pr.requested_at                                AS created_at
+            FROM payout_payment_batch_items pbi
+            JOIN payout_requests pr ON pr.id = pbi.payout_request_id
+            LEFT JOIN users u        ON u.id = pr.user_id
+            WHERE pbi.batch_id = :bid
+            ORDER BY pr.id
+        """)
+        req_rows = db.session.execute(req_sql, {"bid": batch_id}).mappings().all()
+        requests = [{
+            "id":          int(r["request_id"]),
+            "user_id":     int(r["user_id"]) if r["user_id"] is not None else None,
+            "user_name":   r["user_name"],
+            "user_code":   r["user_code"],
+            "document_id": r["document_id"],
+            "amount_cop":  int(r["amount_cop"] or 0),
+            "created_at":  r["created_at"].isoformat() if r["created_at"] else None,
+        } for r in req_rows]
+
+        # FILES
+        files_sql = text("""
+            SELECT id, file_name, storage_path
+            FROM payout_payment_files
+            WHERE batch_id = :bid
+            ORDER BY id
+        """)
+        file_rows = db.session.execute(files_sql, {"bid": batch_id}).mappings().all()
+        files = [{
+            "id":   int(f["id"]),
+            "name": f["file_name"],
+            # URL relativa servida por otra ruta (ajústala si ya tienes una distinta)
+            "url":  f"/api/admin/referrals/payout-batches/{batch_id}/files/{int(f['id'])}",
+            # "path": f["storage_path"],  # si te sirve para debug
+        } for f in file_rows]
+
+        return jsonify({"ok": True, "item": {
+            "batch": batch,
+            "requests": requests,
+            "files": files,
+        }}), 200
+
+    except Exception as e:
+        current_app.logger.exception("admin_payout_batch_details failed")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@bp.get("/referrals/payout-batches/<int:batch_id>/files/<int:file_id>")
+@jwt_required()
+def admin_download_payout_file(batch_id: int, file_id: int):
+    # ⚠️ Si prefieres mantener JWT, vuelve a poner @jwt_required() arriba.
+    row = db.session.execute(text("""
+        SELECT file_name, mime_type, storage_path
+        FROM payout_payment_files
+        WHERE id = :fid AND batch_id = :bid
+    """), {"fid": file_id, "bid": batch_id}).mappings().first()
+    if not row:
+        return jsonify({"ok": False, "error": "file_not_found"}), 404
+
+    storage_path = (row["storage_path"] or "").strip()
+
+    # Base en Railway: /workspace/app/storage
+    BASE_STORAGE = Path("/workspace/app/storage")
+
+    fpath = Path(storage_path)
+    full_path = fpath if fpath.is_absolute() else BASE_STORAGE.joinpath(storage_path)
+
+    if not full_path.exists():
+        return jsonify({"ok": False, "error": "file_missing_on_disk"}), 404
+
+    return send_file(
+        full_path,
+        mimetype=row["mime_type"] or "application/octet-stream",
+        as_attachment=False,
+        download_name=row["file_name"] or "evidence",
+        conditional=True,
+        max_age=3600,
+    )
