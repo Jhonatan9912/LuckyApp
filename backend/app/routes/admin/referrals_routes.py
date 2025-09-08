@@ -442,10 +442,13 @@ def admin_payout_batch_details(batch_id: int):
         current_app.logger.exception("admin_payout_batch_details failed")
         return jsonify({"ok": False, "error": str(e)}), 500
 
+# app/routes/admin/referrals_routes.py
+from pathlib import Path
+import os, mimetypes
+...
 @bp.get("/referrals/payout-batches/<int:batch_id>/files/<int:file_id>")
 @jwt_required()
 def admin_download_payout_file(batch_id: int, file_id: int):
-    # ⚠️ Si prefieres mantener JWT, vuelve a poner @jwt_required() arriba.
     row = db.session.execute(text("""
         SELECT file_name, mime_type, storage_path
         FROM payout_payment_files
@@ -456,18 +459,37 @@ def admin_download_payout_file(batch_id: int, file_id: int):
 
     storage_path = (row["storage_path"] or "").strip()
 
-    # Base en Railway: /workspace/app/storage
-    BASE_STORAGE = Path("/workspace/app/storage")
+    # === NUEVO: resolver rutas de forma consistente ===
+    def resolve_storage_path(sp: str) -> Path:
+        p = Path(sp.lstrip("./"))
+        if p.is_absolute():
+            return p
 
-    fpath = Path(storage_path)
-    full_path = fpath if fpath.is_absolute() else BASE_STORAGE.joinpath(storage_path)
+        APP_ROOT = Path(os.getenv("APP_ROOT", "/workspace/app"))
+        BASE_STORAGE = Path(os.getenv("BASE_STORAGE_DIR", "/workspace/app/storage"))
+        UPLOAD_DIR = os.getenv("PAYMENT_UPLOAD_DIR", "storage/payment_files")
+
+        s = str(p)
+        # Caso 1: ya viene con 'storage/...'
+        if s.startswith("storage/"):
+            return (APP_ROOT / s).resolve()
+        # Caso 2: viene con 'payment_files/...'
+        if s.startswith("payment_files/"):
+            return (BASE_STORAGE / s).resolve()
+        # Caso 3: viene solo el nombre o subruta; cuélgalo del UPLOAD_DIR
+        return (APP_ROOT / UPLOAD_DIR / s).resolve()
+
+    full_path = resolve_storage_path(storage_path)
 
     if not full_path.exists():
+        current_app.logger.warning("file_missing_on_disk %s", full_path)
         return jsonify({"ok": False, "error": "file_missing_on_disk"}), 404
+
+    mime = row["mime_type"] or mimetypes.guess_type(str(full_path))[0] or "application/octet-stream"
 
     return send_file(
         full_path,
-        mimetype=row["mime_type"] or "application/octet-stream",
+        mimetype=mime,
         as_attachment=False,
         download_name=row["file_name"] or "evidence",
         conditional=True,

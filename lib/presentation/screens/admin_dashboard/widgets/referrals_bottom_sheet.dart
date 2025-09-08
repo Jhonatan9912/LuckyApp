@@ -10,6 +10,9 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:base_app/data/models/payout_batch.dart';
 import 'package:base_app/data/models/payout_batch_detail.dart';
+import 'dart:typed_data';
+import 'package:http/http.dart' as http;
+import 'package:base_app/data/session/session_manager.dart';
 
 class ReferralsBottomSheet extends StatefulWidget {
   const ReferralsBottomSheet({
@@ -40,8 +43,8 @@ class ReferralsBottomSheet extends StatefulWidget {
 
 class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
   late final ReferralsController _ctrl;
-  String? _statusFilter =
-      'requested'; // null=Todos | 'requested'=Pendientes | 'paid'=Pagados
+  // ignore: prefer_final_fields
+  String? _statusFilter = 'requested';
 
   @override
   void initState() {
@@ -101,15 +104,6 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                _FiltersRow(
-                  selectedStatus: _statusFilter,
-                  onChange: (newStatus) {
-                    setState(() => _statusFilter = newStatus);
-                    _ctrl.loadCommissions(status: newStatus);
-                  },
-                ),
-
                 const SizedBox(height: 8),
                 const Divider(height: 1),
 
@@ -456,66 +450,55 @@ class _Handle extends StatelessWidget {
   }
 }
 
-class _FiltersRow extends StatelessWidget {
-  const _FiltersRow({required this.selectedStatus, required this.onChange});
+class _PayoutsFiltersRow extends StatelessWidget {
+  const _PayoutsFiltersRow({required this.selected, required this.onChange});
 
-  /// null = Todos, 'requested' = Pendientes, 'paid' = Pagados
-  final String? selectedStatus;
-  final void Function(String? newStatus) onChange;
+  final PayoutsFilter selected;
+  final void Function(PayoutsFilter value) onChange;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: -6,
-        children: [
-          _Chip(
-            label: 'Todos',
-            selected: selectedStatus == null,
-            onTap: () => onChange(null),
-          ),
-          _Chip(
-            label: 'Pendientes',
-            selected: selectedStatus == 'requested',
-            onTap: () => onChange('requested'),
-          ),
-          _Chip(
-            label: 'Pagados',
-            selected: selectedStatus == 'paid',
-            onTap: () => onChange('paid'),
-          ),
-          _Chip(
-            label: 'Este mes',
-            selected: false,
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Filtro por fecha: próximamente')),
-              );
-            },
-          ),
-          _Chip(
-            label: 'Últimos 90 días',
-            selected: false,
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Filtro por fecha: próximamente')),
-              );
-            },
-          ),
-        ],
-      ),
+    return Wrap(
+      spacing: 8,
+      runSpacing: -6,
+      children: [
+        _PayoutsChip(
+          label: 'Todos',
+          selected: selected == PayoutsFilter.all,
+          onTap: () => onChange(PayoutsFilter.all),
+        ),
+        _PayoutsChip(
+          label: 'Hoy',
+          selected: selected == PayoutsFilter.today,
+          onTap: () => onChange(PayoutsFilter.today),
+        ),
+        _PayoutsChip(
+          label: 'Este mes',
+          selected: selected == PayoutsFilter.month,
+          onTap: () => onChange(PayoutsFilter.month),
+        ),
+        _PayoutsChip(
+          label: 'Últimos 3 meses',
+          selected: selected == PayoutsFilter.last3,
+          onTap: () => onChange(PayoutsFilter.last3),
+        ),
+        _PayoutsChip(
+          label: 'Este año',
+          selected: selected == PayoutsFilter.year,
+          onTap: () => onChange(PayoutsFilter.year),
+        ),
+      ],
     );
   }
 }
 
-class _Chip extends StatelessWidget {
-  const _Chip({
+class _PayoutsChip extends StatelessWidget {
+  const _PayoutsChip({
     required this.label,
     required this.selected,
     required this.onTap,
   });
+
   final String label;
   final bool selected;
   final VoidCallback onTap;
@@ -523,9 +506,9 @@ class _Chip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return FilterChip(
+      label: Text(label),
       selected: selected,
       onSelected: (_) => onTap(),
-      label: Text(label),
     );
   }
 }
@@ -722,6 +705,9 @@ class _CommissionsTab extends StatelessWidget {
   }
 }
 
+// Filtro de fechas para la pestaña Pagos
+enum PayoutsFilter { all, today, month, last3, year }
+
 class _PayoutsTab extends StatefulWidget {
   const _PayoutsTab({required this.scrollController});
   final ScrollController scrollController;
@@ -732,24 +718,58 @@ class _PayoutsTab extends StatefulWidget {
 
 class _PayoutsTabState extends State<_PayoutsTab> {
   bool _requestedOnce = false;
-
+  PayoutsFilter _payoutsFilter = PayoutsFilter.all;
+  
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final s = context.findAncestorStateOfType<_ReferralsBottomSheetState>();
-    if (s == null) return;
-    final ctrl = s._ctrl;
-
-    if (!_requestedOnce &&
-        !ctrl.loadingPayouts &&
-        ctrl.payouts.isEmpty &&
-        ctrl.payoutsError == null) {
+    if (!_requestedOnce) {
+      final s = context.findAncestorStateOfType<_ReferralsBottomSheetState>();
+      if (s != null) {
+        s._ctrl.loadPayouts();
+      }
       _requestedOnce = true;
-      // Ejecuta después del frame actual, fuera del build.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        ctrl.loadPayouts();
-      });
+    }
+  }
+  bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  DateTime _startOfMonth(DateTime d) => DateTime(d.year, d.month, 1);
+
+  // Rango inclusivo por fecha de creación
+  bool _betweenInclusive(DateTime? dt, DateTime start, DateTime end) {
+    if (dt == null) return false;
+    final day = DateTime(dt.year, dt.month, dt.day);
+    final s = DateTime(start.year, start.month, start.day);
+    final e = DateTime(end.year, end.month, end.day);
+    return (day.isAtSameMomentAs(s) || day.isAfter(s)) &&
+           (day.isAtSameMomentAs(e) || day.isBefore(e));
+  }
+
+  List<PayoutBatch> _applyFilter(List<PayoutBatch> items) {
+    final now = DateTime.now();
+    switch (_payoutsFilter) {
+      case PayoutsFilter.all:
+        return items;
+
+      case PayoutsFilter.today:
+        return items.where((b) => _isSameDay(b.createdAt ?? DateTime(1900), now)).toList();
+
+      case PayoutsFilter.month:
+        final start = _startOfMonth(now);
+        final end = now;
+        return items.where((b) => _betweenInclusive(b.createdAt, start, end)).toList();
+
+      case PayoutsFilter.last3:
+        // Desde el primer día del mes de hace 2 meses (incluyendo el mes actual -> 3 meses)
+        final threeMonthsAgo = DateTime(now.year, now.month - 2, 1);
+        final start = _startOfMonth(threeMonthsAgo);
+        final end = now;
+        return items.where((b) => _betweenInclusive(b.createdAt, start, end)).toList();
+
+      case PayoutsFilter.year:
+        final y = now.year;
+        return items.where((b) => (b.createdAt?.year ?? -1) == y).toList();
     }
   }
 
@@ -762,13 +782,22 @@ class _PayoutsTabState extends State<_PayoutsTab> {
     return AnimatedBuilder(
       animation: ctrl,
       builder: (_, __) {
+        final filtersRow = Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: _PayoutsFiltersRow(
+            selected: _payoutsFilter,
+            onChange: (v) => setState(() => _payoutsFilter = v),
+          ),
+        );
+
         if (ctrl.loadingPayouts) {
           return ListView(
             controller: widget.scrollController,
             padding: const EdgeInsets.all(16),
-            children: const [
-              SizedBox(height: 8),
-              Center(child: CircularProgressIndicator()),
+            children: [
+              filtersRow, // 👈 usa el filtro
+              const SizedBox(height: 8),
+              const Center(child: CircularProgressIndicator()),
             ],
           );
         }
@@ -778,6 +807,8 @@ class _PayoutsTabState extends State<_PayoutsTab> {
             controller: widget.scrollController,
             padding: const EdgeInsets.all(16),
             children: [
+              filtersRow, // 👈 usa el filtro
+              const SizedBox(height: 12),
               const _SectionTitle('Pagos realizados'),
               const SizedBox(height: 8),
               Text(
@@ -795,14 +826,18 @@ class _PayoutsTabState extends State<_PayoutsTab> {
         }
 
         final items = ctrl.payouts;
-        if (items.isEmpty) {
+        final visible = _applyFilter(items);
+
+        if (visible.isEmpty) {
           return ListView(
             controller: widget.scrollController,
             padding: const EdgeInsets.all(16),
-            children: const [
-              _SectionTitle('Pagos realizados'),
-              SizedBox(height: 8),
-              Text('Aún no hay lotes de pago.'),
+            children: [
+              filtersRow, // 👈 usa el filtro
+              const SizedBox(height: 12),
+              const _SectionTitle('Pagos realizados'),
+              const SizedBox(height: 8),
+               const Text('No hay lotes de pago para este filtro.'),
             ],
           );
         }
@@ -811,9 +846,11 @@ class _PayoutsTabState extends State<_PayoutsTab> {
           controller: widget.scrollController,
           padding: const EdgeInsets.all(16),
           children: [
+            filtersRow, // 👈 usa el filtro
+            const SizedBox(height: 12),
             const _SectionTitle('Pagos realizados'),
             const SizedBox(height: 8),
-            ...items.map(
+            ...visible.map(
               (b) => _PayoutTilePaid(
                 batch: b,
                 onViewDetails: () => _openBatchDetails(context, ctrl, b.id),
@@ -929,9 +966,11 @@ class _PayoutDetailsSheetState extends State<_PayoutDetailsSheet> {
   @override
   void initState() {
     super.initState();
-    // carga detalles del lote al abrir
-    // ignore: discarded_futures
-    widget.ctrl.loadPayoutBatchDetails(widget.batchId);
+    // Evita notificaciones durante el build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.ctrl.loadPayoutBatchDetails(widget.batchId);
+    });
   }
 
   @override
@@ -964,9 +1003,15 @@ class _PayoutDetailsSheetState extends State<_PayoutDetailsSheet> {
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                 child: Row(
                   children: [
-                    const Icon(Icons.receipt_long_outlined, color: Colors.deepPurple),
+                    const Icon(
+                      Icons.receipt_long_outlined,
+                      color: Colors.deepPurple,
+                    ),
                     const SizedBox(width: 8),
-                    Text('Detalle del pago', style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      'Detalle del pago',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                     const Spacer(),
                     IconButton(
                       tooltip: 'Cerrar',
@@ -985,11 +1030,15 @@ class _PayoutDetailsSheetState extends State<_PayoutDetailsSheet> {
               ] else if (err != null) ...[
                 Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Text('No se pudo cargar: $err', style: const TextStyle(color: Colors.red)),
+                  child: Text(
+                    'No se pudo cargar: $err',
+                    style: const TextStyle(color: Colors.red),
+                  ),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
-                  onPressed: () => widget.ctrl.loadPayoutBatchDetails(widget.batchId),
+                  onPressed: () =>
+                      widget.ctrl.loadPayoutBatchDetails(widget.batchId),
                   icon: const Icon(Icons.refresh),
                   label: const Text('Reintentar'),
                 ),
@@ -1024,7 +1073,9 @@ class _PayoutDetailsSheetState extends State<_PayoutDetailsSheet> {
                       // TODAS las solicitudes (lectura)
                       const _SectionTitle('Solicitudes'),
                       const SizedBox(height: 8),
-                      ...details.requests.map((r) => _RequestReadOnlyCard(r: r)),
+                      ...details.requests.map(
+                        (r) => _RequestReadOnlyCard(r: r),
+                      ),
 
                       const SizedBox(height: 16),
 
@@ -1047,32 +1098,39 @@ class _PayoutDetailsSheetState extends State<_PayoutDetailsSheet> {
 
   String _fmtLongDate(DateTime? dt) {
     if (dt == null) return '-';
-    final d = '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
-    final t = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    final d =
+        '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+    final t =
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     return '$d • $t';
   }
 
   Widget _buildEvidence(PayoutBatchDetails details) {
     final f = details.files.first;
-    final base = ApiService.defaultBaseUrl;
-    final fullUrl = '$base${f.url}';
+
+    // ✅ Usa absoluta si ya viene con http(s), si no, antepone tu base
+    final base =
+        ApiService.defaultBaseUrl; // debe ser http://10.0.2.2:8000 en dev
+    final fullUrl = (f.url.startsWith('http')) ? f.url : '$base${f.url}';
+
+    debugPrint('[PayoutDetails] evidence name=${f.name} url=$fullUrl');
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(f.name, style: Theme.of(context).textTheme.labelMedium),
         const SizedBox(height: 8),
+
+        // ✅ Usa imagen autenticada (con Bearer)
         ClipRRect(
           borderRadius: BorderRadius.circular(12),
           child: AspectRatio(
             aspectRatio: 4 / 3,
-            child: Image.network(
-              fullUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
-                color: Colors.black12,
-                alignment: Alignment.center,
-                child: const Text('No se pudo cargar la imagen'),
-              ),
+            child: _AuthImage(
+              // ← ESTE widget baja la imagen con JWT
+              url: fullUrl,
+              width: double.infinity,
+              height: double.infinity,
             ),
           ),
         ),
@@ -1087,8 +1145,10 @@ class _RequestReadOnlyCard extends StatelessWidget {
 
   String _fmtLongDate(DateTime? dt) {
     if (dt == null) return '-';
-    final d = '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
-    final t = '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    final d =
+        '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+    final t =
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     return '$d • $t';
   }
 
@@ -1098,7 +1158,7 @@ class _RequestReadOnlyCard extends StatelessWidget {
         ? (r.userName ?? '').trim()
         : 'Usuario #${r.userId ?? r.id}';
     final code = (r.userCode ?? '').trim();
-    final doc  = (r.documentId ?? '').trim();
+    final doc = (r.documentId ?? '').trim();
     final date = _fmtLongDate(r.createdAt);
     final amount = r.amountLabel; // viene formateado
 
@@ -1768,6 +1828,83 @@ class _PaySelectedSheetState extends State<_PaySelectedSheet> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ⬇⬇⬇ pega aquí, al final del archivo
+class _AuthImage extends StatefulWidget {
+  final String url;
+  final double width;
+  final double height;
+  const _AuthImage({required this.url, this.width = 220, this.height = 160});
+
+  @override
+  State<_AuthImage> createState() => _AuthImageState();
+}
+
+class _AuthImageState extends State<_AuthImage> {
+  Uint8List? _bytes;
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final token = await SessionManager().getToken();
+      debugPrint('[AuthImage] GET ${widget.url} with token=${token != null}');
+      final res = await http.get(
+        Uri.parse(widget.url),
+        headers: token != null ? {'Authorization': 'Bearer $token'} : {},
+      );
+      debugPrint(
+        '[AuthImage] status=${res.statusCode}, bytes=${res.bodyBytes.length}',
+      );
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        setState(() => _bytes = res.bodyBytes);
+      } else {
+        setState(() => _error = true);
+      }
+    } catch (_) {
+      setState(() => _error = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error) {
+      return Container(
+        width: widget.width,
+        height: widget.height,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.black12,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Icon(Icons.broken_image_outlined),
+      );
+    }
+    if (_bytes == null) {
+      return Container(
+        width: widget.width,
+        height: widget.height,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.black12,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+    return Image.memory(
+      _bytes!,
+      width: widget.width,
+      height: widget.height,
+      fit: BoxFit.cover,
     );
   }
 }

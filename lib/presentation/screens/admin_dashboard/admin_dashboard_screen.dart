@@ -10,6 +10,9 @@ import 'widgets/users_bottom_sheet.dart';
 import 'widgets/games_bottom_sheet.dart'; // 👈 NUEVO: import del sheet de Juegos
 import 'widgets/players_bottom_sheet.dart';
 import 'widgets/referrals_bottom_sheet.dart';
+import 'package:base_app/presentation/screens/admin_dashboard/logic/referrals_controller.dart';
+import 'package:base_app/data/api/admin_referrals_api.dart';
+import 'package:base_app/data/api/api_service.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -19,12 +22,23 @@ class AdminDashboardScreen extends StatefulWidget {
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   late final AdminDashboardController ctrl;
-
+  late final ReferralsController _refCtrl;
   @override
   void initState() {
     super.initState();
     ctrl = AdminDashboardController();
+
+    _refCtrl = ReferralsController(
+      api: AdminReferralsApi(baseUrl: ApiService.defaultBaseUrl),
+    );
+    _refCtrl.addListener(() {
+      if (mounted) setState(() {});
+    });
+
     _guardAndLoad();
+
+    // 👇 carga las comisiones pendientes (para KPI de Referidos)
+    _refCtrl.loadCommissions(status: 'requested');
   }
 
   Future<void> _guardAndLoad() async {
@@ -254,9 +268,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
             ),
           ),
+
           SafeArea(
             child: AnimatedBuilder(
               animation: ctrl,
+
               builder: (_, __) {
                 if (ctrl.loading) {
                   return const Center(child: CircularProgressIndicator());
@@ -267,9 +283,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 if (ctrl.kpis == null) {
                   return const Center(child: Text('Sin datos'));
                 }
+                final mergedKpis = {
+                  ...?ctrl.kpis,
+                  'referrals': _refCtrl
+                      .pendingCommissionsCount, // total de la pestaña Comisiones
+                };
 
                 return RefreshIndicator(
-                  onRefresh: () async => ctrl.load(),
+                  onRefresh: () async {
+                    await Future.wait([
+                      ctrl.load(),
+                      _refCtrl.loadCommissions(status: 'requested'),
+                    ]);
+                  },
+
                   child: SingleChildScrollView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.all(16),
@@ -277,12 +304,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         KpiGrid(
-                          kpis: ctrl.kpis!,
+                          kpis: mergedKpis,
                           onUsersTap: _openUsersSheet,
                           onGamesTap: _openGamesSheet,
                           onPlayersTap: _openPlayersSheet,
                           onReferralsTap: _openReferralsSheet,
                         ),
+
                         const SizedBox(height: 16),
                         LoansByMonthChart(data: ctrl.loansByMonth),
                         const SizedBox(height: 32),
@@ -317,6 +345,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
     // Si quieres, refresca KPIs al cerrar:
     await ctrl.load();
+    await _refCtrl.loadCommissions(status: 'requested');
     if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _refCtrl.dispose();
+    super.dispose();
   }
 }

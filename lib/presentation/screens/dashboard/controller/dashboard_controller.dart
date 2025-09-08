@@ -214,7 +214,13 @@ class DashboardController extends ChangeNotifier {
     }
 
     // 👇 NUEVO: sincroniza PRO de la sesión (persistido por tu backend tras validar compra)
-    _isPremium = await _session.getIsPremium() == true;
+    final fromSession = await _session.getIsPremium() == true;
+    // Solo promociona a PRO si la sesión lo dice; no lo bajes aquí.
+    if (fromSession) {
+      _isPremium = true;
+    }
+    // _isPremium se seguirá actualizando por applyPremiumFromStore()
+
     _setSessionReady(true);
     notifyListeners();
   }
@@ -457,6 +463,7 @@ class DashboardController extends ChangeNotifier {
 
   // ======= RESERVAR/CONFIRMAR =======
   Future<ReserveOutcome> add() async {
+    debugPrint('[ADD] isPremium=$_isPremium, gameId=$_gameId');
     if (_authToken == null || _authToken!.isEmpty) {
       return const ReserveOutcome(
         ok: false,
@@ -477,8 +484,8 @@ class DashboardController extends ChangeNotifier {
       return const ReserveOutcome(
         ok: false,
         code: 'PREVIEW_ONLY',
-        message: 'Necesitas PRO para reservar.',
-        status: 403,
+        message: 'Primero presiona JUGAR para generar una selección.',
+        status: 400,
       );
     }
 

@@ -106,6 +106,8 @@ class ReferralsController extends ChangeNotifier {
   }
 
   // ===== Comisiones (solicitudes) =====
+
+  String get pendingCommissionsLabel => pendingCommissionsCount.toString();
   bool _loadingCommissions = false;
   String? _commissionsError;
   List<CommissionRequest> _commissions = [];
@@ -113,6 +115,7 @@ class ReferralsController extends ChangeNotifier {
   bool get loadingCommissions => _loadingCommissions;
   String? get commissionsError => _commissionsError;
   List<CommissionRequest> get commissions => _commissions;
+  int get pendingCommissionsCount => _commissions.length;
 
   Future<void> loadCommissions({String? status}) async {
     _loadingCommissions = true;
@@ -329,31 +332,34 @@ class ReferralsController extends ChangeNotifier {
       notifyListeners();
     }
   }
-  Future<PayoutBatchDetails?> loadPayoutBatchDetails(int batchId, {bool force = false}) async {
-  if (!force && _currentBatchDetails?.batch.id == batchId) {
+
+  Future<PayoutBatchDetails?> loadPayoutBatchDetails(
+    int batchId, {
+    bool force = false,
+  }) async {
+    if (!force && _currentBatchDetails?.batch.id == batchId) {
+      _batchDetailsError = null;
+      _loadingBatchDetails = false;
+      notifyListeners();
+      return _currentBatchDetails;
+    }
+
+    _loadingBatchDetails = true;
     _batchDetailsError = null;
-    _loadingBatchDetails = false;
+    _currentBatchDetails = null;
     notifyListeners();
-    return _currentBatchDetails;
+
+    try {
+      final details = await api.fetchPayoutBatchDetails(batchId);
+      _currentBatchDetails = details;
+      return details;
+    } catch (e, st) {
+      debugPrint('loadPayoutBatchDetails ERROR: $e\n$st');
+      _batchDetailsError = e.toString();
+      return null;
+    } finally {
+      _loadingBatchDetails = false;
+      notifyListeners();
+    }
   }
-
-  _loadingBatchDetails = true;
-  _batchDetailsError = null;
-  _currentBatchDetails = null;
-  notifyListeners();
-
-  try {
-    final details = await api.fetchPayoutBatchDetails(batchId);
-    _currentBatchDetails = details;
-    return details;
-  } catch (e, st) {
-    debugPrint('loadPayoutBatchDetails ERROR: $e\n$st');
-    _batchDetailsError = e.toString();
-    return null;
-  } finally {
-    _loadingBatchDetails = false;
-    notifyListeners();
-  }
-}
-
 }

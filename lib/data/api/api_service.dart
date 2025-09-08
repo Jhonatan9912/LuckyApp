@@ -15,8 +15,8 @@ class ApiException implements Exception {
       final decoded = json.decode(body);
       if (decoded is Map<String, dynamic>) {
         return (decoded['error']?.toString() ??
-                decoded['message']?.toString() ??
-                body);
+            decoded['message']?.toString() ??
+            body);
       }
       return body;
     } catch (_) {
@@ -39,6 +39,14 @@ class ApiService {
     final token = await SessionManager().getToken();
     return {
       'Content-Type': 'application/json',
+      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+    };
+  }
+
+  /// Headers SOLO con Authorization (útil para Image.network, descargas, etc.)
+  static Future<Map<String, String>> authHeaders() async {
+    final token = await SessionManager().getToken();
+    return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
     };
   }
