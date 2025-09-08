@@ -262,12 +262,46 @@ class _UserInfoCard extends StatelessWidget {
   }
 }
 
+String _esAccountType(String? v) {
+  final s = (v ?? '').trim().toLowerCase();
+  switch (s) {
+    case 'bank':
+      return 'Banco';
+    case 'nequi':
+      return 'Nequi';
+    case 'daviplata':
+      return 'Daviplata';
+    default:
+      return v ?? '';
+  }
+}
+
+String _esAccountKind(String? v) {
+  final s = (v ?? '').trim().toLowerCase();
+  switch (s) {
+    case 'savings':
+    case 'saving':
+      return 'Ahorros';
+    case 'checking':
+    case 'current':
+      return 'Corriente';
+    default:
+      return v ?? '';
+  }
+}
+
 class _BankInfoCard extends StatelessWidget {
   const _BankInfoCard({required this.data});
   final AdminUserDetail data;
 
   @override
   Widget build(BuildContext context) {
+    // Traducciones a ES con fallback seguro
+    final tipoES = _esAccountType(data.accountType);
+    final proveedor = data.providerName.isEmpty ? '-' : data.providerName;
+    final tipoCuentaES = _esAccountKind(data.bankKind);
+    final numero = data.accountNumber.isEmpty ? '-' : data.accountNumber;
+
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       child: Padding(
@@ -289,20 +323,14 @@ class _BankInfoCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            _Kvp(
-              label: 'Tipo',
-              value: data.accountType.isEmpty ? '-' : data.accountType,
-            ),
-            _Kvp(
-              label: 'Proveedor',
-              value: data.providerName.isEmpty ? '-' : data.providerName,
-            ),
-            if ((data.bankKind ?? '').isNotEmpty)
-              _Kvp(label: 'Tipo de cuenta', value: data.bankKind!),
-            _Kvp(
-              label: 'Número',
-              value: data.accountNumber.isEmpty ? '-' : data.accountNumber,
-            ),
+
+            _Kvp(label: 'Tipo', value: tipoES.isEmpty ? '-' : tipoES),
+            _Kvp(label: 'Proveedor', value: proveedor),
+
+            if (tipoCuentaES.isNotEmpty)
+              _Kvp(label: 'Tipo de cuenta', value: tipoCuentaES),
+
+            _Kvp(label: 'Número', value: numero),
           ],
         ),
       ),

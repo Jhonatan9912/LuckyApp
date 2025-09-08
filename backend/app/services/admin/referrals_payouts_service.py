@@ -8,7 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from app.db.database import db
 from flask import current_app
 from datetime import timezone
-
+from pathlib import Path
+from werkzeug.utils import secure_filename
 
 ISO_KEYS = ("requested_at", "updated_at", "processed_at", "created_at")
 
@@ -33,28 +34,44 @@ def _isoify_record(d: Dict[str, Any], keys=ISO_KEYS) -> Dict[str, Any]:
 # =========================================================
 _MICROS = 1_000_000
 
-def _upload_dir() -> str:
-    # 1) permite override por config/env
-    base = (
-        current_app.config.get("PAYMENT_UPLOAD_DIR")
-        or os.environ.get("PAYMENT_UPLOAD_DIR")
-    )
-    # 2) por defecto, carpeta dentro de la app
-    if not base:
-        base = os.path.join(current_app.root_path, "storage", "payment_files")
-    os.makedirs(base, exist_ok=True)
-    return base
+def _upload_dir_pair() -> tuple[Path, str]:
+    """
+    Devuelve (base_abs, base_rel):
+    - base_abs: ruta ABSOLUTA bajo current_app.root_path (donde se guarda el archivo)
+    - base_rel: ruta RELATIVA que se guarda en BD (ej: 'storage/payment_files')
+    """
+    rel = current_app.config.get("PAYMENT_UPLOAD_DIR") or os.environ.get("PAYMENT_UPLOAD_DIR")
+    if not rel:
+        rel = os.path.join("storage", "payment_files")  # default relativo
 
-def _save_upload(file: FileStorage) -> Tuple[str, int, str]:
-    base_dir = _upload_dir()  # 👈 centraliza aquí
-    ext = os.path.splitext(file.filename or "")[1]
-    fname = f"{uuid.uuid4().hex}{ext or ''}"
-    storage_path = os.path.join(base_dir, fname)
+    # normaliza a estilo POSIX para BD
+    base_rel = rel.replace("\\", "/").strip("/")
 
-    file.save(storage_path)
-    size = os.path.getsize(storage_path)
+    base_abs = Path(current_app.root_path) / base_rel
+    base_abs.mkdir(parents=True, exist_ok=True)
+    return base_abs, base_rel
+
+def _save_upload(file: FileStorage) -> tuple[str, int, str]:
+    """
+    Guarda el archivo en base_abs y devuelve:
+      - storage_path_rel (para BD), p.ej. 'storage/payment_files/<uuid>.jpeg'
+      - size_bytes
+      - mime_type
+    """
+    base_abs, base_rel = _upload_dir_pair()
+
+    safe_name = secure_filename(file.filename or "")
+    ext = Path(safe_name).suffix.lower() or ""
+    fname = f"{uuid.uuid4().hex}{ext}"
+
+    full_path = base_abs / fname
+    file.save(str(full_path))
+
+    size = full_path.stat().st_size
     mime = file.mimetype or "application/octet-stream"
-    return storage_path, size, mime
+
+    storage_path_rel = f"{base_rel}/{fname}"  # ← lo que irá a la BD (relativo)
+    return storage_path_rel, size, mime
 
 # =========================================================
 #  UTILIDADES (maturity)
@@ -84,11 +101,12 @@ def list_commission_requests(
     q: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-    order: str = "requested_at DESC"
+    order: str = "pr.requested_at DESC",
 ) -> Dict[str, Any]:
     """
     Lista solicitudes en payout_requests con filtros básicos.
     Devuelve {"items":[...], "total": int}
+    Incluye account_type/account_kind traducidos al ES y los crudos *_raw.
     """
     where = ["1=1"]
     params: Dict[str, Any] = {}
@@ -102,21 +120,55 @@ def list_commission_requests(
         params["user_id"] = int(user_id)
 
     if q:
-        where.append("(pr.account_number ILIKE :q OR COALESCE(pr.user_note,'') ILIKE :q OR COALESCE(pr.admin_note,'') ILIKE :q)")
+        where.append(
+            "(pr.account_number ILIKE :q "
+            "OR COALESCE(pr.user_note,'') ILIKE :q "
+            "OR COALESCE(pr.admin_note,'') ILIKE :q)"
+        )
         params["q"] = f"%{q}%"
 
     where_sql = " AND ".join(where)
     order_sql = order if order.strip() else "pr.requested_at DESC"
-
 
     sql_items = text(f"""
         SELECT
             pr.id,
             pr.user_id,
             u.name AS user_name,
-            pr.account_type, pr.bank_id, pr.account_kind, pr.account_number,
-            pr.amount_micros, pr.currency_code, pr.status, pr.user_note, pr.admin_note,
-            pr.requested_at, pr.updated_at, pr.processed_at, pr.observations, pr.created_at
+
+            -- valores crudos
+            pr.account_type::text AS account_type_raw,
+            pr.account_kind::text AS account_kind_raw,
+
+            -- etiquetas en español
+            CASE LOWER(COALESCE(pr.account_type::text, ''))
+                WHEN 'bank'      THEN 'Banco'
+                WHEN 'nequi'     THEN 'Nequi'
+                WHEN 'daviplata' THEN 'Daviplata'
+                ELSE COALESCE(pr.account_type::text, '')
+            END AS account_type,
+
+            pr.bank_id,
+
+            CASE LOWER(COALESCE(pr.account_kind::text, ''))
+                WHEN 'savings'  THEN 'Ahorros'
+                WHEN 'saving'   THEN 'Ahorros'
+                WHEN 'checking' THEN 'Corriente'
+                WHEN 'current'  THEN 'Corriente'
+                ELSE COALESCE(pr.account_kind::text, '')
+            END AS account_kind,
+
+            pr.account_number,
+            pr.amount_micros,
+            pr.currency_code,
+            pr.status,
+            pr.user_note,
+            pr.admin_note,
+            pr.requested_at,
+            pr.updated_at,
+            pr.processed_at,
+            pr.observations,
+            pr.created_at
         FROM public.payout_requests pr
         LEFT JOIN public.users u ON u.id = pr.user_id
         WHERE {where_sql}
@@ -130,13 +182,16 @@ def list_commission_requests(
     rows = db.session.execute(sql_items, params).mappings().all()
     items = [_isoify_record(dict(r)) for r in rows]
 
-    sql_count = text(f"SELECT COUNT(*) AS c FROM public.payout_requests pr WHERE {where_sql}")
-
-    total = db.session.execute(sql_count, params).scalar() or 0
+    sql_count = text(f"""
+        SELECT COUNT(*) AS c
+        FROM public.payout_requests pr
+        WHERE {where_sql}
+    """)
+    total = int(db.session.execute(sql_count, params).scalar() or 0)
 
     return {
         "items": items,
-        "total": int(total),
+        "total": total,
         "limit": int(limit),
         "offset": int(offset),
     }
@@ -257,16 +312,15 @@ def create_payment_batch(
             for f in files:
                 if not f or (f.filename or "").strip() == "":
                     continue
-                path, size, mime = _save_upload(f)
+                path, size, mime = _save_upload(f)  # AHORA 'path' ES RELATIVO
                 db.session.execute(ins_file, {
                     "bid": batch_id,
-                    "fname": os.path.basename(f.filename or path),
+                    "fname": os.path.basename(f.filename or ""),  # nombre original
                     "mime": mime,
                     "size": int(size),
-                    "path": path,
+                    "path": path,  # ← guarda 'storage/payment_files/<uuid>.<ext>'
                 })
-
-        # 5) Marcar solicitudes como pagadas
+               # 5) Marcar solicitudes como pagadas
         upd = text("""
             UPDATE public.payout_requests
             SET status = 'paid',
@@ -275,7 +329,33 @@ def create_payment_batch(
             WHERE id = ANY(:ids)
         """)
         db.session.execute(upd, {"ids": request_ids})
-                # 6.1) Obtener archivos del batch para el payload (evidencias)
+
+        # 5.1) Marcar comisiones involucradas como 'paid'
+        # 5.1.a) Si las comisiones apuntan directo al request
+        db.session.execute(text("""
+            UPDATE referral_commissions
+            SET status = 'paid'
+            WHERE payout_request_id = ANY(:ids)
+        """), {"ids": request_ids})
+
+        # 5.1.b) Si existe tabla intermedia payout_request_items, actualizar por join
+        pri_exists = db.session.execute(text("""
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema='public' AND table_name='payout_request_items'
+            LIMIT 1
+        """)).scalar() is not None
+
+        if pri_exists:
+            db.session.execute(text("""
+                UPDATE referral_commissions rc
+                SET status = 'paid'
+                FROM payout_request_items pri
+                WHERE pri.payout_request_id = ANY(:ids)
+                  AND rc.id = COALESCE(pri.commission_id, pri.referral_commission_id)
+            """), {"ids": request_ids})
+
+        # 6.1) Obtener archivos del batch para el payload (evidencias)
         files_meta = db.session.execute(text("""
             SELECT id, file_name, storage_path
             FROM public.payout_payment_files
@@ -284,7 +364,6 @@ def create_payment_batch(
         """), {"bid": batch_id}).mappings().all()
 
         # 6.2) Traer datos bancarios / cuenta de cada request para enmascarar
-        #      (ajusta columnas a tu esquema real)
         req_info = db.session.execute(text("""
             SELECT id, user_id, account_number, amount_micros, currency_code
             FROM public.payout_requests
@@ -299,7 +378,7 @@ def create_payment_batch(
                 return "****"
             return "****" + s[-4:]
 
-        # 6.3) Por cada solicitud, enviar una notificación al dueño
+        # 6.3) Notificar a cada usuario
         notify_sql = text("""
             INSERT INTO public.notifications
                 (user_id, title, body, data, is_read, created_at)

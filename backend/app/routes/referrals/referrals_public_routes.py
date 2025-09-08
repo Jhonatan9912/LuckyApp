@@ -38,8 +38,20 @@ def get_payout_evidence(batch_id: int, file_id: int):
     if not row:
         abort(404)
 
-    path = row["storage_path"]
-    try:
-        return send_file(path, as_attachment=True)
-    except Exception:
-        abort(404)
+        path = row["storage_path"]
+
+        # Si es relativo, lo hacemos absoluto respecto a root_path
+        if not os.path.isabs(path):
+            path = os.path.join(current_app.root_path, path)
+        path = os.path.normpath(path)
+
+        p = Path(path)
+        if not p.exists():
+            # Fallback por si la extensión cambió (jpg ↔ jpeg)
+            cand = list(p.parent.glob(p.stem + ".*"))
+            if cand:
+                p = cand[0]
+            else:
+                abort(404, description="Archivo de evidencia no encontrado")
+
+        return send_file(str(p), as_attachment=True)
