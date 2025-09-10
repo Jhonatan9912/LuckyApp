@@ -1,3 +1,4 @@
+// lib/presentation/screens/login/login_screen.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'widgets/phone_input.dart';
@@ -9,8 +10,7 @@ import 'package:base_app/core/services/secure_storage.dart';
 import 'package:base_app/core/ui/dialogs.dart';
 import 'package:base_app/data/session/session_manager.dart';
 import 'dart:async';
-import 'package:base_app/core/config/env.dart';
-// 👇 Provider para refrescar estado premium
+// import 'package:base_app/core/config/env.dart'; // ❌ ya no se usa aquí
 import 'package:provider/provider.dart';
 import 'package:base_app/presentation/providers/subscription_provider.dart';
 
@@ -27,8 +27,9 @@ class _LoginScreenState extends State<LoginScreen> {
   bool obscureText = true;
   bool _loading = false;
 
-  final _authApi = AuthApi(baseUrl: Env.apiBaseUrl);
-  final _session = SessionManager();
+  // ❌ Eliminado: no crear AuthApi ni SessionManager locales
+  // final _authApi = AuthApi(baseUrl: Env.apiBaseUrl);
+  // final _session = SessionManager();
 
   @override
   void dispose() {
@@ -39,6 +40,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // ✅ Usar instancias globales desde Provider (con ApiClient y auto-refresh)
+    final authApi = context.read<AuthApi>();
+    final session = context.read<SessionManager>();
+
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -91,13 +96,9 @@ class _LoginScreenState extends State<LoginScreen> {
                         final phone = phoneController.text.trim();
                         final pass = passwordController.text;
 
-                        // Capturas ANTES de awaits
                         final ctx = context;
                         final subs = ctx.read<SubscriptionProvider>();
-                        final navigator = Navigator.of(
-                          ctx,
-                          rootNavigator: true,
-                        );
+                        final navigator = Navigator.of(ctx, rootNavigator: true);
 
                         FocusScope.of(ctx).unfocus();
 
@@ -114,17 +115,17 @@ class _LoginScreenState extends State<LoginScreen> {
                         setState(() => _loading = true);
                         try {
                           debugPrint('[LOGIN] 1. llamando API loginWithPhone...');
-                          final json = await _authApi
+                          final json = await authApi
                               .loginWithPhone(phone: phone, password: pass)
                               .timeout(const Duration(seconds: 12));
 
                           // Access token
                           var token = (json['access_token'] ??
-                                      json['token'] ??
-                                      json['jwt'] ??
-                                      '')
-                                  .toString()
-                                  .trim();
+                                       json['token'] ??
+                                       json['jwt'] ??
+                                       '')
+                              .toString()
+                              .trim();
                           if (token.toLowerCase().startsWith('bearer ')) {
                             token = token.substring(7).trim();
                           }
@@ -132,9 +133,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             throw AuthException('Token no recibido del servidor');
                           }
 
-                          // Refresh token (nuevo)
+                          // Refresh token (opcional)
                           final refresh = (json['refresh_token'] ??
-                                  json['refreshToken'])
+                                           json['refreshToken'])
                               ?.toString()
                               .trim();
 
@@ -153,28 +154,25 @@ class _LoginScreenState extends State<LoginScreen> {
                             throw AuthException('No se pudo obtener el ID de usuario');
                           }
 
-                          // Guardar sesión
+                          // Guardar sesión (misma “fuente de verdad” que usa ApiClient)
                           await SecureStorage.saveToken(token).catchError((e) {
                             debugPrint('[LOGIN] SecureStorage error: $e');
                           });
-                          await _session.saveSession(
+                          await session.saveSession(
                             token: token,
                             refreshToken:
-                                (refresh != null && refresh.isNotEmpty)
-                                    ? refresh
-                                    : null,
+                                (refresh != null && refresh.isNotEmpty) ? refresh : null,
                             userId: userId,
                             roleId: roleId,
                           );
 
                           // Verifica persistencia
-                          final saved = await _session.getToken();
+                          final saved = await session.getToken();
                           if (saved == null || saved.isEmpty) {
-                            throw AuthException(
-                                'No se pudo persistir la sesión local');
+                            throw AuthException('No se pudo persistir la sesión local');
                           }
 
-                          // 🔁 Refresca suscripción
+                          // 🔁 Refresca estado de suscripciones (no afecta sesión)
                           try {
                             await subs.refresh(force: true);
                           } catch (e) {
@@ -195,10 +193,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           }());
 
                           // Navegación inmediata
-                          final target =
-                              (roleId == 1) ? '/admin' : '/dashboard';
-                          navigator.pushNamedAndRemoveUntil(
-                              target, (_) => false);
+                          // ⚠️ Si tu admin es roleId == 2, cámbialo aquí:
+                          final target = (roleId == 1) ? '/admin' : '/dashboard';
+                          navigator.pushNamedAndRemoveUntil(target, (_) => false);
                         } on AuthException catch (e) {
                           if (!ctx.mounted) return;
                           await AppDialogs.error(
