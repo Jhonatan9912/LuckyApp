@@ -29,7 +29,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     setState(() {}); // refresca priceString si apareció tras cargar catálogo
   }
 
-  Future<void> _purchaseMonthly() async {
+  Future<void> _purchaseProduct(String productId) async {
     final subs = context.read<SubscriptionProvider>();
     final nav = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
@@ -40,7 +40,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     });
 
     try {
-      final ok = await subs.buyPro(); // el estado real llega por purchaseStream
+      final ok = await subs.buyPro(productId: productId);
 
       if (subs.isPremium) {
         messenger.showSnackBar(
@@ -59,9 +59,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
         _message = 'Error al comprar: $e';
       });
     } finally {
-      if (mounted) {
-        setState(() => _purchasing = false);
-      }
+      if (mounted) setState(() => _purchasing = false);
     }
   }
 
@@ -71,7 +69,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
     final messenger = ScaffoldMessenger.of(context);
 
     try {
-      await subs.restore(); // disparará restored → sync → refresh en el provider
+      await subs
+          .restore(); // disparará restored → sync → refresh en el provider
       if (subs.isPremium) {
         messenger.showSnackBar(
           const SnackBar(content: Text('PRO restaurado correctamente')),
@@ -96,7 +95,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
     );
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       // no pasa nada si falla; solo mensaje opcional
-      setState(() => _message = 'No se pudo abrir la gestión de suscripciones.');
+      setState(
+        () => _message = 'No se pudo abrir la gestión de suscripciones.',
+      );
     }
   }
 
@@ -105,17 +106,13 @@ class _PaywallScreenState extends State<PaywallScreen> {
     final subs = context.watch<SubscriptionProvider>();
     final isPro = subs.isPremium;
     final loading = subs.loading || subs.activating;
-    final price = subs.priceString;
-    final productLoaded = subs.product != null;
+    final products = subs.products;
+    final hasProducts = products.isNotEmpty;
 
     final title = isPro ? 'Tienes PRO activo' : 'Mejora a PRO';
     final subtitle = isPro
         ? 'Gracias por tu suscripción.'
-        : (price != null
-            ? 'Accede a PRO'
-            : (productLoaded
-                ? 'Selecciona tu plan'
-                : 'Cargando planes…'));
+        : (hasProducts ? 'Selecciona tu plan' : 'Cargando planes…');
 
     // Auto-cerrar si ya se activó PRO mientras estamos en esta pantalla
     if (isPro) {
@@ -141,26 +138,33 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   const SizedBox(height: 24),
 
                   if (!isPro) ...[
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed:
-                            _purchasing || !productLoaded ? null : _purchaseMonthly,
-                        child: Text(
-                          _purchasing
-                              ? 'Procesando...'
-                              : 'Comprar suscripción PRO'
+                    // Un botón por cada producto disponible (20k y 60k, etc.)
+                    for (final p in products) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: _purchasing
+                              ? null
+                              : () => _purchaseProduct(p.id),
+                          child: Text(
+                            _purchasing
+                                ? 'Procesando...'
+                                : 'Suscribirme a ${p.title} — ${p.price}',
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
+                      const SizedBox(height: 8),
+                    ],
+
                     // Gestionar desde Play (útil para cancelar en pruebas)
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
                         onPressed: _openManage,
                         icon: const Icon(Icons.manage_accounts),
-                        label: const Text('Gestionar suscripción en Google Play'),
+                        label: const Text(
+                          'Gestionar suscripción en Google Play',
+                        ),
                       ),
                     ),
                   ],
