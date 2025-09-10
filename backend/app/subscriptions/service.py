@@ -9,7 +9,7 @@ import os
 from googleapiclient.errors import HttpError
 from sqlalchemy import or_
 from datetime import datetime, timezone, timedelta
-from app.services.referrals.payouts_service import register_referral_commission
+from app.services.referrals.referral_service import register_referral_commission
 import json
 from flask import current_app
 from sqlalchemy import text

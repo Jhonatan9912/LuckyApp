@@ -186,11 +186,33 @@ def link_referral_on_signup(referral_code: str | None, new_user_id: int) -> None
 #  COMISIONES (LEDGER)
 # =======================
 
-def _get_commission_percent() -> float:
+def _get_commission_percent(product_id: str | None) -> float:
     """
-    Lee el % desde commission_settings (key='referral_cut_percent').
-    Devuelve flotante en [0..100].
+    Retorna el % de comisión para el product_id:
+      1) Busca en referral_commission_rules (si hay regla activa).
+      2) Si no hay, usa commission_settings.referral_cut_percent (fallback).
     """
+    # 1) Regla por producto (si hay)
+    if product_id:
+        row_rule = db.session.execute(
+            text("""
+                SELECT percent
+                  FROM referral_commission_rules
+                 WHERE product_id = :pid
+                   AND active = TRUE
+                   AND (effective_to IS NULL OR effective_to > NOW())
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+            """),
+            {"pid": product_id}
+        ).first()
+        if row_rule and row_rule[0] is not None:
+            try:
+                return float(str(row_rule[0]).strip())
+            except Exception:
+                pass  # cae al fallback
+
+    # 2) Fallback global
     row = db.session.execute(
         text("""
             SELECT value
@@ -243,7 +265,7 @@ def register_referral_commission(
     if not referrer_id:
         return False  # no hay a quién pagar
 
-    percent = _get_commission_percent()  # p. ej. 40
+    percent = _get_commission_percent(product_id)  # 40% para cm_suscripcion, 20% para cml_suscripcion, etc.
     commission_micros = int(round(amount_micros * (percent / 100.0)))
     when = (event_time or datetime.now(timezone.utc)).isoformat()
 
