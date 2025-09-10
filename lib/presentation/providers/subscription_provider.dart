@@ -55,8 +55,23 @@ class SubscriptionProvider extends ChangeNotifier {
   StreamSubscription<List<PurchaseDetails>>? _purchaseSub;
 
   // ⚠️ AJUSTA ESTO al productId EXACTO en Play Console (NO base plan)
-  static const String _gpProductId = 'cm_suscripcion';
+  static const Set<String> _gpProductIds = {
+    'cm_suscripcion',
+    'cml_suscripcion',
+  };
   ProductDetails? _product;
+  // NUEVO: lista completa de productos consultados
+  List<ProductDetails> _products = [];
+
+  // Getters de compat + múltiples
+  List<ProductDetails> get products => _products;
+  ProductDetails? productById(String id) {
+    final i = _products.indexWhere((p) => p.id == id);
+    if (i >= 0) return _products[i];
+    return _product ?? (_products.isNotEmpty ? _products.first : null);
+  }
+
+  String? priceStringFor(String id) => productById(id)?.price;
 
   // Evita refresh() superpuestos (causa clásica de parpadeo)
   bool _refreshing = false;
@@ -196,7 +211,7 @@ class SubscriptionProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> buyPro() async {
+  Future<bool> buyPro({String? productId}) async {
     try {
       if (!_billingConfigured) {
         await configureBilling();
@@ -207,21 +222,28 @@ class SubscriptionProvider extends ChangeNotifier {
         }
       }
 
-      if (_product == null) {
+      if (_products.isEmpty) {
         await _queryProduct();
-        if (_product == null) {
+        if (_products.isEmpty) {
           throw Exception(
-            'Producto $_gpProductId no encontrado en Play Console.',
+            'Productos no encontrados en Play Console: $_gpProductIds',
           );
         }
       }
 
-      final product = _product!;
-      final params = PurchaseParam(productDetails: product); // API genérica
+      // Si no te pasan productId, usa el primero (compatibilidad)
+      final ProductDetails? product =
+          (productId != null ? productById(productId) : _product) ??
+          (_products.isNotEmpty ? _products.first : null);
+
+      if (product == null) {
+        throw Exception('Producto no disponible.');
+      }
+
+      final params = PurchaseParam(productDetails: product);
       await _iap.buyNonConsumable(purchaseParam: params);
 
-      // El resultado real llega por _onPurchaseUpdates
-      return true;
+      return true; // el resultado final llega por _onPurchaseUpdates
     } catch (e) {
       dev.log('buyPro() error: $e');
       return false;
@@ -270,19 +292,23 @@ class SubscriptionProvider extends ChangeNotifier {
 
   Future<void> _queryProduct() async {
     try {
-      final resp = await _iap.queryProductDetails({_gpProductId});
+      final resp = await _iap.queryProductDetails(_gpProductIds);
       if (resp.error != null) {
         dev.log('queryProduct error: ${resp.error}');
       }
-      if (resp.productDetails.isEmpty) {
+      _products = resp.productDetails;
+
+      if (_products.isEmpty) {
         _product = null;
-        dev.log('queryProduct: no se encontró $_gpProductId');
+        dev.log('queryProduct: no se encontraron $_gpProductIds');
       } else {
-        _product = resp.productDetails.first;
-        dev.log('queryProduct OK: ${_product!.id}');
+        // Mantén compatibilidad: el “producto por defecto” será el primero
+        _product = _products.first;
+        dev.log('queryProduct OK: ${_products.map((p) => p.id).toList()}');
       }
     } catch (e) {
       dev.log('queryProduct exception: $e');
+      _products = [];
       _product = null;
     }
   }
