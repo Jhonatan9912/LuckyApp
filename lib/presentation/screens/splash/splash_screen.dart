@@ -1,4 +1,6 @@
 // lib/presentation/screens/splash/splash_screen.dart
+import 'dart:async' show unawaited; // <- para usar unawaited
+
 import 'package:flutter/material.dart';
 import 'package:base_app/data/session/session_manager.dart';
 import 'package:base_app/core/services/secure_storage.dart';
@@ -15,7 +17,6 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-
   @override
   void initState() {
     super.initState();
@@ -23,11 +24,13 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _bootstrap() async {
-    // ✅ Instancias globales desde Provider (usan ApiClient con auto-refresh)
+    // Capturamos todo lo que usa context ANTES de los awaits
+    final navigator = Navigator.of(context, rootNavigator: true);
     final authApi = context.read<AuthApi>();
     final session = context.read<SessionManager>();
     final subs = context.read<SubscriptionProvider>();
 
+    // Pequeña pausa estética
     await Future.delayed(const Duration(milliseconds: 400));
 
     // 1) Token (con migración desde SecureStorage si hace falta)
@@ -40,37 +43,33 @@ class _SplashScreenState extends State<SplashScreen> {
       }
     }
 
-    if (!mounted) return;
-
+    // Si no hay token -> login
     if (token == null || token.isEmpty) {
-      Navigator.pushReplacementNamed(context, '/login');
+      navigator.pushReplacementNamed('/login');
       return;
     }
 
-    // 2) Refrescar perfil para tomar role_id actual (pasa por ApiClient → auto-refresh)
+    // 2) Validar perfil y refrescar suscripción SIN bloquear la UI si falla
     int? roleId;
     try {
-      final me = await authApi.me(token); // { ok:true, id, role_id, ... }
+      final me = await authApi.me(token).timeout(const Duration(seconds: 12));
       roleId = (me['role_id'] as num?)?.toInt();
-
       final userId = (me['id'] as num?)?.toInt();
       await session.saveSession(roleId: roleId, userId: userId);
 
-      // Refrescar estado de suscripciones (independiente de auth)
-      await subs.refresh(force: true);
+      // refresco de suscripciones sin romper el flujo si falla
+      unawaited(subs.refresh(force: true));
     } catch (_) {
+      // limpiamos y vamos a login
       await SecureStorage.clear();
       await session.clear();
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/login');
+      navigator.pushReplacementNamed('/login');
       return;
     }
 
-    if (!mounted) return;
-
-    // 3) Ruta por rol (ajusta si tu admin es 2)
+    // 3) Ruta por rol
     final target = (roleId == 1) ? '/admin' : '/dashboard';
-    Navigator.pushReplacementNamed(context, target);
+    navigator.pushReplacementNamed(target);
   }
 
   @override

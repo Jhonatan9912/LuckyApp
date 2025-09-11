@@ -17,11 +17,8 @@ class ApiClient {
   final SessionManager session;
   final http.Client _client;
 
-  ApiClient({
-    required this.baseUrl,
-    required this.session,
-    http.Client? client,
-  }) : _client = client ?? http.Client();
+  ApiClient({required this.baseUrl, required this.session, http.Client? client})
+    : _client = client ?? http.Client();
 
   /// ---- Métodos convenientes (JSON) ----
 
@@ -165,7 +162,7 @@ class ApiClient {
         appLogger.d({
           'event': 'api_retry_after_refresh',
           'm': method,
-          'url': uri.toString()
+          'url': uri.toString(),
         });
       }
       res = await run().timeout(const Duration(seconds: 20));
@@ -178,7 +175,7 @@ class ApiClient {
   }
 
   /// Llama al backend /api/auth/refresh enviando el refresh token como Bearer.
-  /// Si obtiene access_token, lo guarda en SessionManager.
+  /// Si obtiene access_token (y opcionalmente refresh_token), los guarda en SessionManager.
   Future<bool> _tryRefreshAccessToken() async {
     try {
       final refresh = await session.getRefreshToken();
@@ -205,7 +202,7 @@ class ApiClient {
         appLogger.d({
           'event': 'refresh_res',
           'status': res.statusCode,
-          'body': res.body
+          'body': res.body,
         });
       }
 
@@ -220,24 +217,38 @@ class ApiClient {
         body = {};
       }
 
-      final newAccess = (body['access_token'] ??
-              body['token'] ??
-              body['jwt'] ??
-              body['accessToken'])
+      // Acepta diferentes claves del backend
+      final newAccess =
+          (body['access_token'] ??
+                  body['token'] ??
+                  body['jwt'] ??
+                  body['accessToken'])
+              ?.toString();
+
+      // 👇 NUEVO: si el backend rota refresh, lo tomamos también
+      final newRefresh = (body['refresh_token'] ?? body['refreshToken'])
           ?.toString();
 
       if (newAccess == null || newAccess.isEmpty) {
         return false;
       }
 
+      // Guarda el access
       await session.updateAccessToken(newAccess);
+
+      // 👇 NUEVO: si vino refresh nuevo, también lo persistimos
+      if (newRefresh != null && newRefresh.isNotEmpty) {
+        // saveSession permite actualizar solo refreshToken
+        await session.saveSession(refreshToken: newRefresh);
+      }
+
       return true;
     } catch (e, st) {
       if (kDebugMode) {
         appLogger.e({
           'event': 'refresh_error',
           'err': e.toString(),
-          'stack': st.toString()
+          'stack': st.toString(),
         });
       }
       return false;
@@ -250,7 +261,9 @@ class ApiClient {
       return Uri.parse(path);
     }
     // Asegura una sola barra
-    final base = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+    final base = baseUrl.endsWith('/')
+        ? baseUrl.substring(0, baseUrl.length - 1)
+        : baseUrl;
     final p = path.startsWith('/') ? path : '/$path';
     return Uri.parse('$base$p');
   }

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:base_app/presentation/providers/notifications_provider.dart';
 
 class AppTopbarActions extends StatelessWidget {
   final Future<void> Function() onLogout;
@@ -23,11 +25,24 @@ class AppTopbarActions extends StatelessWidget {
       ),
     );
 
-    if (ok == true) {
-      await onLogout();
-      if (context.mounted) {
-        Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
-      }
+    if (ok != true) return;
+
+    // ✅ Después del await, antes de usar context:
+    if (!context.mounted) return;
+
+    // Captura lo necesario AHORA que comprobamos mounted
+    final notifs = context.read<NotificationsProvider>();
+    final navigator = Navigator.of(context, rootNavigator: true);
+
+    // 🔔 Eliminar token remoto
+    await notifs.onUserLoggedOut();
+
+    // 🗑️ Ejecutar limpieza de sesión (tu callback)
+    await onLogout();
+
+    // 🚪 Navega usando el navigator capturado
+    if (navigator.mounted) {
+      navigator.pushNamedAndRemoveUntil('/login', (_) => false);
     }
   }
 

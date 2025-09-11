@@ -7,6 +7,7 @@ from app.subscriptions.models import UserSubscription
 from sqlalchemy import or_
 from datetime import datetime, timezone
 import random
+from app.services.notify.push_sender import send_bulk_push
 
 def _is_user_pro(user_id: int) -> bool:
     """

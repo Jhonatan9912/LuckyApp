@@ -1,5 +1,6 @@
 # app/services/admin/games_service.py
 from typing import Any, Dict, List, Optional
+from app.services.notify.push_sender import send_bulk_push
 
 # ---------- helpers ----------
 def _fetch_all_dicts(cur) -> List[dict]:
@@ -173,6 +174,13 @@ def update_game(conn, game_id: int,
                 scheduled_date: Optional[str],
                 scheduled_time: Optional[str],
                 winning_number: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    
+        # --- variables temporales para push post-commit ---
+    tokens_to_push = []
+    push_title = None
+    push_body = None
+    push_data = None
+
     with conn.cursor() as cur:
         # 1) Leer y BLOQUEAR solo la fila de games (sin LEFT JOIN)
         cur.execute("""
@@ -252,12 +260,65 @@ def update_game(conn, game_id: int,
                   AND gn.taken_by IS NOT NULL
             """, {"id": game_id, "d": new_date, "t": new_time})
 
+            # --- construir FCM push: tokens + payload (no enviar aún) ---
+            # 1) nombre de lotería (resuelto como en el INSERT)
+            cur.execute("""
+                SELECT COALESCE(l.name, g.lottery_name) AS lottery_name
+                FROM public.games g
+                LEFT JOIN public.lotteries l ON l.id = g.lottery_id
+                WHERE g.id = %(id)s
+            """, {"id": game_id})
+            row_ln = cur.fetchone()
+            lottery_name = row_ln[0] if row_ln else ""
+
+            # 2) user_ids destinatarios (quienes jugaron este game_id)
+            cur.execute("""
+                SELECT DISTINCT gn.taken_by
+                FROM public.game_numbers gn
+                WHERE gn.game_id = %(id)s AND gn.taken_by IS NOT NULL
+            """, {"id": game_id})
+            urows = cur.fetchall()
+            user_ids = [int(r[0]) for r in urows] if urows else []
+
+            # 3) tokens
+            tokens_to_push = []
+            if user_ids:
+                cur.execute("""
+                    SELECT device_token
+                    FROM device_tokens
+                    WHERE user_id = ANY(%(uids)s) AND COALESCE(revoked, FALSE) = FALSE
+                """, {"uids": user_ids})
+                trows = cur.fetchall()
+                tokens_to_push = [str(r[0]) for r in trows if r and r[0]]
+
+            # 4) payload del push (title/body/data)
+            push_title = f"Juego #{game_id} programado"
+            push_body = f"{lottery_name} · {new_date} {new_time}"
+            push_data = {
+                "type": "schedule_set",
+                "screen": "game_detail",     # ajusta si tu app espera otro nombre
+                "game_id": game_id,
+                "lottery": lottery_name or "",
+                "date": new_date,
+                "time": new_time,
+            }
+
         # 6) Devolver el juego actualizado
         cur.execute(_SQL_ONE_GAME, {"id": game_id})
         item = _fetch_one_dict(cur)
 
     conn.commit()
+
+    # --- envío FCM fuera de la transacción ---
+    try:
+        if tokens_to_push and push_title and push_body:
+            send_bulk_push(tokens_to_push, push_title, push_body, data=push_data)
+    except Exception:
+        # no romper la respuesta si FCM falla
+        pass
+
     return item
+
 
 # ---------- fijar número ganador + notificar jugadores ----------
 def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: int) -> Optional[Dict[str, Any]]:

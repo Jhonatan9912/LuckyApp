@@ -2,6 +2,7 @@
 
     <!-- ✅ Permiso requerido por Google Play Billing -->
     <uses-permission android:name="com.android.vending.BILLING" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:usesCleartextTraffic="true"

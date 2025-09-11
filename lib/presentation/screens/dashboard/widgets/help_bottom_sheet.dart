@@ -41,7 +41,7 @@ class HelpBottomSheet extends StatelessWidget {
 
             // Restablecer contraseña
             ListTile(
-              leading: const Icon(Icons.key), // o Icons.password
+              leading: const Icon(Icons.key),
               title: const Text('Cómo restablecer la contraseña'),
               onTap: () {
                 Navigator.pop(context);
@@ -49,8 +49,32 @@ class HelpBottomSheet extends StatelessWidget {
               },
             ),
 
-// Soporte (deshabilitado por ahora). Quitar el bloque de comentarios cuando esté listo.
-/*
+            // Actualizar versión PRO
+            ListTile(
+              leading: const Icon(Icons.system_update),
+              title: const Text('Cómo actualizar a la versión PRO'),
+              subtitle: const Text(
+                'Si ya te suscribiste y no aparece, entra en “Gestionar suscripción” y presiona “Restaurar compras”.',
+                style: TextStyle(fontSize: 13),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/faq/pro');
+              },
+            ),
+
+            // Ganar con referidos
+            ListTile(
+              leading: const Icon(Icons.people),
+              title: const Text('Guía del programa de referidos'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/faq/referidos');
+              },
+            ),
+
+            // Soporte (deshabilitado por ahora)
+            /*
             ListTile(
               leading: const Icon(Icons.support_agent),
               title: const Text('Soporte'),

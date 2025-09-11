@@ -6,6 +6,16 @@ from app.services.notify.notifications_service import (
 import os
 import jwt           # PyJWT
 import logging
+from app.services.notify.device_tokens_service import (
+    register_device_token as svc_register,
+    delete_device_token as svc_delete,
+    send_test_push as svc_send_test,
+)
+
+from app.services.notify.device_tokens_service import (
+    register_device_token as svc_register_token,
+    delete_device_token   as svc_delete_token,
+)
 
 def _jwt_secret():
     # Usa el mismo secreto que firmó el token
@@ -116,3 +126,53 @@ def api_mark_all_read():
         return jsonify({"ok": True, "updated": n}), 200
     finally:
         conn.close()
+
+@notifications_bp.post("/register-token")
+def api_register_token():
+    uid = _resolve_user_id()
+    if not uid:
+        return jsonify({"error":"No autorizado"}), 403
+    body = request.get_json(silent=True) or {}
+    token = (body.get("device_token") or "").strip()
+    platform = (body.get("platform") or "").strip().lower()
+    if not token:
+        return jsonify({"error":"device_token es requerido"}), 400
+    ent = svc_register_token(user_id=int(uid), device_token=token, platform=platform)
+    return jsonify({
+        "ok": True,
+        "id": ent.id,
+        "user_id": ent.user_id,
+        "platform": ent.platform,
+        "last_seen_at": ent.last_seen_at.isoformat()
+    }), 200
+
+@notifications_bp.post("/delete-token")
+def api_delete_token():
+    uid = _resolve_user_id()
+    if not uid:
+        return jsonify({"error":"No autorizado"}), 403
+    body = request.get_json(silent=True) or {}
+    token = (body.get("device_token") or "").strip()
+    if not token:
+        return jsonify({"error":"device_token es requerido"}), 400
+    ok = svc_delete_token(user_id=int(uid), device_token=token)
+    return jsonify({"ok": ok}), 200
+
+@notifications_bp.post("/send-test")
+def api_send_test():
+    uid = _resolve_user_id()
+    if not uid:
+        _log("[AUTH] send_test => 403")
+        return jsonify({"error": "No autorizado"}), 403
+
+    body = request.get_json(silent=True) or {}
+    device_token = (body.get("device_token") or "").strip()
+    if not device_token:
+        return jsonify({"error": "device_token es requerido"}), 400
+
+    title = body.get("title")
+    msg = body.get("body")
+    extra = body.get("data") if isinstance(body.get("data"), dict) else None
+
+    res = svc_send_test(device_token=device_token, title=title, body=msg, data=extra)
+    return jsonify(res), (200 if res.get("ok") else 500)
