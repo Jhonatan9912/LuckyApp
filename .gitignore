@@ -39,35 +39,30 @@ app.*.symbols
 # Obfuscation related
 app.*.map.json
 
-# Android Studio will place build artifacts here
+# Android Studio build artifacts
 /android/app/debug
 /android/app/profile
 /android/app/release
 
-# Env files
+# 🔐 Firebase config (NO subir)
+android/app/google-services.json
+
+# 🔐 Env files
 .env
 
-<<<<<<< HEAD
 # 🔐 Android signing (NO subir nunca)
 android/key.properties
+key.properties
 *.jks
 *.keystore
 *.p12
 *.pem
 *.cer
 *.der
-=======
-# 🔒 Firmas / secretos (NO subir)
-android/key.properties
-key.properties
-**/*.jks
-**/*.keystore
 
-# Config local de Android Studio/SDK (autogenerado)
+# 🔐 Config local Android Studio / SDK
 android/local.properties
 local.properties
->>>>>>> 91adb60 (Actualización del backend con nueva configuración de DB)
-
 
 # Python backend
 venv/
