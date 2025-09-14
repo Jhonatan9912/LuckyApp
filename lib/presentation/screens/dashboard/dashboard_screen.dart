@@ -28,6 +28,7 @@ import 'package:base_app/presentation/widgets/referrals/referral_payout_tile.dar
 import 'package:base_app/presentation/screens/referrals/referrals_tab.dart';
 import 'package:base_app/presentation/widgets/payout_request_sheet.dart';
 import 'package:base_app/presentation/widgets/notifications/notifications_bottom_sheet.dart';
+import 'widgets/social_dock.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -454,6 +455,15 @@ class _DashboardScreenState extends State<DashboardScreen>
                         child: _buildBottomButtons(),
                       ),
                     ),
+                  ),
+                  // ======= OVERLAY: Dock social (WhatsApp/Facebook) =======
+                  Positioned(
+                    right: 16,
+                    // Evitamos solaparse con JUGAR/FAB:
+                    bottom: (_tabIndex == 0)
+                        ? _contentBottomSafe // respeta tu cálculo existente
+                        : 24,
+                    child: const SocialDock(),
                   ),
                 ],
               ),
