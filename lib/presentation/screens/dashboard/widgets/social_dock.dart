@@ -11,10 +11,8 @@ class SocialDock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // ✅ Reemplazo deprecado: withValues(alpha: 0.92)
     final bg = theme.colorScheme.surface.withValues(alpha: 0.92);
 
-    // ✅ Renombrada (sin guion bajo)
     Widget circle({
       required IconData icon,
       required String tooltip,
@@ -33,8 +31,13 @@ class SocialDock extends StatelessWidget {
               customBorder: const CircleBorder(),
               onTap: onTap,
               child: const Padding(
-                padding: EdgeInsets.all(10),
-                child: SizedBox(width: 24, height: 24), // asegura área táctil
+                // área táctil cómoda
+                padding: EdgeInsets.all(12),
+                // El icono va DENTRO del InkWell (no encima)
+                child: IconTheme(
+                  data: IconThemeData(size: 18),
+                  child: SizedBox(), // placeholder, lo ponemos abajo
+                ),
               ),
             ),
           ),
@@ -42,51 +45,83 @@ class SocialDock extends StatelessWidget {
       );
     }
 
-    return IgnorePointer(
-      ignoring: false,
-      child: Opacity(
-        opacity: 0.98,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // ícono WhatsApp
-            Stack(
-              alignment: Alignment.center,
-              children: [
-                circle(
-                  icon: FontAwesomeIcons.whatsapp,
-                  tooltip: 'Comunidad en WhatsApp',
-                  onTap: () => UrlUtils.openExternal(
-                    context,
-                    url: AppLinks.whatsappChannel,
-                  ),
-                ),
-                const Positioned(
-                  child: FaIcon(FontAwesomeIcons.whatsapp, size: 18),
-                ),
-              ],
+    // Versión sin Stack: metemos el FaIcon directamente
+    Widget circleWithIcon({
+      required IconData icon,
+      required String tooltip,
+      required VoidCallback onTap,
+    }) {
+      return Tooltip(
+        message: tooltip,
+        child: Semantics(
+          button: true,
+          label: tooltip,
+          child: Material(
+            color: bg,
+            shape: const CircleBorder(),
+            elevation: 2,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: onTap,
+              child: const Padding(
+                padding: EdgeInsets.all(12),
+                child: SizedBox(width: 24, height: 24, child: Center()),
+              ),
             ),
-            const SizedBox(height: 10),
-            // ícono Facebook
-            Stack(
-              alignment: Alignment.center,
-              children: [
-                circle(
-                  icon: FontAwesomeIcons.facebookF,
-                  tooltip: 'Página en Facebook',
-                  onTap: () => UrlUtils.openExternal(
-                    context,
-                    url: AppLinks.facebookShare,
-                  ),
-                ),
-                const Positioned(
-                  child: FaIcon(FontAwesomeIcons.facebookF, size: 18),
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
-      ),
+      );
+    }
+
+    // Más simple aún: directamente este helper
+    Widget item({
+      required IconData icon,
+      required String tooltip,
+      required VoidCallback onTap,
+    }) {
+      return Tooltip(
+        message: tooltip,
+        child: Semantics(
+          button: true,
+          label: tooltip,
+          child: Material(
+            color: bg,
+            shape: const CircleBorder(),
+            elevation: 2,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: FaIcon(icon, size: 18), // 👈 icono dentro del InkWell
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        item(
+          icon: FontAwesomeIcons.whatsapp,
+          tooltip: 'Comunidad en WhatsApp',
+          onTap: () => UrlUtils.openExternal(
+            context,
+            url: AppLinks.whatsappChannel,
+          ),
+        ),
+        const SizedBox(height: 10),
+        item(
+          icon: FontAwesomeIcons.facebookF,
+          tooltip: 'Página en Facebook',
+          onTap: () => UrlUtils.openExternal(
+            context,
+            url: AppLinks.facebookShare,
+          ),
+        ),
+      ],
     );
   }
 }

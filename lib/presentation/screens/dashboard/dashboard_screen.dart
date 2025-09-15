@@ -28,7 +28,10 @@ import 'package:base_app/presentation/widgets/referrals/referral_payout_tile.dar
 import 'package:base_app/presentation/screens/referrals/referrals_tab.dart';
 import 'package:base_app/presentation/widgets/payout_request_sheet.dart';
 import 'package:base_app/presentation/widgets/notifications/notifications_bottom_sheet.dart';
+import 'package:base_app/core/utils/url_utils.dart';
+import 'package:base_app/core/config/links.dart';
 import 'widgets/social_dock.dart';
+import 'widgets/social_dock_with_label.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -177,6 +180,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           });
         }
       });
+
     });
   }
 
@@ -456,15 +460,17 @@ class _DashboardScreenState extends State<DashboardScreen>
                       ),
                     ),
                   ),
-                  // ======= OVERLAY: Dock social (WhatsApp/Facebook) =======
+
+                // ======= OVERLAY: Dock social con etiqueta (solo en "Juego Actual") =======
+                if (_tabIndex == 0)
                   Positioned(
                     right: 16,
-                    // Evitamos solaparse con JUGAR/FAB:
-                    bottom: (_tabIndex == 0)
-                        ? _contentBottomSafe // respeta tu cálculo existente
-                        : 24,
-                    child: const SocialDock(),
+                    bottom: _contentBottomSafe, // justo encima del botón JUGAR/FAB
+                    child: const SocialDockWithLabel(),
                   ),
+
+
+
                 ],
               ),
             ),
@@ -625,6 +631,22 @@ class _DashboardScreenState extends State<DashboardScreen>
           title: '🎉 ¡Resultado del juego #$gameId!',
           message: 'El número ganador es $numStr',
           okText: 'OK',
+        );
+      }
+      // Después de AppDialogs.success(...) para ganador o resultado:
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Únete a nuestro canal para enterarte de los próximos sorteos 🎁'),
+            action: SnackBarAction(
+              label: 'Ir ahora',
+              onPressed: () => UrlUtils.openExternal(
+                context,
+                url: AppLinks.whatsappChannel,
+              ),
+            ),
+            duration: const Duration(seconds: 5),
+          ),
         );
       }
 
@@ -813,6 +835,54 @@ class _ProBadge extends StatelessWidget {
                 color: Colors.white,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class _SocialHintBubble extends StatelessWidget {
+  final String text;
+  final VoidCallback? onClose;
+  const _SocialHintBubble({required this.text, this.onClose});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bg = theme.colorScheme.surface.withValues(alpha: 0.98);
+    final border = theme.colorScheme.outlineVariant.withValues(alpha: 0.35);
+
+    return Material(
+      color: bg,
+      elevation: 3,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 280),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.campaign, size: 18),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                text,
+                style: const TextStyle(fontSize: 12.5, height: 1.25),
+              ),
+            ),
+            const SizedBox(width: 6),
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: onClose,
+              child: const Padding(
+                padding: EdgeInsets.all(4),
+                child: Icon(Icons.close, size: 16),
               ),
             ),
           ],

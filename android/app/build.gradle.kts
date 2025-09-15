@@ -23,7 +23,7 @@ android {
 
     defaultConfig {
         applicationId = "com.tuempresa.base_app" // NO cambiar si ya publicaste
-        minSdk = 23
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
