@@ -81,6 +81,10 @@ def _send_resend(app, cfg, to_email: str, subject: str, html: str) -> None:
             json={"from": sender, "to": [to_email], "subject": subject, "html": html},
             timeout=int(cfg.get("MAIL_HTTP_TIMEOUT", 10)),
         )
+        if r.status_code >= 400:
+            app.logger.error("Resend error %s: %s", r.status_code, r.text)  # 👈 imprime el motivo real
+
+
         r.raise_for_status()
         app.logger.info("Correo ENVIADO (Resend) a %s (asunto: %s)", to_email, subject)
     except Exception:
