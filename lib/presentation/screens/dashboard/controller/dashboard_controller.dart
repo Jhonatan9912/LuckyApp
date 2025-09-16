@@ -223,6 +223,12 @@ class DashboardController extends ChangeNotifier {
 
     _setSessionReady(true);
     notifyListeners();
+      // 🔴 NUEVO: apenas hay sesión válida, cargo historial y restauro selección
+  unawaited(() async {
+    await loadHistory();           // primero historial (lo usas para saber si el juego ya cerró)
+    await restoreSelectionIfAny(); // luego restaura si la selección sigue vigente
+  }());
+
   }
 
   Future<void> loadReferralCode() async {
@@ -350,13 +356,47 @@ class DashboardController extends ChangeNotifier {
   }) async {
     if (_animating || _saving || _reserving) return GenerateState.error;
 
-    _setAnimating(true);
-    _setShowFinalButtons(false);
-    _setHasPlayedOnce(true);
-
+    // 👇 PRE-CHEQUEO: si ya hay selección actual en el juego abierto, muéstrala y no animes
     final String? tokenToUse =
         (_authToken != null && !_isJwtExpired(_authToken!)) ? _authToken : null;
     final int? xUserIdToUse = (tokenToUse == null) ? _devUserId : null;
+
+    if (tokenToUse != null) {
+      try {
+        final pre = await _gamesApi.getMySelection(token: tokenToUse);
+        if (pre['ok'] == true) {
+          final data = (pre['data'] as Map<String, dynamic>? ?? {});
+          final gid = (data['game_id'] as num?)?.toInt();
+          final nums = ((data['numbers'] as List?) ?? const [])
+              .map((e) => int.parse(e.toString()))
+              .toList();
+
+          if (gid != null && nums.length == 5) {
+            _gameId = gid;
+            _lastReservedGameId = gid;
+            _lastReservedNumbers = List<int>.from(nums);
+            _setNumbers(List<int>.from(nums));
+            _displayedBalls
+              ..clear()
+              ..addAll(nums);
+
+            _setAnimating(false);
+            _setShowFinalButtons(true);
+            _setHasPlayedOnce(true);
+            _setHasAdded(true);
+            _setHasAddedFinal(true);
+            _setShowActionIcons(true);
+            return GenerateState.ok; // ← ya está “bloqueado” por tener 5
+          }
+        }
+      } catch (_) {
+        // ignora errores de red aquí; seguimos con la generación normal
+      }
+    }
+
+    _setAnimating(true);
+    _setShowFinalButtons(false);
+    _setHasPlayedOnce(true);
 
     Map<String, dynamic>? data;
 
@@ -600,7 +640,6 @@ class DashboardController extends ChangeNotifier {
               'Se reemplazaron ${_fmtNums(prevNumbers)} por ${_fmtNums(_numbers)}.',
         );
       }
-
       _releasedPrevious = false;
       return ReserveOutcome(ok: true, gameCompleted: finalCompleted);
     }
@@ -610,64 +649,109 @@ class DashboardController extends ChangeNotifier {
         .toString();
     final status = res['status'] as int?;
 
-    if (code == 'GAME_SWITCHED') {
-      // Reset mínimo para permitir volver a jugar
-      _setHasAdded(false);
-      _setHasAddedFinal(false);
-      _displayedBalls.clear();
-      _setShowActionIcons(false);
-      _setNumbers(List.filled(5, 0));
-      _setShowFinalButtons(false);
-      _setHasPlayedOnce(false);
+if (code == 'GAME_SWITCHED') {
+  // Reset mínimo para permitir volver a jugar
+  _setHasAdded(false);
+  _setHasAddedFinal(false);
+  _displayedBalls.clear();
+  _setShowActionIcons(false);
+  _setNumbers(List.filled(5, 0));
+  _setShowFinalButtons(false);
+  _setHasPlayedOnce(false);
 
-      _gameId = null;
-      _lastReservedGameId = null;
-      _lastReservedNumbers = null;
+  _gameId = null;
+  _lastReservedGameId = null;
+  _lastReservedNumbers = null;
 
-      return ReserveOutcome(
-        ok: false,
-        code: 'GAME_SWITCHED',
-        message: 'El juego cambió porque se completó. Vuelve a jugar.',
-        status: status,
-      );
-    } else if (code == 'CONFLICT' || status == 409) {
-      _setHasAdded(false);
-      _setHasAddedFinal(false);
-      _displayedBalls.clear();
-      _setShowActionIcons(false);
-      _setNumbers(List.filled(5, 0));
-      _setShowFinalButtons(false);
-      _setHasPlayedOnce(false);
-      return ReserveOutcome(
-        ok: false,
-        code: 'CONFLICT',
-        message: 'Algunos números ya no están disponibles. Vuelve a jugar.',
-        status: status,
-      );
-    } else if (code == 'NETWORK_ERROR') {
-      return const ReserveOutcome(
-        ok: false,
-        code: 'NETWORK_ERROR',
-        message: 'No hay conexión con el servidor.',
-      );
-    } else if (status == 401 || status == 403) {
-      await initSession(); // re-lee token por si cambió
-      return ReserveOutcome(
-        ok: false,
-        code: 'UNAUTHORIZED',
-        message: 'No autorizado con la sesión actual.',
-        status: status,
-      );
-    } else {
-      return ReserveOutcome(
-        ok: false,
-        code: code.isEmpty ? null : code,
-        message: msg,
-        status: status,
-      );
+  return ReserveOutcome(
+    ok: false,
+    code: 'GAME_SWITCHED',
+    message: 'El juego cambió porque se completó. Vuelve a jugar.',
+    status: status,
+  );
+
+} else if (code == 'CONFLICT' || status == 409) {
+  _setHasAdded(false);
+  _setHasAddedFinal(false);
+  _displayedBalls.clear();
+  _setShowActionIcons(false);
+  _setNumbers(List.filled(5, 0));
+  _setShowFinalButtons(false);
+  _setHasPlayedOnce(false);
+
+  return ReserveOutcome(
+    ok: false,
+    code: 'CONFLICT',
+    message: 'Algunos números ya no están disponibles. Vuelve a jugar.',
+    status: status,
+  );
+
+} else if (code == 'LIMIT_REACHED' || code == 'PARTIAL_EXISTS') {
+  // El backend indica que ya tienes reserva en este juego (completa o parcial)
+  final data = (res['data'] as Map<String, dynamic>? ?? {});
+  final gid = (data['game_id'] as num?)?.toInt();
+  final nums = ((data['numbers'] as List?) ?? const [])
+      .map((e) => int.parse(e.toString()))
+      .toList();
+
+  if (gid != null && nums.isNotEmpty) {
+    _gameId = gid;
+    _lastReservedGameId = gid;
+    _lastReservedNumbers = List<int>.from(nums);
+
+    _setNumbers(List<int>.from(nums));
+    _displayedBalls
+      ..clear()
+      ..addAll(nums);
+
+    // Muestra como “selección existente”
+    _setHasAdded(true);
+    _setShowActionIcons(true);
+    _setShowFinalButtons(true);
+    _setHasPlayedOnce(true);
+
+    // Si eran 5, marcamos como final para que UI oculte JUGAR/RESERVAR
+    if (nums.length >= 5) {
+      _setHasAddedFinal(true);
     }
   }
 
+  return ReserveOutcome(
+    ok: false,
+    code: code,
+    message: msg.isNotEmpty
+        ? msg
+        : (code == 'LIMIT_REACHED'
+            ? 'Ya tienes 5 números reservados para este juego.'
+            : 'Tienes una reserva parcial en este juego. Libérala antes de reemplazar.'),
+    status: status,
+  );
+
+} else if (code == 'NETWORK_ERROR') {
+  return const ReserveOutcome(
+    ok: false,
+    code: 'NETWORK_ERROR',
+    message: 'No hay conexión con el servidor.',
+  );
+
+} else if (status == 401 || status == 403) {
+  await initSession(); // re-lee token por si cambió
+  return ReserveOutcome(
+    ok: false,
+    code: 'UNAUTHORIZED',
+    message: 'No autorizado con la sesión actual.',
+    status: status,
+  );
+
+} else {
+  return ReserveOutcome(
+    ok: false,
+    code: code.isEmpty ? null : code,
+    message: msg,
+    status: status,
+  );
+}
+  }
   Future<ReserveOutcome?> _releasePreviousIfNeeded() async {
     _releasedPrevious = false; // reset por si venimos de otro ciclo
 

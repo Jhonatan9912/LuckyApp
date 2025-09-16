@@ -58,6 +58,48 @@ def find_active_unscheduled_game_id() -> int | None:
         LIMIT 1
     """)).first()
     return int(row[0]) if row else None
+
+def _count_user_numbers_in_game(user_id: int, game_id: int) -> int:
+    return int(db.session.execute(text("""
+        SELECT COUNT(*)
+        FROM game_numbers
+        WHERE game_id = :gid
+          AND taken_by = :uid
+    """), {"gid": game_id, "uid": user_id}).scalar() or 0)
+
+def get_current_open_game_id() -> int | None:
+    row = db.session.execute(text("""
+        SELECT id
+        FROM games
+        WHERE state_id = 1
+          AND winning_number IS NULL
+        ORDER BY id DESC
+        LIMIT 1
+    """)).first()
+    return int(row[0]) if row else None
+
+def get_current_selection(user_id: int) -> dict:
+    """
+    Devuelve la selección del usuario en el juego ABIERTO actual.
+    Si no hay 5 números, retorna NOT_FOUND.
+    """
+    gid = get_current_open_game_id()
+    if gid is None:
+        return {"ok": False, "code": "NOT_FOUND", "message": "No hay juego abierto."}
+
+    rows = db.session.execute(text("""
+        SELECT number
+        FROM game_numbers
+        WHERE game_id = :gid AND taken_by = :uid
+        ORDER BY position ASC
+    """), {"gid": gid, "uid": user_id}).fetchall()
+
+    nums = [int(r[0]) for r in rows]
+    if len(nums) < 5:
+        return {"ok": False, "code": "NOT_FOUND", "message": "Sin selección en juego abierto."}
+
+    return {"ok": True, "data": {"game_id": gid, "numbers": nums, "user_id_used": user_id}}
+
 # ===== Utilidades =====
 def get_or_create_active_unscheduled_game_id() -> int:
     """
@@ -153,6 +195,17 @@ def generate_five_available(user_id: int | None, avoid_game_id: int | None = Non
 
     # ---- Usuario PRO: comportamiento original (puede crear) ----
     gid = get_or_create_active_unscheduled_game_id()
+    # Si ya tiene 5 en este juego, devuelve esos mismos 5 (no generes otros)
+    existing = db.session.execute(text("""
+        SELECT number
+        FROM game_numbers
+        WHERE game_id = :gid AND taken_by = :uid
+        ORDER BY position ASC
+    """), {"gid": gid, "uid": int(user_id)}).fetchall()
+
+    if existing and len(existing) >= 5:
+        numbers = [int(r[0]) for r in existing[:5]]
+        return gid, numbers
 
     rows = db.session.execute(text("""
         WITH taken AS (
@@ -222,6 +275,43 @@ def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
         db.session.rollback()
         return {"ok": False, "code": "GAME_SWITCHED",
                 "error": "El juego cambió (se completó). Vuelve a jugar."}
+
+    # ⛔ Tope por usuario en este juego: no permitir segundo commit ni parciales
+    current_count = _count_user_numbers_in_game(user_id, game_id)
+
+    if current_count >= 5:
+        # Ya tiene su selección completa en este juego
+        rows = db.session.execute(text("""
+            SELECT number
+            FROM game_numbers
+            WHERE game_id = :gid AND taken_by = :uid
+            ORDER BY position ASC
+        """), {"gid": game_id, "uid": user_id}).fetchall()
+        current_numbers = [int(r[0]) for r in rows[:5]]
+        db.session.rollback()
+        return {
+            "ok": False,
+            "code": "LIMIT_REACHED",
+            "error": "Ya tienes 5 números reservados para este juego.",
+            "data": {"game_id": game_id, "numbers": current_numbers, "user_id_used": user_id}
+        }
+
+    if 0 < current_count < 5:
+        # Estado parcial: fuerza liberar primero para evitar acumulaciones invisibles entre dispositivos
+        rows = db.session.execute(text("""
+            SELECT number
+            FROM game_numbers
+            WHERE game_id = :gid AND taken_by = :uid
+            ORDER BY position ASC
+        """), {"gid": game_id, "uid": user_id}).fetchall()
+        current_numbers = [int(r[0]) for r in rows]
+        db.session.rollback()
+        return {
+            "ok": False,
+            "code": "PARTIAL_EXISTS",
+            "error": "Ya tienes números reservados parciales en este juego. Libera tu selección para reemplazarla.",
+            "data": {"game_id": game_id, "numbers": current_numbers, "user_id_used": user_id}
+        }
 
     # Intento de inserción atómica con 'ON CONFLICT DO NOTHING'
     # Usamos RETURNING para saber cuántos se insertaron realmente.

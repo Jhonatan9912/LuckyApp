@@ -63,7 +63,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       await AppDialogs.success(
         context: ctx,
         title: 'Código enviado',
-        message: 'Te enviamos un código al correo ingresado.',
+        message: 'Si este correo se encuentra registrado te enviaremos un código para restablecer tu contraseña.',
         okText: 'Ingresar código',
       );
     } on AuthException catch (e) {

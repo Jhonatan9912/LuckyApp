@@ -42,6 +42,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen>
     with WidgetsBindingObserver {
+  bool _hydrating = true; // ← mientras hidrato estado inicial, oculto JUGAR/placeholder
   bool _dialogBusy = false; // evita abrir 2 diálogos a la vez
   bool _scheduleShownOnce = false; // no repetir alerta de programado
 
@@ -134,25 +135,28 @@ class _DashboardScreenState extends State<DashboardScreen>
     });
 
     // ... dentro de initState(), en el segundo addPostFrameCallback:
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _ctrl.initSession();
-      if (!mounted || !_ctrl.sessionReady) return;
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    await _ctrl.initSession();
+    if (!mounted || !_ctrl.sessionReady) return;
 
-      // ✅ Toma los providers ANTES de cualquier await (evita el warning)
-      final subs = context.read<SubscriptionProvider>();
-      final refs = context.read<ReferralProvider>();
+    // ★ INICIO hidratación: oculta JUGAR y el placeholder
+    setState(() => _hydrating = true);
 
-      // Estado PRO y facturación
-      await subs.configureBilling();
-      await subs.refresh(force: true);
+    // Primero historia y restaurar selección (para pintar balotas si existen)
+    await _ctrl.loadHistory();            // necesario para descartar juegos cerrados
+    await _ctrl.restoreSelectionIfAny();  // pinta números y pone hasAddedFinal=true
 
-      // Comisión de referidos (requiere token ya listo)
-      await refs.load(refresh: true);
+    // ★ FIN hidratación: ya puedo decidir si muestro balotas o JUGAR
+    if (mounted) setState(() => _hydrating = false);
 
-      // Resto del flujo
-      await _ctrl.loadReferralCode();
-      await _ctrl.loadHistory();
-      await _ctrl.restoreSelectionIfAny();
+    // (de aquí en adelante deja lo demás como ya lo tienes: billing, refs, notifs, timers…)
+    final subs = context.read<SubscriptionProvider>();
+    final refs = context.read<ReferralProvider>();
+    unawaited(subs.configureBilling());
+    unawaited(subs.refresh(force: true));
+    unawaited(refs.load(refresh: true));
+    unawaited(_ctrl.loadReferralCode());
+
 
       // 1) Peek de juego programado (solo una vez)
       await _safeShow(() async {
@@ -366,23 +370,21 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   child: PremiumGate(
                                     onGoPro: () =>
                                         Navigator.pushNamed(context, '/pro'),
-                                    child: Center(
-                                      child:
-                                          (_ctrl.hasAdded &&
-                                              !_isCurrentGameClosed())
-                                          ? Padding(
-                                              padding: const EdgeInsets.only(
-                                                top: 6,
-                                              ),
-                                              child: SelectionRow(
-                                                balls: _ctrl.displayedBalls,
-                                                showActions:
-                                                    _ctrl.showActionIcons,
-                                                onClear: _ctrl.clearSelection,
-                                              ),
-                                            )
-                                          : const EmptySelectionPlaceholder(),
-                                    ),
+                                        child: Center(
+                                          child: _hydrating
+                                              ? const SizedBox.shrink() // ★ nada mientras hidratas
+                                              : (_ctrl.hasAdded && !_isCurrentGameClosed())
+                                                  ? Padding(
+                                                      padding: const EdgeInsets.only(top: 6),
+                                                      child: SelectionRow(
+                                                        balls: _ctrl.displayedBalls,
+                                                        showActions: _ctrl.showActionIcons,
+                                                        onClear: _ctrl.clearSelection,
+                                                      ),
+                                                    )
+                                                  : const EmptySelectionPlaceholder(),
+                                        ),
+
                                   ),
                                 ),
                               );
@@ -485,7 +487,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (_tabIndex != 0) {
       return const SizedBox.shrink();
     }
-
+  if (_hydrating) return const SizedBox.shrink();
     // Lee el provider UNA vez aquí
     final subs = context.watch<SubscriptionProvider>();
 
