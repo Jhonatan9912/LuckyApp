@@ -352,6 +352,21 @@ def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: i
             WHERE id = %(gid)s
         """, {"gid": game_id, "num": winning_number})
 
+                # Asegurar que exista un juego abierto y sin ganador
+        cur.execute("""
+            WITH existing AS (
+                SELECT id
+                FROM public.games
+                WHERE state_id = 1
+                  AND winning_number IS NULL
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            INSERT INTO public.games (state_id, played_at)
+            SELECT 1, NOW()
+            WHERE NOT EXISTS (SELECT 1 FROM existing)
+        """)
+
         if cur.rowcount == 0:
             conn.rollback()
             return None

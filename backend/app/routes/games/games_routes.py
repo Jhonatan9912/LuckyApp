@@ -11,9 +11,10 @@ from app.services.games import games_service
 from app.services.games.games_service import (
     generate_five_available,
     commit_selection,
-    get_last_selection,
+    get_current_selection,  # ← usar la selección SOLO del juego abierto
     list_user_history,
 )
+
 
 from app.services.notify.notifications_service import (
     create_notifications_for_game_winner,
@@ -126,7 +127,7 @@ def my_selection():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "code": "UNAUTHORIZED", "message": "Token inválido"}), 401
 
-    res = get_last_selection(uid)
+    res = get_current_selection(uid)
     if res.get("ok"):
         return jsonify({"ok": True, "data": res["data"]}), 200
     if res.get("code") == "NOT_FOUND":

@@ -432,12 +432,20 @@ def get_last_selection(user_id: int) -> dict:
 
 def set_winner(game_id: int, winning_number: int) -> tuple[bool, str | None]:
     try:
+                # Asegurar que exista un juego abierto y sin ganador
         db.session.execute(text("""
-            UPDATE games
-            SET winning_number = :num,
-                state_id = 2
-            WHERE id = :gid
-        """), {"gid": game_id, "num": winning_number})
+            WITH existing AS (
+                SELECT id
+                FROM games
+                WHERE state_id = 1
+                  AND winning_number IS NULL
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            INSERT INTO games (state_id, played_at)
+            SELECT 1, NOW()
+            WHERE NOT EXISTS (SELECT 1 FROM existing)
+        """))
 
         db.session.commit()
         return True, None
