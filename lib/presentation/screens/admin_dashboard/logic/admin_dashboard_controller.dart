@@ -55,7 +55,10 @@ class AdminDashboardController extends ChangeNotifier {
         'users': k['users'] ?? k['total_users'] ?? k['usuarios'] ?? 0,
         'games': k['games'] ?? k['total_games'] ?? k['juegos'] ?? 0,
         'players': k['players'] ?? k['total_players'] ?? k['jugadores'] ?? 0,
+        
       };
+      kpis!['players'] = await countAllPlayers(state: 'active');
+
 
       // === Listas del backend: sales_by_month, revenue_by_month, latest_users, latest_sales ===
       final List salesByMonthRaw =
@@ -473,90 +476,97 @@ Future<List<Map<String, dynamic>>> loadAllUsers({
   /// === JUGADORES: GET /api/admin/players ================================
 
   Future<List<Map<String, dynamic>>> loadAllPlayers({
-    String q = '',
-    int page = 1,
-  }) async {
-    final token = await SessionManager().getToken();
-    final uri = Uri.parse('$baseUrl/api/admin/players').replace(
-      queryParameters: {
-        if (q.isNotEmpty) 'q': q,
-        'page': '$page',
-        'per_page': '50',
-      },
-    );
+  String q = '',
+  String state = 'active', // 👈 nuevo
+  int page = 1,
+}) async {
+  final token = await SessionManager().getToken();
+  final uri = Uri.parse('$baseUrl/api/admin/players').replace(
+    queryParameters: {
+      if (q.isNotEmpty) 'q': q,
+      'state': state,       // 👈 nuevo
+      'page': '$page',
+      'per_page': '50',
+    },
+  );
 
-    final res = await http
-        .get(
-          uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-        )
-        .timeout(const Duration(seconds: 15));
+  final res = await http
+      .get(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      )
+      .timeout(const Duration(seconds: 15));
 
-    if (kDebugMode) {
-      print('[admin/players] ${res.statusCode} ${res.body}');
-    }
-
-    if (res.statusCode != 200) {
-      throw Exception('HTTP ${res.statusCode}: ${res.body}');
-    }
-
-    final Map<String, dynamic> body =
-        json.decode(res.body) as Map<String, dynamic>;
-    final List items = (body['items'] as List?) ?? const [];
-
-    // Normalizamos lo que usará PlayersBottomSheet
-    return items.map<Map<String, dynamic>>((e) {
-      final m = Map<String, dynamic>.from(e as Map);
-      // Aseguramos que 'numbers' sea List<String>
-      final nums = (m['numbers'] as List? ?? const [])
-          .map((x) => x?.toString() ?? '')
-          .toList();
-
-      return {
-        'user_id': m['user_id'],
-        'player_name': m['player_name'] ?? '',
-        'public_code': m['code'] ?? m['public_code'] ?? '', // ← importante
-        'game_id': m['game_id'],
-        'lottery_name': m['lottery_name'] ?? '',
-        'played_date': m['played_date'] ?? '',
-        'played_time': m['played_time'] ?? '',
-        'numbers': nums,
-      };
-    }).toList();
+  if (kDebugMode) {
+    print('[admin/players state=$state] ${res.statusCode} ${res.body}');
   }
 
-  /// Cuenta jugadores agrupados (user_id + game_id) usando el mismo endpoint
-  Future<int> countAllPlayers({String q = ''}) async {
-    final token = await SessionManager().getToken();
-    final uri = Uri.parse('$baseUrl/api/admin/players').replace(
-      queryParameters: {if (q.isNotEmpty) 'q': q, 'page': '1', 'per_page': '1'},
-    );
-
-    final res = await http
-        .get(
-          uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-        )
-        .timeout(const Duration(seconds: 15));
-
-    if (kDebugMode) {
-      print('[admin/players:count] ${res.statusCode} ${res.body}');
-    }
-
-    if (res.statusCode != 200) {
-      throw Exception('HTTP ${res.statusCode}: ${res.body}');
-    }
-
-    final Map<String, dynamic> body =
-        json.decode(res.body) as Map<String, dynamic>;
-    return (body['total'] as num?)?.toInt() ?? 0;
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
   }
+
+  final Map<String, dynamic> body =
+      json.decode(res.body) as Map<String, dynamic>;
+  final List items = (body['items'] as List?) ?? const [];
+
+  return items.map<Map<String, dynamic>>((e) {
+    final m = Map<String, dynamic>.from(e as Map);
+    final nums = (m['numbers'] as List? ?? const [])
+        .map((x) => x?.toString() ?? '')
+        .toList();
+
+    return {
+      'user_id': m['user_id'],
+      'player_name': m['player_name'] ?? '',
+      'public_code': m['code'] ?? m['public_code'] ?? '',
+      'game_id': m['game_id'],
+      'lottery_name': m['lottery_name'] ?? '',
+      'played_date': m['played_date'] ?? '',
+      'played_time': m['played_time'] ?? '',
+      'numbers': nums,
+    };
+  }).toList();
+}
+
+Future<int> countAllPlayers({
+  String q = '',
+  String state = 'active', // 👈 nuevo
+}) async {
+  final token = await SessionManager().getToken();
+  final uri = Uri.parse('$baseUrl/api/admin/players').replace(
+    queryParameters: {
+      if (q.isNotEmpty) 'q': q,
+      'state': state,       // 👈 nuevo
+      'page': '1',
+      'per_page': '1',
+    },
+  );
+
+  final res = await http
+      .get(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      )
+      .timeout(const Duration(seconds: 15));
+
+  if (kDebugMode) {
+    print('[admin/players:count state=$state] ${res.statusCode} ${res.body}');
+  }
+
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+
+  final Map<String, dynamic> body =
+      json.decode(res.body) as Map<String, dynamic>;
+  return (body['total'] as num?)?.toInt() ?? 0;
+}
 
   /// DELETE: elimina TODAS las balotas del jugador (userId) en ese juego (gameId)
   Future<void> deletePlayerNumbers({

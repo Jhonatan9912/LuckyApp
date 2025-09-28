@@ -178,59 +178,57 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     if (mounted) setState(() {});
   }
 
-  void _openPlayersSheet() async {
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => PlayersBottomSheet(
-        loader: ({String q = ''}) async {
-          final list = await ctrl.loadAllPlayers(q: q);
-          return list.map<PlayerRow>((m) {
-            String to3(dynamic e) {
-              final s = e.toString();
-              final neg = s.startsWith('-');
-              final core = neg ? s.substring(1) : s;
-              final padded = core.padLeft(3, '0');
-              return neg ? '-$padded' : padded;
-            }
+void _openPlayersSheet() async {
+  await showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Colors.transparent,
+builder: (_) => PlayersBottomSheet(
+  // 👇 loader ahora acepta q y state
+  loader: ({String q = '', String state = 'active'}) async {
+    final list = await ctrl.loadAllPlayers(q: q, state: state);
+    return list.map<PlayerRow>((m) {
+      String to3(dynamic e) {
+        final s = e.toString();
+        final neg = s.startsWith('-');
+        final core = neg ? s.substring(1) : s;
+        final padded = core.padLeft(3, '0');
+        return neg ? '-$padded' : padded;
+      }
+      final nums = (m['numbers'] as List? ?? const []).map(to3).toList();
+      return PlayerRow(
+        id: (m['user_id'] as num).toInt(),
+        name: (m['player_name'] ?? '').toString(),
+        code: (m['code'] ?? m['public_code'] ?? '').toString(),
+        gameId: (m['game_id'] as num).toInt(),
+        lotteryName: (m['lottery_name'] ?? '').toString(),
+        playedDate: (m['played_date'] ?? '').toString(),
+        playedTime: (m['played_time'] ?? '').toString(),
+        numbers: nums,
+      );
+    }).toList();
+  },
 
-            final nums = (m['numbers'] as List? ?? const []).map(to3).toList();
+  // contador con state
+  countLoader: ({String q = '', String state = 'active'}) =>
+      ctrl.countAllPlayers(q: q, state: state),
 
-            return PlayerRow(
-              id: (m['user_id'] as num).toInt(),
-              name: (m['player_name'] ?? '').toString(),
-              code: (m['code'] ?? m['public_code'] ?? '').toString(),
-              gameId: (m['game_id'] as num).toInt(),
-              lotteryName: (m['lottery_name'] ?? '').toString(),
-              playedDate: (m['played_date'] ?? '').toString(),
-              playedTime: (m['played_time'] ?? '').toString(),
-              numbers: nums,
-            );
-          }).toList();
-        },
-        countLoader: ({String q = ''}) => ctrl.countAllPlayers(q: q),
+  onUpdateNumbers: (userId, gameId, numbers) =>
+      ctrl.updatePlayerNumbers(userId: userId, gameId: gameId, numbers: numbers),
 
-        // 👇 IMPORTANTE: habilita el lápiz
-        onUpdateNumbers: (userId, gameId, numbers) => ctrl.updatePlayerNumbers(
-          userId: userId,
-          gameId: gameId,
-          numbers: numbers,
-        ),
+  onDelete: (userId, gameId) =>
+      ctrl.deletePlayerNumbers(userId: userId, gameId: gameId),
 
-        // eliminar (ya lo tenías)
-        onDelete: (userId, gameId) =>
-            ctrl.deletePlayerNumbers(userId: userId, gameId: gameId),
+  onOpen: null,
+),
 
-        // opcional: si no usas abrir detalle, déjalo null
-        onOpen: null,
-      ),
-    );
+  );
 
-    await ctrl.load();
-    if (mounted) setState(() {});
-  }
+  await ctrl.load();
+  if (mounted) setState(() {});
+}
+
 
   @override
   Widget build(BuildContext context) {

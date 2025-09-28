@@ -33,7 +33,12 @@ def players_index():
     page = int(request.args.get("page") or 1)
     per_page = int(request.args.get("per_page") or 50)
 
-    data = list_players(q=q, page=page, per_page=per_page)
+    # 👇 nuevo: lee el estado de pestaña; por defecto "active"
+    state = (request.args.get("state") or "active").strip().lower()
+    if state not in ("active", "historical", "all"):
+        return jsonify({"ok": False, "error": "Parámetro 'state' inválido"}), 400
+
+    data = list_players(q=q, page=page, per_page=per_page, state=state)
     return jsonify(data)
 
 @admin_players_bp.delete("/players/<int:user_id>/games/<int:game_id>/numbers")

@@ -6,10 +6,10 @@ import 'package:base_app/core/ui/dialogs.dart' as custom;
 /// BottomSheet de Jugadores (estructura similar a Users/Games).
 class PlayersBottomSheet extends StatefulWidget {
   /// Carga la lista de jugadores (estructura libre).
-  final Future<List<PlayerRow>> Function({String q}) loader;
+  final Future<List<PlayerRow>> Function({String q, String state}) loader;
 
   /// Devuelve el total en DB (opcional).
-  final Future<int> Function({String q})? countLoader;
+  final Future<int> Function({String q, String state})? countLoader;
 
   /// Elimina TODAS las balotas del jugador en un juego.
   final Future<void> Function(int userId, int gameId)? onDelete;
@@ -22,8 +22,7 @@ class PlayersBottomSheet extends StatefulWidget {
     int userId,
     int gameId,
     List<String> numbers,
-  )?
-  onUpdateNumbers;
+  )? onUpdateNumbers;
 
   const PlayersBottomSheet({
     super.key,
@@ -41,6 +40,7 @@ class PlayersBottomSheet extends StatefulWidget {
 class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
   List<PlayerRow> _all = [];
   String _q = '';
+  String _state = 'active'; // 👈 NUEVO: pestaña actual
   bool _loading = true;
   int _dbTotal = 0;
   int? _workingId;
@@ -69,10 +69,13 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
       _workingId = null;
     });
     try {
-      final data = await widget.loader(q: _q);
+      // 👇 CAMBIA: pasa state al loader
+      final data = await widget.loader(q: _q, state: _state);
+
       int total;
       if (widget.countLoader != null) {
-        total = await widget.countLoader!(q: '');
+        // 👇 CAMBIA: pasa state al countLoader
+        total = await widget.countLoader!(q: '', state: _state);
       } else {
         total = data.length;
       }
@@ -97,19 +100,14 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
 
   String _prettyError(Object e) {
     final s = e.toString();
-    // quita prefijo "Exception: "
     final cleaned = s.startsWith('Exception: ') ? s.substring(11) : s;
-    // des-escapa secuencias comunes por si vinieran
     return cleaned.replaceAll(r'\n', '\n').replaceAll(r'\"', '"');
   }
-  
+
   bool _isLocked(PlayerRow p) {
     try {
-      // Normaliza strings
       final date = p.playedDate.trim(); // 'YYYY-MM-DD'
       final rawTime = p.playedTime.trim(); // 'HH:MM' o 'HH:MM:SS'
-
-      // Quita espacios internos y arma HH:MM:SS
       final t = rawTime.replaceAll(RegExp(r'\s+'), '');
       final parts = t.split(':');
       final h = int.tryParse(parts.isNotEmpty ? parts[0] : '0') ?? 0;
@@ -120,13 +118,12 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
       final mm = m.toString().padLeft(2, '0');
       final ss = s.toString().padLeft(2, '0');
 
-      // Parse local: 'YYYY-MM-DD HH:MM:SS'
+      // Nota: DateTime.parse espera ISO; si tu backend ya envía 'YYYY-MM-DD HH:MM:SS'
+      // y funciona, lo dejamos igual.
       final gameDT = DateTime.parse('$date $hh:$mm:$ss');
 
-      // Bloqueado si ahora >= fecha/hora del juego
       return !_now.isBefore(gameDT);
     } catch (_) {
-      // Si algo falla al parsear, no bloquees
       return false;
     }
   }
@@ -135,7 +132,6 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
     if (widget.onUpdateNumbers == null) return;
 
     final formKey = GlobalKey<FormState>();
-    // crea controladores con los valores actuales, padded a 3
     final ctrls = p.numbers
         .map((n) => TextEditingController(text: n.toString().padLeft(3, '0')))
         .toList();
@@ -166,17 +162,9 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                     ),
                     validator: (val) {
                       final v = (val ?? '').trim();
-
-                      if (v.isEmpty) {
-                        return 'Requerido';
-                      }
-                      if (v.length != 3) {
-                        return 'Debe tener 3 dígitos';
-                      }
-                      if (!RegExp(r'^\d{3}$').hasMatch(v)) {
-                        return 'Sólo dígitos';
-                      }
-
+                      if (v.isEmpty) return 'Requerido';
+                      if (v.length != 3) return 'Debe tener 3 dígitos';
+                      if (!RegExp(r'^\d{3}$').hasMatch(v)) return 'Sólo dígitos';
                       return null;
                     },
                   ),
@@ -204,22 +192,16 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
 
     if (ok != true || !mounted) return;
 
-    // recopilar y normalizar
-    final newNumbers = ctrls
-        .map((c) => c.text.trim().padLeft(3, '0'))
-        .toList(growable: false);
+    final newNumbers =
+        ctrls.map((c) => c.text.trim().padLeft(3, '0')).toList(growable: false);
 
     try {
       setState(() => _workingId = p.id);
-
-      // llamado al backend
       final returned = await widget.onUpdateNumbers!(
         p.id,
         p.gameId,
         newNumbers,
       );
-
-      // actualiza localmente con lo que devuelva el backend (ya normalizado)
       if (!mounted) return;
       setState(() {
         _all[indexInList] = _all[indexInList].copyWith(
@@ -227,7 +209,6 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
         );
         _workingId = null;
       });
-
       await custom.AppDialogs.success(
         context: context,
         title: 'Actualizado',
@@ -236,7 +217,6 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _workingId = null);
-
       final msg = _prettyError(e);
       await custom.AppDialogs.error(
         context: context,
@@ -261,344 +241,378 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                 p.numbers.any((n) => n.toString().contains(_q));
           }).toList();
 
-    return DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.85,
-      minChildSize: 0.4,
-      maxChildSize: 0.95,
-      builder: (context, controller) => Material(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        child: Column(
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 44,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.black12,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Row(
-                children: [
-                  Text(
-                    'Jugadores (${widget.countLoader != null ? _dbTotal : filtered.length})',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: 'Refrescar',
-                    icon: const Icon(Icons.refresh),
-                    onPressed: _refresh,
-                  ),
-                ],
-              ),
-            ),
-            // Buscador
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: TextField(
-                decoration: const InputDecoration(
-                  hintText: 'Buscar',
-                  prefixIcon: Icon(Icons.search),
-                  isDense: true,
-                  border: OutlineInputBorder(),
+    return DefaultTabController( // 👈 NUEVO: tabs Activos / Histórico
+      length: 2,
+      initialIndex: _state == 'active' ? 0 : 1,
+      child: DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.85,
+        minChildSize: 0.4,
+        maxChildSize: 0.95,
+        builder: (context, controller) => Material(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          child: Column(
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 44,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.black12,
+                  borderRadius: BorderRadius.circular(2),
                 ),
-                onChanged: (v) => setState(() => _q = v),
-                onSubmitted: (_) => _refresh(),
               ),
-            ),
-            const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: Row(
+                  children: [
+                    Text(
+                      'Jugadores (${widget.countLoader != null ? _dbTotal : filtered.length})',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Refrescar',
+                      icon: const Icon(Icons.refresh),
+                      onPressed: _refresh,
+                    ),
+                  ],
+                ),
+              ),
 
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : filtered.isEmpty
-                  ? const Center(child: Text('Sin jugadores'))
-                  : ListView.builder(
-                      controller: controller,
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                      itemCount: filtered.length,
-                      itemBuilder: (_, i) {
-                        final p = filtered[i];
-                        final locked = _isLocked(p);
-                        return Card(
-                          margin: const EdgeInsets.symmetric(vertical: 6),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            child: ListTile(
-                              isThreeLine: true,
-                              contentPadding: const EdgeInsets.only(right: 4),
-                              leading: const Icon(Icons.person_outline),
-                              title: Text(
-                                p.name,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
+              // 👇 NUEVO: TabBar
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: TabBar(
+                  tabs: const [
+                    Tab(text: 'Activos'),
+                    Tab(text: 'Histórico'),
+                  ],
+                  onTap: (i) {
+                    final next = (i == 0) ? 'active' : 'historical';
+                    if (_state != next) {
+                      setState(() => _state = next);
+                      _refresh(); // recarga con el nuevo estado
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Buscador
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: TextField(
+                  decoration: const InputDecoration(
+                    hintText: 'Buscar',
+                    prefixIcon: Icon(Icons.search),
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (v) => setState(() => _q = v),
+                  onSubmitted: (_) => _refresh(),
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              Expanded(
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : filtered.isEmpty
+                        ? const Center(child: Text('Sin jugadores'))
+                        : ListView.builder(
+                            controller: controller,
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                            itemCount: filtered.length,
+                            itemBuilder: (_, i) {
+                              final p = filtered[i];
+                              final locked = _isLocked(p);
+                              return Card(
+                                margin:
+                                    const EdgeInsets.symmetric(vertical: 6),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
-                              ),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(height: 4),
-                                  Text.rich(
-                                    TextSpan(
-                                      children: [
-                                        const TextSpan(
-                                          text: 'Jugador: ',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        TextSpan(text: p.name),
-                                      ],
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8),
+                                  child: ListTile(
+                                    isThreeLine: true,
+                                    contentPadding:
+                                        const EdgeInsets.only(right: 4),
+                                    leading:
+                                        const Icon(Icons.person_outline),
+                                    title: Text(
+                                      p.name,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text.rich(
-                                    TextSpan(
+                                    subtitle: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
-                                        const TextSpan(
-                                          text: 'Código: ',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        TextSpan(text: p.code),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text.rich(
-                                    TextSpan(
-                                      children: [
-                                        const TextSpan(
-                                          text: 'Juego asignado: ',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        TextSpan(
-                                          text:
-                                              'Juego #${p.gameId} · ${p.lotteryName}',
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text.rich(
-                                    TextSpan(
-                                      children: [
-                                        const TextSpan(
-                                          text: 'Balotas: ',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        TextSpan(
-                                          text: p.numbers
-                                              .map(
-                                                (n) => n.toString().padLeft(
-                                                  3,
-                                                  '0',
+                                        const SizedBox(height: 4),
+                                        Text.rich(
+                                          TextSpan(
+                                            children: [
+                                              const TextSpan(
+                                                text: 'Jugador: ',
+                                                style: TextStyle(
+                                                  fontWeight:
+                                                      FontWeight.w600,
                                                 ),
-                                              )
-                                              .join(', '),
+                                              ),
+                                              TextSpan(text: p.name),
+                                            ],
+                                          ),
                                         ),
+                                        const SizedBox(height: 2),
+                                        Text.rich(
+                                          TextSpan(
+                                            children: [
+                                              const TextSpan(
+                                                text: 'Código: ',
+                                                style: TextStyle(
+                                                  fontWeight:
+                                                      FontWeight.w600,
+                                                ),
+                                              ),
+                                              TextSpan(text: p.code),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text.rich(
+                                          TextSpan(
+                                            children: [
+                                              const TextSpan(
+                                                text: 'Juego asignado: ',
+                                                style: TextStyle(
+                                                  fontWeight:
+                                                      FontWeight.w600,
+                                                ),
+                                              ),
+                                              TextSpan(
+                                                text:
+                                                    'Juego #${p.gameId} · ${p.lotteryName}',
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text.rich(
+                                          TextSpan(
+                                            children: [
+                                              const TextSpan(
+                                                text: 'Balotas: ',
+                                                style: TextStyle(
+                                                  fontWeight:
+                                                      FontWeight.w600,
+                                                ),
+                                              ),
+                                              TextSpan(
+                                                text: p.numbers
+                                                    .map(
+                                                      (n) =>
+                                                          n.toString().padLeft(
+                                                                3,
+                                                                '0',
+                                                              ),
+                                                    )
+                                                    .join(', '),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Wrap(
+                                          spacing: 12,
+                                          runSpacing: 2,
+                                          children: [
+                                            Text.rich(
+                                              TextSpan(
+                                                children: [
+                                                  const TextSpan(
+                                                    text: 'Fecha: ',
+                                                    style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                  TextSpan(text: p.playedDate),
+                                                ],
+                                              ),
+                                            ),
+                                            Text.rich(
+                                              TextSpan(
+                                                children: [
+                                                  const TextSpan(
+                                                    text: 'Hora: ',
+                                                    style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                  TextSpan(text: p.playedTime),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        if (locked)
+                                          const Padding(
+                                            padding: EdgeInsets.only(top: 4),
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.lock_clock,
+                                                    size: 16),
+                                                SizedBox(width: 6),
+                                                Text(
+                                                  'Edición bloqueada',
+                                                  style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
                                       ],
                                     ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Wrap(
-                                    spacing: 12,
-                                    runSpacing: 2,
-                                    children: [
-                                      Text.rich(
-                                        TextSpan(
-                                          children: [
-                                            const TextSpan(
-                                              text: 'Fecha: ',
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                            TextSpan(text: p.playedDate),
-                                          ],
-                                        ),
-                                      ),
-                                      Text.rich(
-                                        TextSpan(
-                                          children: [
-                                            const TextSpan(
-                                              text: 'Hora: ',
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                            TextSpan(text: p.playedTime),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  if (locked)
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 4),
+                                    trailing: FittedBox(
+                                      fit: BoxFit.scaleDown,
                                       child: Row(
-                                        children: const [
-                                          Icon(Icons.lock_clock, size: 16),
-                                          SizedBox(width: 6),
-                                          Text(
-                                            'Edición bloqueada',
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                            ),
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          // EDITAR
+                                          Builder(
+                                            builder: (ctx) {
+                                              final canEdit =
+                                                  widget.onUpdateNumbers !=
+                                                          null &&
+                                                      _workingId != p.id &&
+                                                      !locked;
+                                              return IconButton(
+                                                tooltip: locked
+                                                    ? 'Edición bloqueada: el juego ya inició'
+                                                    : 'Editar',
+                                                icon: (_workingId == p.id)
+                                                    ? const SizedBox(
+                                                        width: 20,
+                                                        height: 20,
+                                                        child:
+                                                            CircularProgressIndicator(
+                                                          strokeWidth: 2,
+                                                        ),
+                                                      )
+                                                    : Icon(locked
+                                                        ? Icons.lock_clock
+                                                        : Icons.edit),
+                                                color: canEdit
+                                                    ? Colors.deepPurple
+                                                    : null,
+                                                onPressed: !canEdit
+                                                    ? null
+                                                    : () => _editNumbers(
+                                                        p, i),
+                                              );
+                                            },
+                                          ),
+
+                                          // ELIMINAR
+                                          IconButton(
+                                            tooltip: locked
+                                                ? 'Bloqueado'
+                                                : 'Eliminar',
+                                            icon: (_workingId == p.id)
+                                                ? const SizedBox(
+                                                    width: 20,
+                                                    height: 20,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                    ),
+                                                  )
+                                                : const Icon(Icons.delete),
+                                            color: Colors.red,
+                                            onPressed: (_workingId == p.id ||
+                                                    widget.onDelete == null ||
+                                                    locked)
+                                                ? null
+                                                : () async {
+                                                    final ctx = context;
+                                                    final ok =
+                                                        await custom
+                                                            .AppDialogs
+                                                            .confirm(
+                                                      context: ctx,
+                                                      title:
+                                                          'Eliminar jugador',
+                                                      message:
+                                                          '¿Deseas eliminar las balotas de "${p.name}" para este juego?\n'
+                                                          'Esto no elimina al usuario, solo sus números.',
+                                                      okText: 'Sí, eliminar',
+                                                      cancelText: 'Cancelar',
+                                                      destructive: true,
+                                                      icon: Icons
+                                                          .delete_forever,
+                                                    );
+                                                    if (ok != true ||
+                                                        !ctx.mounted) {
+                                                      return;
+                                                    }
+                                                    setState(() =>
+                                                        _workingId = p.id);
+                                                    try {
+                                                      await widget.onDelete!(
+                                                        p.id,
+                                                        p.gameId,
+                                                      );
+                                                      if (!ctx.mounted) {
+                                                        return;
+                                                      }
+                                                      setState(() {
+                                                        _all.removeAt(i);
+                                                        _workingId = null;
+                                                      });
+                                                      await custom
+                                                          .AppDialogs
+                                                          .success(
+                                                        context: ctx,
+                                                        title: 'Eliminado',
+                                                        message:
+                                                            'Se eliminaron las balotas del jugador para este juego.',
+                                                      );
+                                                    } catch (e) {
+                                                      if (!ctx.mounted) {
+                                                        return;
+                                                      }
+                                                      setState(() =>
+                                                          _workingId = null);
+                                                      await custom
+                                                          .AppDialogs
+                                                          .error(
+                                                        context: ctx,
+                                                        title: 'Error',
+                                                        message:
+                                                            'No se pudo eliminar: $e',
+                                                      );
+                                                    }
+                                                  },
                                           ),
                                         ],
                                       ),
                                     ),
-                                ],
-                              ),
-
-                              // trailing
-                              trailing: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    // ← EDITAR (púrpura)
-                                    Builder(
-                                      builder: (ctx) {
-                                        // solo edita si hay callback, no hay trabajo en curso y NO está bloqueado por fecha/hora
-                                        final canEdit =
-                                            widget.onUpdateNumbers != null &&
-                                            _workingId != p.id &&
-                                            !locked;
-
-                                        return IconButton(
-                                          tooltip: locked
-                                              ? 'Edición bloqueada: el juego ya inició'
-                                              : 'Editar',
-                                          icon: (_workingId == p.id)
-                                              ? const SizedBox(
-                                                  width: 20,
-                                                  height: 20,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 2,
-                                                      ),
-                                                )
-                                              : Icon(
-                                                  locked
-                                                      ? Icons.lock_clock
-                                                      : Icons.edit,
-                                                ),
-                                          color: canEdit
-                                              ? Colors.deepPurple
-                                              : null,
-                                          onPressed: !canEdit
-                                              ? null
-                                              : () => _editNumbers(p, i),
-                                        );
-                                      },
-                                    ),
-
-                                    // ← ELIMINAR (rojo)
-                                    IconButton(
-                                      tooltip: locked
-                                          ? 'Bloqueado'
-                                          : 'Eliminar',
-                                      icon: (_workingId == p.id)
-                                          ? const SizedBox(
-                                              width: 20,
-                                              height: 20,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : const Icon(Icons.delete),
-                                      color: Colors.red,
-                                      onPressed:
-                                          (_workingId == p.id ||
-                                              widget.onDelete == null ||
-                                              locked)
-                                          ? null
-                                          : () async {
-                                              final ctx = context;
-
-                                              final ok =
-                                                  await custom
-                                                      .AppDialogs.confirm(
-                                                    context: ctx,
-                                                    title: 'Eliminar jugador',
-                                                    message:
-                                                        '¿Deseas eliminar las balotas de "${p.name}" para este juego?\n'
-                                                        'Esto no elimina al usuario, solo sus números.',
-                                                    okText: 'Sí, eliminar',
-                                                    cancelText: 'Cancelar',
-                                                    destructive: true,
-                                                    icon: Icons.delete_forever,
-                                                  );
-
-                                              if (ok != true || !ctx.mounted) {
-                                                return;
-                                              }
-
-                                              setState(() => _workingId = p.id);
-                                              try {
-                                                await widget.onDelete!(
-                                                  p.id,
-                                                  p.gameId,
-                                                );
-
-                                                if (!ctx.mounted) {
-                                                  return;
-                                                }
-
-                                                setState(() {
-                                                  _all.removeAt(
-                                                    i,
-                                                  ); // quita del listado actual
-                                                  _workingId = null;
-                                                });
-
-                                                await custom.AppDialogs.success(
-                                                  context: ctx,
-                                                  title: 'Eliminado',
-                                                  message:
-                                                      'Se eliminaron las balotas del jugador para este juego.',
-                                                );
-                                              } catch (e) {
-                                                if (!ctx.mounted) {
-                                                  return;
-                                                }
-                                                setState(
-                                                  () => _workingId = null,
-                                                );
-                                                await custom.AppDialogs.error(
-                                                  context: ctx,
-                                                  title: 'Error',
-                                                  message:
-                                                      'No se pudo eliminar: $e',
-                                                );
-                                              }
-                                            },
-                                    ),
-                                  ],
+                                  ),
                                 ),
-                              ),
-                            ),
+                              );
+                            },
                           ),
-                        );
-                      },
-                    ),
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -1,19 +1,33 @@
 # app/services/admin/players_service.py
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 from sqlalchemy import text
 from app.db.database import db
 
-def list_players(q: str, page: int, per_page: int) -> Dict[str, Any]:
+State = Literal["active", "historical", "all"]
+
+def list_players(q: str, page: int, per_page: int, state: State = "active") -> Dict[str, Any]:
     """
     Devuelve una fila por (player=taken_by, game_id) con:
     player_name, code, game_id, lottery_name, played_date, played_time, numbers (array).
-    Agrupamos para que 5 balotas de un mismo jugador en un juego cuenten como 1 registro.
+
+    - state="active":    juegos SIN número ganador (g.winning_number IS NULL)
+    - state="historical":juegos CON número ganador (g.winning_number IS NOT NULL)
+    - state="all":       todos
     """
     page = max(page, 1)
     per_page = min(max(per_page, 1), 200)
     offset = (page - 1) * per_page
 
-    base_list_noq = text("""
+    # 👇 Usar state_id: 1 = activo, 2 = cerrado
+    state_where = ""
+    if state == "active":
+        state_where = "AND COALESCE(g.state_id, 1) = 1"
+    elif state == "historical":
+        state_where = "AND COALESCE(g.state_id, 1) = 2"
+    # state == "all" => sin filtro extra
+
+
+    base_list_noq = text(f"""
         SELECT
           u.id                                  AS user_id,
           u.name                                AS player_name,
@@ -27,6 +41,8 @@ def list_players(q: str, page: int, per_page: int) -> Dict[str, Any]:
         JOIN public.games      g  ON g.id = gn.game_id
         LEFT JOIN public.lotteries l ON l.id = g.lottery_id
         JOIN public.users      u  ON u.id = gn.taken_by
+        WHERE 1=1
+          {state_where}
         GROUP BY
           u.id, u.name, u.public_code,
           g.id, COALESCE(l.name, g.lottery_name),
@@ -36,18 +52,20 @@ def list_players(q: str, page: int, per_page: int) -> Dict[str, Any]:
         LIMIT :limit OFFSET :offset
     """)
 
-    base_count_noq = text("""
+    base_count_noq = text(f"""
         SELECT COUNT(*) AS total
         FROM (
           SELECT u.id, g.id
           FROM public.game_numbers gn
           JOIN public.games g ON g.id = gn.game_id
           JOIN public.users u ON u.id = gn.taken_by
+          WHERE 1=1
+            {state_where}
           GROUP BY u.id, g.id
         ) t
     """)
 
-    base_list_q = text("""
+    base_list_q = text(f"""
         SELECT
           u.id                                  AS user_id,
           u.name                                AS player_name,
@@ -62,37 +80,7 @@ def list_players(q: str, page: int, per_page: int) -> Dict[str, Any]:
         LEFT JOIN public.lotteries l ON l.id = g.lottery_id
         JOIN public.users      u  ON u.id = gn.taken_by
         WHERE
-              CAST(u.id AS TEXT) ILIKE :like
-           OR u.name ILIKE :like
-           OR u.public_code ILIKE :like
-           OR CAST(g.id AS TEXT) ILIKE :like
-           OR COALESCE(l.name, g.lottery_name) ILIKE :like
-           OR EXISTS (
-               SELECT 1
-               FROM public.game_numbers gn2
-               WHERE gn2.game_id = g.id
-                 AND gn2.taken_by = u.id
-                 AND CAST(gn2.number AS TEXT) ILIKE :like
-           )
-        GROUP BY
-          u.id, u.name, u.public_code,
-          g.id, COALESCE(l.name, g.lottery_name),
-          to_char(g.played_at, 'YYYY-MM-DD'),
-          to_char(g.played_at, 'HH24:MI')
-        ORDER BY g.played_at DESC, g.id DESC
-        LIMIT :limit OFFSET :offset
-    """)
-
-    base_count_q = text("""
-        SELECT COUNT(*) AS total
-        FROM (
-          SELECT u.id, g.id
-          FROM public.game_numbers gn
-          JOIN public.games g ON g.id = gn.game_id
-          JOIN public.users u ON u.id = gn.taken_by
-          LEFT JOIN public.lotteries l ON l.id = g.lottery_id
-          WHERE
-                CAST(u.id AS TEXT) ILIKE :like
+              ( CAST(u.id AS TEXT) ILIKE :like
              OR u.name ILIKE :like
              OR u.public_code ILIKE :like
              OR CAST(g.id AS TEXT) ILIKE :like
@@ -103,7 +91,39 @@ def list_players(q: str, page: int, per_page: int) -> Dict[str, Any]:
                  WHERE gn2.game_id = g.id
                    AND gn2.taken_by = u.id
                    AND CAST(gn2.number AS TEXT) ILIKE :like
-             )
+             ))
+          {state_where}
+        GROUP BY
+          u.id, u.name, u.public_code,
+          g.id, COALESCE(l.name, g.lottery_name),
+          to_char(g.played_at, 'YYYY-MM-DD'),
+          to_char(g.played_at, 'HH24:MI')
+        ORDER BY g.played_at DESC, g.id DESC
+        LIMIT :limit OFFSET :offset
+    """)
+
+    base_count_q = text(f"""
+        SELECT COUNT(*) AS total
+        FROM (
+          SELECT u.id, g.id
+          FROM public.game_numbers gn
+          JOIN public.games g ON g.id = gn.game_id
+          JOIN public.users u ON u.id = gn.taken_by
+          LEFT JOIN public.lotteries l ON l.id = g.lottery_id
+          WHERE
+                ( CAST(u.id AS TEXT) ILIKE :like
+               OR u.name ILIKE :like
+               OR u.public_code ILIKE :like
+               OR CAST(g.id AS TEXT) ILIKE :like
+               OR COALESCE(l.name, g.lottery_name) ILIKE :like
+               OR EXISTS (
+                   SELECT 1
+                   FROM public.game_numbers gn2
+                   WHERE gn2.game_id = g.id
+                     AND gn2.taken_by = u.id
+                     AND CAST(gn2.number AS TEXT) ILIKE :like
+               ))
+            {state_where}
           GROUP BY u.id, g.id
         ) t
     """)
@@ -115,7 +135,7 @@ def list_players(q: str, page: int, per_page: int) -> Dict[str, Any]:
     else:
         params = {"limit": per_page, "offset": offset}
         rows = db.session.execute(base_list_noq, params).mappings().all()
-        total = db.session.execute(base_count_noq).scalar() or 0
+        total = db.session.execute(base_count_noq, params).scalar() or 0
 
     items: List[Dict[str, Any]] = []
     for r in rows:
