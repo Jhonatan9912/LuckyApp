@@ -23,7 +23,9 @@ Al usar la Aplicación, el Usuario declara ser **mayor de 18 años** (Ley 643 de
 Incluye:
 - **Registro** y formación de grupos.  
 - **Asignación de números** para apuestas.  
-- **Planes**: gratuitos (p. ej., chance 3 cifras) y pagos (p. ej., chance 4 cifras, loterías, plan premium para Baloto).
+- **Planes:**  
+  - **Versión gratuita:** permite acceder libremente a la plataforma y presionar **“Jugar”** para generar **5 balotas aleatorias de 3 dígitos** por sesión.  
+  - **Versión PRO (paga):** ofrece funcionalidades avanzadas como **reservar números**, **consultar el historial de resultados de juego**, y acceder a herramientas adicionales de análisis y organización dentro de la aplicación.
 
 **Aclaraciones:**
 - **No** operamos juegos de azar. Ofrecemos **asesoría/organización**. El Usuario **debe apostar** en casas autorizadas por **Coljuegos**.  
