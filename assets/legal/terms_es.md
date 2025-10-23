@@ -31,16 +31,69 @@ Incluye:
 - **Donaciones voluntarias**: si un Usuario desea agradecer tras ganar, puede donar de forma voluntaria (sin obligación) por los medios que se habiliten (botón de pago, transferencia, enlace).  
 - **Libertad de apuesta**: el Usuario puede usar los números asignados en la casa autorizada de su preferencia. No facilitamos apuestas directas ni recibimos fondos para ellas.
 
-## 3. Programa de Referidos
-**Funcionamiento:** cada Usuario obtiene un **enlace/código único** para invitar a nuevos usuarios.  
-**Comisión vitalicia:** si un referido se registra y adquiere un **plan pago anual** y lo renueva (p. ej., chance 4 cifras, Astro, plan premium), quien refirió recibe **hasta el 40%** sobre el valor de la suscripción, mientras el referido mantenga su plan activo.
+## 3. Política de Referidos – Aplicación CAMO
+> La siguiente política forma parte integral de estos Términos y Condiciones.
 
-**Condiciones:**
-- Las comisiones se pagan **mensualmente** (transferencia bancaria, PayPal), sujetas a un monto mínimo de pago **[definir monto mínimo, p. ej., $1.000.000 COP]**.  
-- El referido debe registrarse con el **enlace/código** y mantener **suscripción activa**.  
-- Nos reservamos el derecho de **suspender comisiones** ante **actividad fraudulenta** (cuentas falsas, abuso del sistema).  
-- El Usuario es responsable de **declarar** las comisiones como **ingresos** según el **Estatuto Tributario**.  
-- Transparencia: el Usuario puede **consultar historial** de referidos y comisiones en la Aplicación.
+### 1. Objeto del programa
+El programa de referidos de CAMO busca incentivar a los usuarios que recomienden los servicios de la aplicación a nuevos clientes que se registren y adquieran una suscripción activa.  
+Este programa tiene una finalidad estrictamente comercial y de promoción de servicios, sin que constituya actividad financiera, de inversión o captación de dinero.
+
+---
+
+### 2. Naturaleza del servicio CAMO
+CAMO es una plataforma de asesoría y orientación digital en temas relacionados con los juegos de suerte y azar, desde una perspectiva informativa, estadística y recreativa.  
+La aplicación no vende ni administra apuestas, ni interviene en la operación de juegos de azar.  
+Los ingresos provienen exclusivamente del pago por servicios de asesoría tecnológica y acceso a funcionalidades dentro de la aplicación.
+
+---
+
+### 3. Funcionamiento del programa de referidos
+Cada usuario registrado podrá compartir su **código o enlace de referido** con otras personas.  
+
+Cuando un nuevo usuario se registre mediante dicho enlace y **pague su suscripción mensual**, el usuario que refirió recibirá una **comisión equivalente al 40 % del valor neto** de dicha suscripción.
+
+Las comisiones acumuladas podrán ser retiradas cuando el saldo alcance o supere los **$100.000 COP**.
+
+El pago se realizará dentro de un plazo máximo de **dos (2) días hábiles**, contados desde el momento en que las plataformas de pago confirmen el abono efectivo a CAMO.
+
+Los pagos se efectuarán mediante los **canales autorizados** por la aplicación (transferencia bancaria, billetera digital u otros medios electrónicos).
+
+---
+
+### 4. Transparencia y condiciones del pago
+El usuario solo recibirá comisión por **referidos que efectivamente paguen** su suscripción.
+
+Si un pago es **reversado, anulado o reportado como fraude**, la comisión será **descontada** del saldo correspondiente.
+
+Los ingresos generados por el programa de referidos **no constituyen salario ni relación laboral**, sino un **incentivo comercial** bajo los términos aquí establecidos.
+
+---
+
+### 5. Prohibición de prácticas piramidales o engañosas
+CAMO **no realiza esquemas multinivel** ni promueve la vinculación de personas para obtener beneficios financieros.  
+Las comisiones derivan únicamente de **ventas reales del servicio**, no del número de personas registradas.  
+Por lo tanto, el programa **no constituye** una pirámide ni captación masiva de dinero, conforme a la **Ley 1700 de 2013**.
+
+---
+
+### 6. Protección al consumidor y cumplimiento legal
+CAMO cumple con las normas establecidas por la **Superintendencia de Industria y Comercio (SIC)** en materia de publicidad, comercio electrónico y protección al consumidor (**Ley 1480 de 2011**).  
+Los usuarios podrán solicitar aclaraciones o reportar inconvenientes mediante los **canales oficiales de atención**.
+
+---
+
+### 7. Aceptación de la política
+La participación en el programa de referidos implica la **aceptación total** de esta política y de los **términos y condiciones** generales de CAMO.  
+CAMO podrá **modificar** los porcentajes de comisión o las condiciones del programa, **notificando previamente** a los usuarios por los medios digitales dispuestos para ello.
+
+---
+
+**📍 CAMO**  
+Servicio de asesoría digital en materia de juegos de suerte y azar  
+**Contacto:** carloscamo_1981@yahoo.com  
+**Versión:** 22/10/2025
+
+---
 
 ## 4. Restricción geográfica
 La Aplicación está destinada **exclusivamente** a usuarios en **Colombia**. El acceso desde el exterior puede ser restringido. (A futuro se podría habilitar uso internacional).
@@ -60,7 +113,7 @@ El Usuario es responsable de la **confidencialidad** de su cuenta y de reportar 
 El Usuario se compromete a:
 - Usar la Aplicación **solo** para fines **legales** y conforme a **Coljuegos**.  
 - No compartir **números asignados** ni **códigos de referidos** fuera de los términos permitidos.  
-- No realizar **fraudes** (bots, cuentas falsas para referidos).  
+- No realizar **fraudes** (bots, cuentas falsas para referidos) ni **prácticas piramidales**.  
 - Respetar la **propiedad intelectual** de la Aplicación.
 
 Nos reservamos la suspensión ante usos ilegales, acoso o spam.
