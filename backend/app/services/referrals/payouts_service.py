@@ -135,6 +135,38 @@ def _get_commission_percent() -> float:
     except Exception:
         return 0.0
 
+def _get_commission_percent_for_product(product_id: str) -> float:
+    """
+    Devuelve el % de comisión según referral_commission_rules
+    para el product_id dado. Si no hay regla activa, cae al
+    valor global de commission_settings (referral_cut_percent).
+    """
+    pid = (product_id or "").strip()
+    if not pid:
+        return _get_commission_percent()
+
+    row = db.session.execute(
+        text("""
+            SELECT percent
+            FROM referral_commission_rules
+            WHERE product_id = :pid
+              AND active IS TRUE
+              AND (effective_from IS NULL OR effective_from <= NOW())
+              AND (effective_to   IS NULL OR effective_to   >  NOW())
+            ORDER BY id DESC
+            LIMIT 1
+        """),
+        {"pid": pid},
+    ).first()
+
+    if not row or row[0] is None:
+        return _get_commission_percent()
+
+    try:
+        return float(str(row[0]).strip())
+    except Exception:
+        return _get_commission_percent()
+
 
 def _get_referrer_user_id(referred_user_id: int) -> int | None:
     """
@@ -173,7 +205,7 @@ def register_referral_commission(
     if not referrer_id:
         return False  # no hay a quién pagar
 
-    percent = _get_commission_percent()  # p. ej. 40
+    percent = _get_commission_percent_for_product(product_id)
     commission_micros = int(round(amount_micros * (percent / 100.0)))
     when = (event_time or datetime.now(timezone.utc)).isoformat()
 

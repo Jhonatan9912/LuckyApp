@@ -5,8 +5,8 @@ from datetime import datetime, timezone, timedelta
 from app.services.constants import ACTIVE_PAYOUT_REQUEST_STATUSES, HELD_COMMISSION_STATUSES
 from sqlalchemy import text, bindparam 
 
-# Cambia esta condición si tu lógica PRO es distinta (status/expires_at).
-PRO_CONDITION = "s.status = 'active'"
+# PRO si tiene alguna suscripción PRO con fecha de vencimiento futura
+PRO_CONDITION = "s.entitlement = 'pro' AND s.expires_at > NOW()"
 
 # app/services/referrals/referral_service.py  (o donde esté)
 from sqlalchemy import text
@@ -24,11 +24,13 @@ def get_summary_for_user(user_id: int, hold_days: int = 3) -> dict:
           SELECT r.id,
                  r.referred_user_id,
                  EXISTS (
-                   SELECT 1
-                   FROM user_subscriptions s
-                   WHERE s.user_id = r.referred_user_id
-                     AND s.status = 'active'
-                 ) AS pro_active
+  SELECT 1
+  FROM user_subscriptions s
+  WHERE s.user_id = r.referred_user_id
+    AND s.entitlement = 'pro'
+    AND s.expires_at > NOW()
+) AS pro_active
+
           FROM referrals r
           WHERE r.referrer_user_id = :uid
         ),

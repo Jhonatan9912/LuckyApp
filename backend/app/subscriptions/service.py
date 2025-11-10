@@ -221,13 +221,13 @@ def _pick_line_item(line_items: list[dict]) -> dict:
 
 def _price_from_catalog(product_id: str, default_currency: str = "COP") -> tuple[int, str]:
     """
-    Busca un precio de catálogo para el product_id.
-    Hace match por prefijo para cubrir variantes de base plan / offers.
-    Devuelve (price_micros, currency).
+    Precios por defecto para cuando NO tenemos info real de Google.
     """
     CATALOG = {
-        "cm_suscripcion": (10_000_000, "COP"),  # 10.000 COP en micros
-        # agrega otros productos si tienes...
+        # 60.000 COP → 60_000_000_000 micros
+        "cm_suscripcion":  (60_000_000_000, "COP"),
+        # 20.000 COP → 20_000_000_000 micros
+        "cml_suscripcion": (20_000_000_000, "COP"),
     }
     pid = (product_id or "").strip()
     # match exacto
@@ -241,34 +241,68 @@ def _price_from_catalog(product_id: str, default_currency: str = "COP") -> tuple
 
 def get_status(user_id: Optional[int]) -> SubscriptionStatus:
     if not user_id:
-        return SubscriptionStatus(user_id=None, entitlement="pro", is_premium=False, expires_at=None, status="none", reason="not_authenticated")
+        return SubscriptionStatus(
+            user_id=None,
+            entitlement="pro",
+            is_premium=False,
+            expires_at=None,
+            status="none",
+            reason="not_authenticated"
+        )
 
+    uid = int(user_id)
+
+    # 🔁 Housekeeping: expira suscripciones PRO viejas de este usuario
+    db.session.execute(text("""
+        UPDATE user_subscriptions
+           SET status = 'expired',
+               is_premium = false
+         WHERE user_id = :uid
+           AND entitlement = 'pro'
+           AND expires_at IS NOT NULL
+           AND expires_at < NOW()
+           AND (status <> 'expired' OR is_premium = true)
+    """), {"uid": uid})
+    db.session.commit()
+
+    # Buscar la suscripción PRO más reciente del usuario
     q = (
         UserSubscription.query
-        .filter_by(user_id=int(user_id), entitlement="pro")
-        # preferimos google_play si existe ese campo; si no, igual funcionará
-    .order_by(
-        UserSubscription.expires_at.desc().nullslast()
-    )
-
+        .filter_by(user_id=uid, entitlement="pro")
+        .order_by(UserSubscription.expires_at.desc().nullslast())
     )
 
     sub: Optional[UserSubscription] = q.first()
     if not sub:
-        return SubscriptionStatus(user_id=int(user_id), entitlement="pro", is_premium=False, expires_at=None, status="none")
+        return SubscriptionStatus(
+            user_id=uid,
+            entitlement="pro",
+            is_premium=False,
+            expires_at=None,
+            status="none"
+        )
 
-    end_at_utc: Optional[datetime] = _to_aware_utc(_get_attr(sub, ["expires_at", "current_period_end"]))
-    start_at_utc: Optional[datetime] = _to_aware_utc(_get_attr(sub, ["period_start", "current_period_start"]))
+    end_at_utc: Optional[datetime] = _to_aware_utc(
+        _get_attr(sub, ["expires_at", "current_period_end"])
+    )
+    start_at_utc: Optional[datetime] = _to_aware_utc(
+        _get_attr(sub, ["period_start", "current_period_start"])
+    )
     status_str: str = getattr(sub, "status", "none") or "none"
     auto_renewing: bool = bool(getattr(sub, "auto_renewing", False))
 
     now = _now_utc()
     not_expired = bool(end_at_utc and end_at_utc > now)
+
+    # Si ya está vencida, forzamos status lógico a 'expired'
+    if not not_expired:
+        status_str = "expired"
+
     grant = _catalog_get(status_str)["grant_access"]
     is_premium = bool(not_expired and grant)
 
     return SubscriptionStatus(
-        user_id=int(user_id),
+        user_id=uid,
         entitlement="pro",
         is_premium=is_premium,
         expires_at=end_at_utc.isoformat() if end_at_utc else None,
@@ -661,14 +695,14 @@ def backfill_commissions(limit: int = 1000) -> Dict[str, Any]:
     from app.subscriptions.models import UserSubscription
 
     # ====== PRECIOS PARA BACKFILL ======
-    # 10.000 COP => 10_000_000 micros
-    DEFAULT_PRICE_MICROS = 10_000_000
+    # 60.000 COP y 20.000 COP en micros
+    DEFAULT_PRICE_MICROS = 20_000_000_000  # fallback mínimo
 
-    # Tu producto real:
     PRICE_BY_PRODUCT = {
-        "cm_suscripcion": 10_000_000,
+        "cm_suscripcion":  60_000_000_000,  # 60.000
+        "cml_suscripcion": 20_000_000_000,  # 20.000
     }
-    # ===================================
+
 
     checked = 0
     credited = 0
@@ -694,14 +728,16 @@ def backfill_commissions(limit: int = 1000) -> Dict[str, Any]:
                 skipped += 1
                 continue
 
-            # Si tu modelo ya guarda el monto en micros, úsalo; si no, usa el mapa/DEFAULT
+            # Si tu modelo ya guarda el monto en micros, úsalo; si no, usa el mapa
             amount_micros = getattr(sub, "amount_micros", None)
             if amount_micros is None:
-                amount_micros = PRICE_BY_PRODUCT.get(product_id, DEFAULT_PRICE_MICROS)
+                amount_micros = PRICE_BY_PRODUCT.get(product_id)
 
+            # Si no tenemos precio (producto desconocido), NO generamos comisión
             if not isinstance(amount_micros, int) or amount_micros <= 0:
                 skipped += 1
                 continue
+
 
             currency = "COP"
             token = getattr(sub, "purchase_token", None) or f"local-{sub.id}"
