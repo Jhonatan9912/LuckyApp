@@ -201,16 +201,17 @@ Future<String?> _pickPlanDialog(BuildContext context, UserRow u) async {
     }
   }
 Future<void> _grantPro(UserRow u) async {
-  // 🔒 Blindaje extra: si ya es PRO, no permitir activarlo
-if (u.subscriptionEntitlement?.toLowerCase() == 'pro') {
-  await custom.AppDialogs.error(
-    context: context,
-    title: 'Ya tiene suscripción activa',
-    message: 'El usuario "${u.name}" ya cuenta con una suscripción PRO activa.',
-    okText: 'Cerrar',
-  );
-  return;
-}
+  // 🔒 Blindaje: solo bloquear si REALMENTE tiene PRO activa
+  if (_hasActivePro(u)) {
+    await custom.AppDialogs.error(
+      context: context,
+      title: 'Ya tiene suscripción activa',
+      message:
+          'El usuario "${u.name}" ya cuenta con una suscripción PRO activa.',
+      okText: 'Cerrar',
+    );
+    return;
+  }
 
   if (widget.onManualGrantPro == null) return;
 
@@ -218,12 +219,11 @@ if (u.subscriptionEntitlement?.toLowerCase() == 'pro') {
   final productId = await _pickPlanDialog(context, u);
   if (!mounted || productId == null) return; // canceló
 
-  // Texto bonito según el plan
   final planLabel = productId == 'cm_suscripcion'
       ? 'PRO Completa (60.000)'
       : 'PRO Lite (20.000)';
 
-  // 2) Confirmar activación
+  // 2) Confirmar
   final ok = await custom.AppDialogs.confirm(
     context: context,
     title: 'Activar PRO',
@@ -239,7 +239,6 @@ if (u.subscriptionEntitlement?.toLowerCase() == 'pro') {
   if (ok != true || !mounted) return;
 
   try {
-    // 3) Llamar al backend con userId + productId
     final resp = await widget.onManualGrantPro!(u.id, productId);
 
     if (!mounted) return;
@@ -266,7 +265,6 @@ if (u.subscriptionEntitlement?.toLowerCase() == 'pro') {
     );
   }
 }
-
 
 Future<void> _showManualProDialog(BuildContext context, UserRow u) async {
   final ok = await custom.AppDialogs.confirm(
@@ -332,6 +330,38 @@ Future<void> _activatePro(UserRow u) async {
     // ⭐ Texto para quienes no tienen suscripción
     return 'GRATIS'; // o 'Sin suscripción' si lo prefieres
   }
+bool _hasActivePro(UserRow u) {
+  final status = (u.subscriptionStatus ?? '').toLowerCase();
+  final ent = (u.subscriptionEntitlement ?? '').toLowerCase();
+
+  // si no es PRO, nunca se considera "PRO activa"
+  if (ent != 'pro') return false;
+
+  // intenta parsear la fecha de vencimiento
+  final expiresStr = u.subscriptionExpiresAt;
+  if (expiresStr == null || expiresStr.isEmpty) {
+    return false;
+  }
+
+  DateTime? expiresAt;
+  try {
+    expiresAt = DateTime.parse(expiresStr).toUtc();
+  } catch (_) {
+    return false;
+  }
+
+  final now = DateTime.now().toUtc();
+  final notExpired = expiresAt.isAfter(now);
+
+  // 🔒 Consideramos PRO activa solo si:
+  // - status == ACTIVE (o similar) Y
+  // - la fecha de vencimiento está en el futuro
+  if (status == 'active' && notExpired) {
+    return true;
+  }
+
+  return false;
+}
 
   @override
   Widget build(BuildContext context) {
@@ -414,7 +444,7 @@ Future<void> _activatePro(UserRow u) async {
                         final showStatus = st.isNotEmpty && st != 'NONE';
                         final showExpires =
                             (u.subscriptionExpiresAt ?? '').isNotEmpty;
-
+                        final hasActivePro = _hasActivePro(u);
                         return Card(
                           margin: const EdgeInsets.symmetric(vertical: 6),
                           shape: RoundedRectangleBorder(
@@ -527,17 +557,16 @@ trailing: FittedBox(
       : Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // ⭐ Nuevo botón PRO
-           // Mostrar la estrella SOLO si NO tiene PRO activo
-if (u.subscriptionEntitlement?.toLowerCase() != 'pro')
-  IconButton(
-    tooltip: 'Activar PRO 30 días',
-    icon: const Icon(Icons.star),
-    color: Colors.amber[700],
-    onPressed: widget.onManualGrantPro == null
-        ? null
-        : () => _grantPro(u),
-  ),
+            // ⭐ Botón PRO, solo si NO tiene PRO activa
+            if (!hasActivePro)
+              IconButton(
+                tooltip: 'Activar PRO 30 días',
+                icon: const Icon(Icons.star),
+                color: Colors.amber[700],
+                onPressed: widget.onManualGrantPro == null
+                    ? null
+                    : () => _grantPro(u),
+              ),
 
             IconButton(
               tooltip: 'Editar rol',
@@ -551,19 +580,17 @@ if (u.subscriptionEntitlement?.toLowerCase() != 'pro')
                   ? const SizedBox(
                       width: 20,
                       height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                      ),
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.delete),
               color: Colors.red,
-              onPressed: (_deletingId == u.id)
-                  ? null
-                  : () => _confirmDelete(u),
+              onPressed:
+                  (_deletingId == u.id) ? null : () => _confirmDelete(u),
             ),
           ],
         ),
 ),
+
 
                             ),
                           ),
