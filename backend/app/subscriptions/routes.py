@@ -208,8 +208,11 @@ def subscription_reconcile_one():
 
     claims = get_jwt() or {}
     role_id = claims.get("rid") or claims.get("role_id")
-    if role_id != 2:
+
+    # En tu app, el admin es role_id == 1
+    if role_id != 1:
         return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
+
 
     try:
         body = request.get_json(force=True) or {}
