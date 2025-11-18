@@ -349,8 +349,9 @@ def manual_grant_pro(
     Activa o renueva la suscripción PRO de forma manual (ej. pago por WhatsApp).
 
     - NO llama a Google Play.
-    - NO usa purchase_token para que reconcile_subscriptions lo ignore.
+    - NO usa purchase_token real (usamos uno sintético para trazabilidad).
     - Extiende días sobre la fecha de expiración actual si aún estaba activa.
+    - Si el usuario tiene referidor, crea una comisión de referidos (source=manual_offline).
     """
     now = _now_utc()
     uid = int(user_id)
@@ -381,6 +382,31 @@ def manual_grant_pro(
     period_start = base_start
     expiry_dt = base_start + timedelta(days=int(days))
 
+    # ==== CÁLCULO DEL PRECIO PARA COMISIÓN (USANDO CATÁLOGO LOCAL) ====
+    price_micros, currency = _price_from_catalog(pid, default_currency="COP")
+
+    # ==== INTENTA CREAR COMISIÓN DE REFERIDO (si hay referidor) ====
+    # Usamos token y order_id sintéticos para diferenciar pagos manuales.
+    if price_micros > 0:
+        try:
+            synthetic_token = f"manual-{uid}-{int(period_start.timestamp())}"
+            synthetic_order_id = f"manual-{uid}-{int(expiry_dt.timestamp())}"
+
+            register_referral_commission(
+                referred_user_id=uid,
+                product_id=pid,
+                amount_micros=price_micros,
+                currency_code=currency,
+                purchase_token=synthetic_token,
+                order_id=synthetic_order_id,
+                source="manual_offline",
+                event_time=period_start,  # datetime aware UTC
+            )
+        except Exception:
+            # Si algo falla al crear la comisión, revertimos y propagamos error
+            db.session.rollback()
+            raise
+
     # Estado lógico: PRO activa, sin auto-renovación
     sub.status = "active"
     _set_attr(sub, ["is_premium", "is_active"], True)
@@ -397,6 +423,13 @@ def manual_grant_pro(
 
     db.session.add(sub)
     db.session.commit()
+
+    # Opcional: maturar comisiones después de un pago manual (igual que en sync_purchase)
+    try:
+        from app.services.referrals.payouts_service import mature_commissions
+        mature_commissions()
+    except Exception as _e:
+        _log_event("mature_err_manual", err=str(_e))
 
     return {
         "ok": True,
