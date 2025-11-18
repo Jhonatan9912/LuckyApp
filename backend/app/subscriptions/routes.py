@@ -122,11 +122,24 @@ def subscription_manual_grant():
     """
     Activación/renovación manual de PRO por un administrador (ej: pago por WhatsApp).
     """
-    # Solo admin: role_id / rid == 2
     from flask_jwt_extended import get_jwt
     claims = get_jwt() or {}
-    role_id = claims.get("rid") or claims.get("role_id")
-    if role_id != 2:
+
+    # Lee rid / role_id del JWT
+    raw_role = claims.get("rid") or claims.get("role_id")
+
+    # 🔎 DEBUG opcional (puedes dejarlo un tiempo):
+    print("JWT claims en /manual-grant:", claims)
+    print("raw_role =", raw_role, "type =", type(raw_role))
+
+    # Normaliza a int (por si viene como string "1")
+    try:
+        role_id = int(raw_role) if raw_role is not None else None
+    except (TypeError, ValueError):
+        role_id = None
+
+    # En TU app, el admin es role_id == 1
+    if role_id != 1:
         return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
 
     # Body JSON: { user_id / userId, product_id / productId, days? }
@@ -160,41 +173,44 @@ def subscription_manual_grant():
         current_app.logger.exception("manual_grant_pro_failed")
         return jsonify({"ok": False, "code": "MANUAL_GRANT_FAILED", "msg": str(e)}), 500
 
-@subscriptions_bp.post("/reconcile")
-@jwt_required(optional=True)
-def subscription_reconcile():
+@subscriptions_bp.post("/reconcile/one")
+@jwt_required()
+def subscription_reconcile_one():
     """
-    Permite dos modos de autenticación:
-    - JWT con rol admin (claim 'rid' o 'role_id' == 2)
-    - Header X-Reconcile-Token que coincida con RECONCILE_TOKEN (para cron)
+    Reconciliar un purchaseToken específico (útil para soporte o pruebas).
+    Requiere JWT admin (rid / role_id == 1).
     """
-    claims = {}
+    from app.observability.metrics import RECONCILE_UPD, RECONCILE_ERR
+    from flask_jwt_extended import get_jwt
+
+    claims = get_jwt() or {}
+    raw_role = claims.get("rid") or claims.get("role_id")
     try:
-        claims = get_jwt() or {}
-    except Exception:
-        # optional=True: puede no venir JWT
-        claims = {}
+        role_id_int = int(raw_role) if raw_role is not None else None
+    except (TypeError, ValueError):
+        role_id_int = None
 
-    role_id = claims.get("rid") or claims.get("role_id")
-
-    expected = current_app.config.get("RECONCILE_TOKEN")
-    provided = request.headers.get("X-Reconcile-Token")
-
-    allowed = (role_id == 2) or (expected and provided == expected)
-    if not allowed:
+    if role_id_int != 1:
         return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
 
-    # Parámetros opcionales de lote
     try:
-        body = request.get_json(silent=True) or {}
+        body = request.get_json(force=True) or {}
     except Exception:
-        body = {}
+        return jsonify({"ok": False, "code": "BAD_JSON"}), 400
 
-    batch_size = int(body.get("batch_size", 100))
-    days_ahead = int(body.get("days_ahead", 2))
+    purchase_token = (body.get("purchaseToken") or "").strip()
+    sub_id = (body.get("subscriptionId") or "").strip()
+    if not purchase_token or not sub_id:
+        return jsonify({"ok": False, "code": "BAD_REQUEST"}), 400
 
-    out = reconcile_subscriptions(batch_size=batch_size, days_ahead=days_ahead)
-    return jsonify({"ok": True, "result": out}), 200
+    try:
+        # Aquí llama a tu servicio Google y actualiza DB (status, is_premium, expires_at, auto_renewing)
+        # Ej: out = reconcile_one(purchase_token, sub_id)
+        RECONCILE_UPD.inc()
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        RECONCILE_ERR.inc()
+        return jsonify({"ok": False, "code": "RECONCILE_ERR", "detail": str(e)}), 500
 
 @subscriptions_bp.post("/reconcile/one")
 @jwt_required()
@@ -208,9 +224,12 @@ def subscription_reconcile_one():
 
     claims = get_jwt() or {}
     role_id = claims.get("rid") or claims.get("role_id")
+    try:
+        role_id_int = int(role_id) if role_id is not None else None
+    except:
+        role_id_int = None
 
-    # En tu app, el admin es role_id == 1
-    if role_id != 1:
+    if role_id_int != 1:
         return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
 
 
