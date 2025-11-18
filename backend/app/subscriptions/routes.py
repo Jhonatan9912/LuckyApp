@@ -212,46 +212,6 @@ def subscription_reconcile_one():
         RECONCILE_ERR.inc()
         return jsonify({"ok": False, "code": "RECONCILE_ERR", "detail": str(e)}), 500
 
-@subscriptions_bp.post("/reconcile/one")
-@jwt_required()
-def subscription_reconcile_one():
-    """
-    Reconciliar un purchaseToken específico (útil para soporte o pruebas).
-    Requiere JWT admin (rid / role_id == 2).
-    """
-    from app.observability.metrics import RECONCILE_UPD, RECONCILE_ERR
-    from flask_jwt_extended import get_jwt
-
-    claims = get_jwt() or {}
-    role_id = claims.get("rid") or claims.get("role_id")
-    try:
-        role_id_int = int(role_id) if role_id is not None else None
-    except:
-        role_id_int = None
-
-    if role_id_int != 1:
-        return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
-
-
-    try:
-        body = request.get_json(force=True) or {}
-    except Exception:
-        return jsonify({"ok": False, "code": "BAD_JSON"}), 400
-
-    purchase_token = (body.get("purchaseToken") or "").strip()
-    sub_id = (body.get("subscriptionId") or "").strip()
-    if not purchase_token or not sub_id:
-        return jsonify({"ok": False, "code": "BAD_REQUEST"}), 400
-
-    try:
-        # Aquí llama a tu servicio Google y actualiza DB (status, is_premium, expires_at, auto_renewing)
-        # Ej: out = reconcile_one(purchase_token, sub_id)
-        # Simbolizamos el contador OK:
-        RECONCILE_UPD.inc()
-        return jsonify({"ok": True}), 200
-    except Exception as e:
-        RECONCILE_ERR.inc()
-        return jsonify({"ok": False, "code": "RECONCILE_ERR", "detail": str(e)}), 500
 
 # ===== RTDN (Real-Time Developer Notifications) - Push endpoint =====
 @subscriptions_bp.post("/rtdn")
