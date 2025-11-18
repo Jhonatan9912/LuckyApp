@@ -6,9 +6,9 @@ import 'dart:async';
 class UsersBottomSheet extends StatefulWidget {
   /// Carga la lista de usuarios.
   final Future<List<UserRow>> Function() loader;
-  /// Activa/renueva PRO manualmente (ej: pago por WhatsApp).
-  /// El controller decide qué product_id usar.
-  final Future<Map<String, dynamic>> Function(int userId)? onManualGrantPro;
+/// Activa/renueva PRO manualmente indicando el product_id (cm_suscripcion / cml_suscripcion).
+final Future<Map<String, dynamic>> Function(int userId, String productId)? onManualGrantPro;
+
 
   /// Actualiza el rol del usuario en backend. Debe devolver el usuario actualizado.
   /// Si por ahora tu backend solo devuelve {ok:true}, igual funcionará (fallback local).
@@ -51,6 +51,32 @@ class _UsersBottomSheetState extends State<UsersBottomSheet> {
     final cleaned = s.startsWith('Exception: ') ? s.substring(11) : s;
     return cleaned.replaceAll(r'\n', '\n').replaceAll(r'\"', '"');
   }
+Future<String?> _pickPlanDialog(BuildContext context, UserRow u) async {
+  // Devuelve "cm_suscripcion", "cml_suscripcion" o null si cancela
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) {
+      return SimpleDialog(
+        title: Text('Elegir plan para ${u.name}'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop('cm_suscripcion'),
+            child: const Text('PRO Completa · 60.000 COP'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop('cml_suscripcion'),
+            child: const Text('PRO Lite · 20.000 COP'),
+          ),
+          const Divider(),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Cancelar'),
+          ),
+        ],
+      );
+    },
+  );
+}
 
   @override
   void initState() {
@@ -174,53 +200,62 @@ class _UsersBottomSheetState extends State<UsersBottomSheet> {
       );
     }
   }
-    Future<void> _grantPro(UserRow u) async {
-    // Si no te pasaron callback, no hace nada
-    if (widget.onManualGrantPro == null) return;
+Future<void> _grantPro(UserRow u) async {
+  if (widget.onManualGrantPro == null) return;
 
-    final ok = await custom.AppDialogs.confirm(
+  // 1) Escoger plan
+  final productId = await _pickPlanDialog(context, u);
+  if (!mounted || productId == null) return; // canceló
+
+  // Texto bonito según el plan
+  final planLabel = productId == 'cm_suscripcion'
+      ? 'PRO Completa (60.000)'
+      : 'PRO Lite (20.000)';
+
+  // 2) Confirmar activación
+  final ok = await custom.AppDialogs.confirm(
+    context: context,
+    title: 'Activar PRO',
+    message:
+        '¿Quieres activar o renovar $planLabel por 30 días para "${u.name}"?\n\n'
+        'Solo debe usarse cuando el usuario pagó por fuera de Play Store.',
+    okText: 'Sí, activar',
+    cancelText: 'Cancelar',
+    destructive: false,
+    icon: Icons.star,
+  );
+
+  if (ok != true || !mounted) return;
+
+  try {
+    // 3) Llamar al backend con userId + productId
+    final resp = await widget.onManualGrantPro!(u.id, productId);
+
+    if (!mounted) return;
+
+    final expiresAt = (resp['expiresAt'] as String?) ?? '';
+
+    await custom.AppDialogs.success(
       context: context,
-      title: 'Activar PRO',
-      message:
-          '¿Quieres activar o renovar PRO por 30 días para "${u.name}"?',
-      okText: 'Sí, activar PRO',
-      cancelText: 'Cancelar',
-      destructive: false,
-      icon: Icons.star,
+      title: 'PRO activado',
+      message: expiresAt.isEmpty
+          ? 'La suscripción $planLabel se activó/renovó correctamente.'
+          : 'La suscripción $planLabel de "${u.name}" está activa hasta:\n$expiresAt',
+      okText: 'Aceptar',
     );
 
-    if (ok != true || !mounted) return;
-
-    try {
-      // Llama al controlador/pantalla que hará el POST a /manual-grant
-      final resp = await widget.onManualGrantPro!(u.id);
-
-      if (!mounted) return;
-
-      // Puedes leer "expiresAt" si viene en la respuesta
-      final expiresAt = (resp['expiresAt'] as String?) ?? '';
-
-      await custom.AppDialogs.success(
-        context: context,
-        title: 'PRO activado',
-        message: expiresAt.isEmpty
-            ? 'La suscripción PRO se activó/renovó correctamente.'
-            : 'La suscripción PRO de "${u.name}" está activa hasta:\n$expiresAt',
-        okText: 'Aceptar',
-      );
-
-      // Refresca la lista para ver la etiqueta actualizada
-      await _refresh();
-    } catch (e) {
-      if (!mounted) return;
-      await custom.AppDialogs.error(
-        context: context,
-        title: 'No se pudo activar PRO',
-        message: _prettyError(e),
-        okText: 'Cerrar',
-      );
-    }
+    await _refresh();
+  } catch (e) {
+    if (!mounted) return;
+    await custom.AppDialogs.error(
+      context: context,
+      title: 'No se pudo activar PRO',
+      message: _prettyError(e),
+      okText: 'Cerrar',
+    );
   }
+}
+
 
 Future<void> _showManualProDialog(BuildContext context, UserRow u) async {
   final ok = await custom.AppDialogs.confirm(
