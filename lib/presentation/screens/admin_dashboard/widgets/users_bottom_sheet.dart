@@ -330,38 +330,54 @@ Future<void> _activatePro(UserRow u) async {
     // ⭐ Texto para quienes no tienen suscripción
     return 'GRATIS'; // o 'Sin suscripción' si lo prefieres
   }
+  String _statusLabelEs(UserRow u) {
+  final raw = (u.subscriptionStatus ?? '').toLowerCase();
+
+  switch (raw) {
+    case 'active':
+      return 'Activa';
+    case 'canceled':
+      return 'Cancelada (vigente)';
+    case 'expired':
+      return 'Vencida';
+    case 'grace':
+      return 'En período de gracia';
+    case 'on_hold':
+      return 'En retención';
+    case 'paused':
+      return 'Pausada';
+    case 'revoked':
+      return 'Revocada';
+    case 'none':
+    case '':
+      return 'Sin suscripción';
+    default:
+      // Por si llega algo raro, mostramos el valor crudo
+      return u.subscriptionStatus ?? raw;
+  }
+}
+
 bool _hasActivePro(UserRow u) {
   final status = (u.subscriptionStatus ?? '').toLowerCase();
-  final ent = (u.subscriptionEntitlement ?? '').toLowerCase();
 
-  // si no es PRO, nunca se considera "PRO activa"
-  if (ent != 'pro') return false;
+  // Solo cuenta como activa si el status es ACTIVE
+  if (status != 'active') return false;
 
-  // intenta parsear la fecha de vencimiento
+  // Intentar leer la fecha de vencimiento
   final expiresStr = u.subscriptionExpiresAt;
-  if (expiresStr == null || expiresStr.isEmpty) {
-    return false;
-  }
+  if (expiresStr == null || expiresStr.isEmpty) return false;
 
-  DateTime? expiresAt;
   try {
-    expiresAt = DateTime.parse(expiresStr).toUtc();
+    final expiresAt = DateTime.parse(expiresStr).toUtc();
+    final now = DateTime.now().toUtc();
+    // Activa solo si vence en el futuro
+    return expiresAt.isAfter(now);
   } catch (_) {
+    // Si la fecha viene rara, mejor no asumir que está activa
     return false;
   }
-
-  final now = DateTime.now().toUtc();
-  final notExpired = expiresAt.isAfter(now);
-
-  // 🔒 Consideramos PRO activa solo si:
-  // - status == ACTIVE (o similar) Y
-  // - la fecha de vencimiento está en el futuro
-  if (status == 'active' && notExpired) {
-    return true;
-  }
-
-  return false;
 }
+
 
   @override
   Widget build(BuildContext context) {
@@ -440,10 +456,12 @@ bool _hasActivePro(UserRow u) {
                       itemBuilder: (_, i) {
                         final u = filtered[i];
                         final isEditing = _editingUserId == u.id;
-                        final st = (u.subscriptionStatus ?? '').toUpperCase();
-                        final showStatus = st.isNotEmpty && st != 'NONE';
-                        final showExpires =
-                            (u.subscriptionExpiresAt ?? '').isNotEmpty;
+final rawStatus = (u.subscriptionStatus ?? '');
+final showStatus =
+    rawStatus.isNotEmpty && rawStatus.toLowerCase() != 'none';
+final showExpires =
+    (u.subscriptionExpiresAt ?? '').isNotEmpty;
+
                         final hasActivePro = _hasActivePro(u);
                         return Card(
                           margin: const EdgeInsets.symmetric(vertical: 6),
@@ -524,7 +542,7 @@ bool _hasActivePro(UserRow u) {
 
                                   const SizedBox(height: 2),
                                   Text('Suscripción: ${_subLabel(u)}'),
-                                  if (showStatus) Text('Estado: $st'),
+                                  if (showStatus) Text('Estado: ${_statusLabelEs(u)}'),
                                   if (showExpires)
                                     Text('Vence: ${u.subscriptionExpiresAt}'),
 
@@ -643,7 +661,7 @@ class UserRow {
 
       // 👇 vienen directo del backend Python
       subscription: j['subscription'] as String?,
-      subscriptionStatus: (j['subscription_status'] as String?)?.toUpperCase(),
+      subscriptionStatus: j['subscription_status'] as String?,
       subscriptionEntitlement: (j['subscription_entitlement'] as String?)
           ?.toLowerCase(),
       subscriptionExpiresAt: j['subscription_expires_at'] as String?,
