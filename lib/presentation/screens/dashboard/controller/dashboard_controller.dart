@@ -275,10 +275,10 @@ String _fmtNums(List<int> xs) =>
     // requiere sesión válida
     if (_authToken == null || _authToken!.isEmpty) return;
 
-final res = await _gamesApi.getMySelection(
-  token: _authToken,
-);
-
+        final res = await _gamesApi.getMySelection(
+      token: _authToken,
+      digits: _digitsPerBall,
+    );
 
     if (res['ok'] != true) return;
 
@@ -385,10 +385,10 @@ final res = await _gamesApi.getMySelection(
 
     if (tokenToUse != null) {
       try {
-final pre = await _gamesApi.getMySelection(
-  token: tokenToUse,
-);
-
+                final pre = await _gamesApi.getMySelection(
+          token: tokenToUse,
+          digits: _digitsPerBall,
+        );
 
         if (pre['ok'] == true) {
           final data = (pre['data'] as Map<String, dynamic>? ?? {});
@@ -427,10 +427,11 @@ final pre = await _gamesApi.getMySelection(
     Map<String, dynamic>? data;
 
     for (var i = 0; i < attempts; i++) {
-final res = await _gamesApi.generate(
-  token: tokenToUse,
-  xUserId: xUserIdToUse,
-);
+      final res = await _gamesApi.generate(
+        token: tokenToUse,
+        xUserId: xUserIdToUse,
+        digits: _digitsPerBall, // 👈 3 ó 4
+      );
 
       if (res['ok'] == true) {
         final d = (res['data'] as Map<String, dynamic>? ?? {});

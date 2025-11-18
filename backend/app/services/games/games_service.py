@@ -171,40 +171,6 @@ def get_or_create_active_unscheduled_game_id(
     db.session.flush()  # obtiene g.id sin commit
     return g.id
 
-
-def _get_or_create_current_game(user_id: int | None, avoid_game_id: int | None = None) -> int:
-    """
-    Devuelve el id del juego actual (último ABIERTO: sin winning_number y state_id != 2)
-    y con cupo (<1000). Si no existe, crea uno nuevo.
-    """
-    params = {}
-    where = "WHERE winning_number IS NULL AND (state_id IS NULL OR state_id <> 2)"
-    if avoid_game_id:
-        where += " AND id <> :avoid"
-        params["avoid"] = avoid_game_id
-
-    last_id = db.session.execute(text(f"""
-        SELECT id
-        FROM games
-        {where}
-        ORDER BY id DESC
-        LIMIT 1
-    """), params).scalar()
-
-    if last_id is not None:
-        used = db.session.execute(text("""
-            SELECT COUNT(*) FROM game_numbers WHERE game_id = :gid
-        """), {"gid": last_id}).scalar()
-        if used < 1000:
-            return last_id
-
-    # No hay juego abierto con cupo -> crea uno nuevo (estado abierto)
-    g = Game(user_id=user_id, state_id=1)
-    db.session.add(g)
-    db.session.flush()  # obtiene g.id sin commit
-    return g.id
-
-
 def generate_five_available(
     user_id: int | None,
     digits: int = 3,
@@ -509,26 +475,50 @@ def get_last_selection(user_id: int) -> dict:
 
 def set_winner(game_id: int, winning_number: int) -> tuple[bool, str | None]:
     try:
-                # Asegurar que exista un juego abierto y sin ganador
+        # 1) Obtener dígitos del juego (para crear el siguiente juego igual)
+        row = db.session.execute(text("""
+            SELECT digits
+            FROM games
+            WHERE id = :gid
+        """), {"gid": game_id}).first()
+
+        if row is None:
+            return False, "Juego no encontrado"
+
+        digits = int(row[0] or 3)
+
+        # 2) Marcar el juego actual como cerrado con número ganador
+        db.session.execute(text("""
+            UPDATE games
+            SET winning_number = :wn,
+                state_id       = 2,
+                played_at      = NOW()
+            WHERE id = :gid
+        """), {"gid": game_id, "wn": winning_number})
+
+        # 3) Asegurar que exista un juego nuevo ABIERTO del mismo tipo (mismos dígitos)
         db.session.execute(text("""
             WITH existing AS (
                 SELECT id
                 FROM games
                 WHERE state_id = 1
                   AND winning_number IS NULL
+                  AND digits = :digits
                 ORDER BY id DESC
                 LIMIT 1
             )
-            INSERT INTO games (state_id, played_at)
-            SELECT 1, NOW()
+            INSERT INTO games (state_id, digits, played_at)
+            SELECT 1, :digits, NOW()
             WHERE NOT EXISTS (SELECT 1 FROM existing)
-        """))
+        """), {"digits": digits})
 
         db.session.commit()
         return True, None
+
     except Exception as e:
         db.session.rollback()
         return False, str(e)
+
 
 def list_user_history(conn, user_id: int, page: int, per_page: int) -> dict:
     """
