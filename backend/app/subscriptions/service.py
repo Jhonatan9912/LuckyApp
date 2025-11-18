@@ -385,13 +385,13 @@ def manual_grant_pro(
     # ==== CÁLCULO DEL PRECIO PARA COMISIÓN (USANDO CATÁLOGO LOCAL) ====
     price_micros, currency = _price_from_catalog(pid, default_currency="COP")
 
+    # ==== TOKEN SINTÉTICO PARA ESTA ACTIVACIÓN MANUAL ====
+    synthetic_token = f"manual-{uid}-{int(period_start.timestamp())}"
+    synthetic_order_id = f"manual-{uid}-{int(expiry_dt.timestamp())}"
+
     # ==== INTENTA CREAR COMISIÓN DE REFERIDO (si hay referidor) ====
-    # Usamos token y order_id sintéticos para diferenciar pagos manuales.
     if price_micros > 0:
         try:
-            synthetic_token = f"manual-{uid}-{int(period_start.timestamp())}"
-            synthetic_order_id = f"manual-{uid}-{int(expiry_dt.timestamp())}"
-
             register_referral_commission(
                 referred_user_id=uid,
                 product_id=pid,
@@ -420,6 +420,9 @@ def manual_grant_pro(
     _set_attr(sub, ["platform"], "manual_offline")
     _set_attr(sub, ["product_id", "last_product_id"], pid)
     _set_attr(sub, ["last_sync_at"], now)
+
+    # 👈 IMPORTANTE: asegurar que purchase_token NO sea NULL
+    _set_attr(sub, ["purchase_token"], synthetic_token)
 
     db.session.add(sub)
     db.session.commit()
