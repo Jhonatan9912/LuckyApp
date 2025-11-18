@@ -360,22 +360,9 @@ Future<void> _activatePro(UserRow u) async {
 bool _hasActivePro(UserRow u) {
   final status = (u.subscriptionStatus ?? '').toLowerCase();
 
-  // Solo cuenta como activa si el status es ACTIVE
-  if (status != 'active') return false;
-
-  // Intentar leer la fecha de vencimiento
-  final expiresStr = u.subscriptionExpiresAt;
-  if (expiresStr == null || expiresStr.isEmpty) return false;
-
-  try {
-    final expiresAt = DateTime.parse(expiresStr).toUtc();
-    final now = DateTime.now().toUtc();
-    // Activa solo si vence en el futuro
-    return expiresAt.isAfter(now);
-  } catch (_) {
-    // Si la fecha viene rara, mejor no asumir que está activa
-    return false;
-  }
+  // Solo consideramos "PRO activa" cuando el estado es ACTIVE.
+  // El backend ya marca EXPPIRED, CANCELED, etc.
+  return status == 'active';
 }
 
 

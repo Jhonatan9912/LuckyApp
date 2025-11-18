@@ -76,6 +76,23 @@ class DashboardController extends ChangeNotifier {
   bool _isPremium = false;
   bool get isPremium => _isPremium;
 
+  // ======= Configuración del juego (3 o 4 cifras) =======
+  int _digitsPerBall = 3;          // valor por defecto: 3 cifras
+
+  int get digitsPerBall => _digitsPerBall;
+
+  void setDigitsPerBall(int value) {
+    // Solo permitimos 3 o 4 cifras
+    if (value != 3 && value != 4) return;
+
+    // Si no cambia, no notifiques
+    if (_digitsPerBall == value) return;
+
+    _digitsPerBall = value;
+    notifyListeners();
+  }
+
+
   // ======= Getters públicos =======
   List<int> get numbers => List.unmodifiable(_numbers);
   bool get animating => _animating;
@@ -134,7 +151,8 @@ class DashboardController extends ChangeNotifier {
   }
 
   String _fmtNums(List<int> xs) =>
-      xs.map((e) => e.toString().padLeft(3, '0')).join('-');
+      xs.map((e) => e.toString().padLeft(_digitsPerBall, '0')).join('-');
+
 
   void _setAnimating(bool v) {
     _animating = v;
@@ -257,7 +275,11 @@ class DashboardController extends ChangeNotifier {
     // requiere sesión válida
     if (_authToken == null || _authToken!.isEmpty) return;
 
-    final res = await _gamesApi.getMySelection(token: _authToken);
+        final res = await _gamesApi.getMySelection(
+      token: _authToken,
+      digits: _digitsPerBall,
+    );
+
     if (res['ok'] != true) return;
 
     final data = (res['data'] as Map<String, dynamic>? ?? {});
@@ -363,7 +385,11 @@ class DashboardController extends ChangeNotifier {
 
     if (tokenToUse != null) {
       try {
-        final pre = await _gamesApi.getMySelection(token: tokenToUse);
+                final pre = await _gamesApi.getMySelection(
+          token: tokenToUse,
+          digits: _digitsPerBall,
+        );
+
         if (pre['ok'] == true) {
           final data = (pre['data'] as Map<String, dynamic>? ?? {});
           final gid = (data['game_id'] as num?)?.toInt();
@@ -404,7 +430,9 @@ class DashboardController extends ChangeNotifier {
       final res = await _gamesApi.generate(
         token: tokenToUse,
         xUserId: xUserIdToUse,
+        digits: _digitsPerBall, // 👈 3 ó 4
       );
+
       if (res['ok'] == true) {
         final d = (res['data'] as Map<String, dynamic>? ?? {});
         final gid = (d['game_id'] as num?)?.toInt();
@@ -484,7 +512,9 @@ class DashboardController extends ChangeNotifier {
     _setHasPlayedOnce(true);
 
     final rnd = Random();
-    _generated = List<int>.generate(5, (_) => rnd.nextInt(1000));
+    final maxValue = pow(10, _digitsPerBall).toInt(); // 1000 o 10000
+    _generated = List<int>.generate(5, (_) => rnd.nextInt(maxValue));
+
 
     final result = <int>[];
     for (final n in _generated) {
@@ -537,8 +567,10 @@ class DashboardController extends ChangeNotifier {
       );
     }
 
+    final maxValue = pow(10, _digitsPerBall).toInt() - 1; // 999 o 9999
     final isValid =
-        _numbers.length == 5 && _numbers.every((n) => n >= 0 && n <= 999);
+        _numbers.length == 5 && _numbers.every((n) => n >= 0 && n <= maxValue);
+
     if (!isValid) {
       return const ReserveOutcome(
         ok: false,
@@ -819,7 +851,9 @@ if (code == 'GAME_SWITCHED') {
   // Permite a la Vista setear números manuales si hicieras un editor
   void setNumbersDirect(List<int> fiveNumbers) {
     if (fiveNumbers.length != 5) return;
-    if (!fiveNumbers.every((n) => n >= 0 && n <= 999)) return;
+    final maxValue = pow(10, _digitsPerBall).toInt() - 1;
+    if (!fiveNumbers.every((n) => n >= 0 && n <= maxValue)) return;
+
     _setNumbers(List<int>.from(fiveNumbers));
   }
 

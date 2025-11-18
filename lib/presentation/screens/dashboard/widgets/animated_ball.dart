@@ -7,6 +7,7 @@ class AnimatedBall extends StatefulWidget {
   final Duration duration;
   final double size;
   final bool enableAnimation;
+  final int digits; // 👈 NUEVO: 3 o 4
 
   const AnimatedBall({
     super.key,
@@ -14,6 +15,7 @@ class AnimatedBall extends StatefulWidget {
     required this.duration,
     required this.size,
     this.enableAnimation = true,
+    this.digits = 3,
   });
 
   @override
@@ -22,7 +24,7 @@ class AnimatedBall extends StatefulWidget {
 
 class _AnimatedBallState extends State<AnimatedBall>
     with SingleTickerProviderStateMixin {
-  Timer? _timer;                           // ← nullable
+  Timer? _timer;
   late int _currentNumber;
   late AnimationController _scaleController;
 
@@ -30,16 +32,15 @@ class _AnimatedBallState extends State<AnimatedBall>
   void initState() {
     super.initState();
 
-    _currentNumber = widget.enableAnimation
-        ? _random3Digit()
-        : widget.finalNumber;
+    _currentNumber =
+        widget.enableAnimation ? _randomNumber() : widget.finalNumber;
 
     _scaleController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 400),
       lowerBound: 1.0,
       upperBound: 1.3,
-      value: 1.0,                          // ← arranca estable en 1.0
+      value: 1.0,
     );
 
     if (widget.enableAnimation) {
@@ -50,32 +51,36 @@ class _AnimatedBallState extends State<AnimatedBall>
   void _startAnimation() {
     _timer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
       if (!mounted) return;
-      setState(() => _currentNumber = _random3Digit());
+      setState(() => _currentNumber = _randomNumber());
     });
 
     Future.delayed(widget.duration, () {
-      _timer?.cancel();                     // ← segura
+      _timer?.cancel();
       if (!mounted) return;
       setState(() => _currentNumber = widget.finalNumber);
 
-      // efecto de escala
       _scaleController.forward().then((_) {
         if (mounted) _scaleController.reverse();
       });
     });
   }
 
-  int _random3Digit() => Random().nextInt(1000);
+  int _randomNumber() {
+    final max = pow(10, widget.digits).toInt(); // 1000 ó 10000
+    return Random().nextInt(max);
+  }
 
   @override
   void dispose() {
-    _timer?.cancel();                       // ← segura aunque no exista
+    _timer?.cancel();
     _scaleController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final isFourDigits = widget.digits == 4;
+
     return ScaleTransition(
       scale: _scaleController,
       child: SizedBox(
@@ -101,9 +106,11 @@ class _AnimatedBallState extends State<AnimatedBall>
               ),
             ),
             Text(
-              _currentNumber.toString().padLeft(3, '0'),
-              style: const TextStyle(
-                fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black,
+              _currentNumber.toString().padLeft(widget.digits, '0'),
+              style: TextStyle(
+                fontSize: isFourDigits ? 16 : 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
               ),
             ),
           ],

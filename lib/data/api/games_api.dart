@@ -66,10 +66,14 @@ class GamesApi {
   // ======================
   // GENERATE (normalizado)
   // ======================
-  Future<Map<String, dynamic>> generate({String? token, int? xUserId}) async {
-    final uri = Uri.parse('$baseUrl/api/games/generate');
-   final headers = _headers(token: token, xUserId: null); // ← SOLO token
-
+  Future<Map<String, dynamic>> generate({
+    String? token,
+    int? xUserId,
+    int digits = 3, // 👈 NUEVO: 3 ó 4
+  }) async {
+    // Enviamos digits como query param: /api/games/generate?digits=3|4
+    final uri = Uri.parse('$baseUrl/api/games/generate?digits=$digits');
+    final headers = _headers(token: token, xUserId: null); // ← SOLO token
 
     _log('GENERATE-REQ', uri, headers);
     http.Response res;
@@ -94,7 +98,7 @@ class GamesApi {
     }
 
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      // 🔧 Normaliza como en generate(): si viene { ok, data }, toma el "data" interno
+      // Normaliza como en generate(): si viene { ok, data }, toma el "data" interno
       Map<String, dynamic>? core;
       if (parsed is Map<String, dynamic>) {
         final maybeInner = parsed['data'];
@@ -106,12 +110,12 @@ class GamesApi {
     return _fail(
       status: res.statusCode,
       code: parsed?['code']?.toString() ?? 'HTTP_${res.statusCode}',
-      message:
-          parsed?['message']?.toString() ??
+      message: parsed?['message']?.toString() ??
           'Error generando números (HTTP ${res.statusCode})',
       data: parsed,
     );
   }
+
 
   // ======================
   // COMMIT (ruta correcta + enteros)
@@ -314,12 +318,12 @@ class GamesApi {
       data: parsed,
     );
   }
-
   Future<Map<String, dynamic>> getMySelection({
     String? token,
-    int? xUserId, // ← en la misma línea
+    int? xUserId,
+    int digits = 3, // 👈 NUEVO: tipo de juego
   }) async {
-    final uri = Uri.parse('$baseUrl/api/games/my-selection');
+    final uri = Uri.parse('$baseUrl/api/games/my-selection?digits=$digits');
     final headers = _headers(token: token, xUserId: null); // SOLO Authorization
 
     _log('MYSEL-REQ', uri, headers);
@@ -364,6 +368,7 @@ class GamesApi {
       data: parsed,
     );
   }
+
 
   Future<Map<String, dynamic>> getNotifications({
     String? token,

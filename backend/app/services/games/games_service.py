@@ -40,13 +40,34 @@ def _is_user_pro(user_id: int) -> bool:
         return period_active and status in ("active", "canceled", "grace", "on_hold", "paused")
     except Exception:
         return False
-def _generate_preview_numbers(k: int = 5) -> list[int]:
-    # Solo para mostrar algo en pantalla; NO toca DB
-    return random.sample(range(0, 1000), k)
+    
+def _max_number_for_digits(digits: int) -> int:
+    """Máximo número permitido según dígitos (3 → 999, 4 → 9999)."""
+    return (10 ** digits) - 1
 
-def find_active_unscheduled_game_id() -> int | None:
+
+def _capacity_for_digits(digits: int) -> int:
+    """Cuántos números caben en el juego (3 → 1000, 4 → 10000)."""
+    return 10 ** digits
+
+
+def _generate_preview_numbers(k: int = 5, digits: int = 3) -> list[int]:
     """
-    Devuelve el id del ÚLTIMO juego abierto sin ganador (si existe).
+    Solo para mostrar algo en pantalla; NO toca DB.
+    Genera k números únicos en el rango [0, max].
+    """
+    max_value = _max_number_for_digits(digits)
+    population = range(0, max_value + 1)
+
+    if k > len(population):
+        k = len(population)
+
+    return random.sample(population, k)
+
+def find_active_unscheduled_game_id(digits: int = 3) -> int | None:
+    """
+    Devuelve el id del ÚLTIMO juego abierto sin ganador (si existe)
+    para el tipo de juego indicado (digits = 3 o 4).
     NO crea nada.
     """
     row = db.session.execute(text("""
@@ -54,9 +75,10 @@ def find_active_unscheduled_game_id() -> int | None:
         FROM games
         WHERE state_id = 1
           AND winning_number IS NULL
+          AND digits = :digits
         ORDER BY id DESC
         LIMIT 1
-    """)).first()
+    """), {"digits": digits}).first()
     return int(row[0]) if row else None
 
 def _count_user_numbers_in_game(user_id: int, game_id: int) -> int:
@@ -67,23 +89,36 @@ def _count_user_numbers_in_game(user_id: int, game_id: int) -> int:
           AND taken_by = :uid
     """), {"gid": game_id, "uid": user_id}).scalar() or 0)
 
-def get_current_open_game_id() -> int | None:
-    row = db.session.execute(text("""
-        SELECT id
-        FROM games
+def get_current_open_game_id(digits: int | None = None) -> int | None:
+    """
+    Juego abierto actual. Si se pasa digits, filtra por tipo de juego.
+    """
+    params: dict = {}
+    where = """
         WHERE state_id = 1
           AND winning_number IS NULL
+    """
+    if digits is not None:
+        where += " AND digits = :digits"
+        params["digits"] = digits
+
+    row = db.session.execute(text(f"""
+        SELECT id
+        FROM games
+        {where}
         ORDER BY id DESC
         LIMIT 1
-    """)).first()
+    """), params).first()
+
     return int(row[0]) if row else None
 
-def get_current_selection(user_id: int) -> dict:
+def get_current_selection(user_id: int, digits: int = 3) -> dict:
     """
-    Devuelve la selección del usuario en el juego ABIERTO actual.
+    Devuelve la selección del usuario en el juego ABIERTO actual
+    para el tipo de juego indicado (digits = 3 o 4).
     Si no hay 5 números, retorna NOT_FOUND.
     """
-    gid = get_current_open_game_id()
+    gid = get_current_open_game_id(digits=digits)
     if gid is None:
         return {"ok": False, "code": "NOT_FOUND", "message": "No hay juego abierto."}
 
@@ -101,32 +136,40 @@ def get_current_selection(user_id: int) -> dict:
     return {"ok": True, "data": {"game_id": gid, "numbers": nums, "user_id_used": user_id}}
 
 # ===== Utilidades =====
-def get_or_create_active_unscheduled_game_id() -> int:
+def get_or_create_active_unscheduled_game_id(
+    digits: int,
+    user_id: int | None,
+) -> int:
     """
-    Usa/crea el ÚNICO juego ABIERTO sin ganador.
-    (state_id = 1 y winning_number IS NULL). La programación (lotería/fecha/hora)
-    NO importa: se puede seguir llenando hasta 1000 o hasta que haya ganador.
+    Usa/crea el ÚNICO juego ABIERTO sin ganador para ese digits.
+    (state_id = 1 y winning_number IS NULL y digits = 3/4).
     """
+    params = {"digits": digits}
     row = db.session.execute(text("""
         SELECT id
         FROM games
         WHERE state_id = 1
           AND winning_number IS NULL
+          AND digits = :digits
         ORDER BY id DESC
         LIMIT 1
         FOR UPDATE
-    """)).first()
+    """), params).first()
 
     if row:
-        return int(row[0])
+        game_id = int(row[0])
+        used = db.session.execute(text("""
+            SELECT COUNT(*) FROM game_numbers WHERE game_id = :gid
+        """), {"gid": game_id}).scalar() or 0
 
-    new_id = db.session.execute(text("""
-        INSERT INTO games (state_id, played_at)
-        VALUES (1, NOW())
-        RETURNING id
-    """)).scalar()
+        if used < _capacity_for_digits(digits):
+            return game_id
 
-    return int(new_id)
+    # No hay juego abierto con cupo -> crea uno nuevo
+    g = Game(user_id=user_id, state_id=1, digits=digits)
+    db.session.add(g)
+    db.session.flush()  # obtiene g.id sin commit
+    return g.id
 
 
 def _get_or_create_current_game(user_id: int | None, avoid_game_id: int | None = None) -> int:
@@ -162,39 +205,53 @@ def _get_or_create_current_game(user_id: int | None, avoid_game_id: int | None =
     return g.id
 
 
-def generate_five_available(user_id: int | None, avoid_game_id: int | None = None) -> Tuple[int | None, List[int]]:
+def generate_five_available(
+    user_id: int | None,
+    digits: int = 3,
+    avoid_game_id: int | None = None,
+) -> Tuple[int | None, List[int]]:
     """
-    - PRO: usa/crea el juego abierto sin programar y trae 5 libres de ese juego.
+    - PRO: usa/crea el juego abierto sin programar para ese digits y trae 5 libres.
     - NO PRO: NO crea juegos. Si hay juego abierto, muestra 5 libres de ese juego.
-              Si no hay juego abierto, devuelve un PREVIEW (números random) y game_id=None.
+              Si no hay juego abierto, devuelve un PREVIEW y game_id=None.
     """
+    max_number = _max_number_for_digits(digits)
+
     # ---- Usuario NO PRO: no crear juegos ----
     if not user_id or not _is_user_pro(int(user_id)):
-        gid = find_active_unscheduled_game_id()
+        gid = find_active_unscheduled_game_id(digits=digits)
         if gid is None:
             # No hay juego abierto -> devolvemos preview sin tocar DB
-            return None, _generate_preview_numbers()
+            return None, _generate_preview_numbers(k=5, digits=digits)
+
         # Hay juego abierto -> mostramos 5 disponibles de ese juego (sin reservar)
         rows = db.session.execute(text("""
             WITH taken AS (
                 SELECT number FROM game_numbers WHERE game_id = :gid
             )
             SELECT n AS number
-            FROM generate_series(0, 999) n
+            FROM generate_series(0, :max_number) n
             WHERE NOT EXISTS (SELECT 1 FROM taken t WHERE t.number = n)
             ORDER BY random()
             LIMIT 5;
-        """), {"gid": gid}).fetchall()
+        """), {"gid": gid, "max_number": max_number}).fetchall()
+
         numbers = [int(r[0]) for r in rows]
+
         # Si por cualquier razón hay menos de 5, completamos con preview local
         if len(numbers) < 5:
             faltan = 5 - len(numbers)
-            extra = [n for n in _generate_preview_numbers(5 + faltan) if n not in numbers][:faltan]
+            extra = [
+                n for n in _generate_preview_numbers(5 + faltan, digits=digits)
+                if n not in numbers
+            ][:faltan]
             numbers += extra
+
         return gid, numbers
 
-    # ---- Usuario PRO: comportamiento original (puede crear) ----
-    gid = get_or_create_active_unscheduled_game_id()
+    # ---- Usuario PRO: puede crear juegos por tipo ----
+    gid = get_or_create_active_unscheduled_game_id(digits=digits, user_id=int(user_id))
+
     # Si ya tiene 5 en este juego, devuelve esos mismos 5 (no generes otros)
     existing = db.session.execute(text("""
         SELECT number
@@ -212,15 +269,14 @@ def generate_five_available(user_id: int | None, avoid_game_id: int | None = Non
             SELECT number FROM game_numbers WHERE game_id = :gid
         )
         SELECT n AS number
-        FROM generate_series(0, 999) n
+        FROM generate_series(0, :max_number) n
         WHERE NOT EXISTS (SELECT 1 FROM taken t WHERE t.number = n)
         ORDER BY random()
         LIMIT 5;
-    """), {"gid": gid}).fetchall()
+    """), {"gid": gid, "max_number": max_number}).fetchall()
 
     numbers = [int(r[0]) for r in rows]
     return gid, numbers
-
 
 def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
     """
@@ -233,19 +289,11 @@ def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
         return {"ok": False, "error": "Debes enviar exactamente 5 números."}
     if len(set(numbers)) != 5:
         return {"ok": False, "error": "Los 5 números deben ser distintos."}
-    if any((n < 0 or n > 999) for n in numbers):
-        return {"ok": False, "error": "Cada número debe estar entre 0 y 999."}
-    # --- PREMIUM guard: solo PRO pueden reservar ---
-    if not _is_user_pro(user_id):
-        return {
-            "ok": False,
-            "code": "NOT_PREMIUM",
-            "error": "Necesitas la suscripción PRO para reservar."
-        }
 
-    # --- BLOQUE NUEVO: no permitir confirmar en juegos cerrados, con ganador o programados ---
+    # Primero averiguamos los dígitos del juego para validar rangos y cupo
     row = db.session.execute(text("""
         SELECT
+            COALESCE(digits, 3) AS digits,
             winning_number,
             state_id,
             (SELECT COUNT(*) FROM game_numbers WHERE game_id = :gid) AS used,
@@ -261,20 +309,45 @@ def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
         db.session.rollback()
         return {"ok": False, "code": "NOT_FOUND", "error": "Juego inexistente."}
 
-    winning_number, state_id, used = row[0], row[1], int(row[2])
-    lottery_id, lottery_name, scheduled_date, scheduled_time = row[3], row[4], row[5], row[6]
+    digits = int(row[0] or 3)
+    max_number = _max_number_for_digits(digits)
+    capacity = _capacity_for_digits(digits)
+
+    # Rango según tipo de juego (3 cifras → 0-999, 4 cifras → 0-9999)
+    if any((n < 0 or n > max_number) for n in numbers):
+        return {
+            "ok": False,
+            "error": f"Cada número debe estar entre 0 y {max_number}."
+        }
+
+    # --- PREMIUM guard: solo PRO pueden reservar ---
+    if not _is_user_pro(user_id):
+        return {
+            "ok": False,
+            "code": "NOT_PREMIUM",
+            "error": "Necesitas la suscripción PRO para reservar."
+        }
+
+    winning_number, state_id, used = row[1], row[2], int(row[3])
+    # lottery_id, lottery_name, scheduled_date, scheduled_time = row[4], row[5], row[6], row[7]
 
     # 1) Cerrado por el admin o ya con ganador
     if winning_number is not None or (state_id == 2):
         db.session.rollback()
-        return {"ok": False, "code": "GAME_SWITCHED",
-                "error": "El juego ya fue cerrado. Vuelve a jugar."}
-    
-    # 3) Lleno por cupo
-    if used >= 1000:
+        return {
+            "ok": False,
+            "code": "GAME_SWITCHED",
+            "error": "El juego ya fue cerrado. Vuelve a jugar."
+        }
+
+    # 2) Lleno por cupo según dígitos
+    if used >= capacity:
         db.session.rollback()
-        return {"ok": False, "code": "GAME_SWITCHED",
-                "error": "El juego cambió (se completó). Vuelve a jugar."}
+        return {
+            "ok": False,
+            "code": "GAME_SWITCHED",
+            "error": "El juego cambió (se completó). Vuelve a jugar."
+        }
 
     # ⛔ Tope por usuario en este juego: no permitir segundo commit ni parciales
     current_count = _count_user_numbers_in_game(user_id, game_id)
@@ -338,12 +411,11 @@ def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
     }).scalar()
 
     if res == 5:
-        db.session.commit()
-
-        used = db.session.execute(text("""
+        # Recontar usados para saber si se completó el juego
+        used_after = db.session.execute(text("""
             SELECT COUNT(*) FROM game_numbers WHERE game_id = :gid
         """), {"gid": game_id}).scalar()
-        completed = (used >= 1000)
+        completed = (used_after >= capacity)
 
         if completed:
             # Marca el juego como cerrado y deja listo el siguiente “abierto y sin programar”
@@ -353,8 +425,9 @@ def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
                 WHERE id = :gid AND state_id = 1
             """), {"gid": game_id})
             # Garantiza que exista el siguiente juego abierto y sin programar
-            _ = get_or_create_active_unscheduled_game_id()
-            db.session.commit()
+            _ = get_or_create_active_unscheduled_game_id(digits=digits, user_id=user_id)
+
+        db.session.commit()
 
         return {
             "ok": True,
@@ -364,8 +437,12 @@ def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
 
     # Si no insertó los 5, deshacer y avisar conflicto
     db.session.rollback()
-    return {"ok": False, "code": "CONFLICT",
-            "error": "Alguno(s) de los números ya no están disponibles. Vuelve a jugar."}
+    return {
+        "ok": False,
+        "code": "CONFLICT",
+        "error": "Alguno(s) de los números ya no están disponibles. Vuelve a jugar."
+    }
+
 
 # ===== Liberar selección anterior (reemplazo) =====
 

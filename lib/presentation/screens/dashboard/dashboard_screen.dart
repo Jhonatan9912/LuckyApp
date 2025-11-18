@@ -63,6 +63,8 @@ class _DashboardScreenState extends State<DashboardScreen>
   Timer? _notifTimer; // 👈 timer para notificaciones
   int _tabIndex = 0; // 0 = Juego, 1 = Historial
   // Espaciados (ajústalos a tu gusto)
+    int _digitsPerBall = 3; // 3 o 4 cifras por balota
+
   double gapTop = 1; // espacio desde arriba hasta el tubo
   double gapTubeTabs = 40; // espacio entre el tubo y las pestañas
 
@@ -91,6 +93,18 @@ class _DashboardScreenState extends State<DashboardScreen>
       _ctrl.resetToInitial();
       setState(() {});
     }
+  }
+  void _onDigitsChanged(int value) {
+    if (_digitsPerBall == value) return;
+    setState(() {
+      _digitsPerBall = value;
+    });
+
+    // Avisar al controller (lo implementaremos en el controller luego)
+    _ctrl.setDigitsPerBall(value);
+
+    // Opcional: limpiar selección actual al cambiar de tipo de juego
+    _ctrl.resetToInitial();
   }
 
   void _showHelp() {
@@ -318,16 +332,46 @@ class _DashboardScreenState extends State<DashboardScreen>
 
                       Column(
                         children: [
+                          // 👇 Selector de tipo de juego (solo en Juego Actual)
+                          if (_tabIndex == 0)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Text(
+                                    'Tipo de juego:',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  _DigitsChip(
+                                    label: '3 cifras',
+                                    selected: _digitsPerBall == 3,
+                                    onTap: () => _onDigitsChanged(3),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _DigitsChip(
+                                    label: '4 cifras',
+                                    selected: _digitsPerBall == 4,
+                                    onTap: () => _onDigitsChanged(4),
+                                  ),
+                                ],
+                              ),
+                            ),
+
                           BallTube(
                             numbers: _ctrl.numbers,
                             animating: _ctrl.animating,
+                            digits: _digitsPerBall, // 👈 NUEVO
                           ),
-                          const SizedBox(
-                            height: 8,
-                          ), // 👈 AQUÍ controlas el espacio real
+                          const SizedBox(height: 8),
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             child: tabs.SelectionTabs(
+
                               index: _tabIndex,
                               onChanged: (i) async {
                                 setState(() => _tabIndex = i);
@@ -380,6 +424,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                                                         balls: _ctrl.displayedBalls,
                                                         showActions: _ctrl.showActionIcons,
                                                         onClear: _ctrl.clearSelection,
+                                                        digits: _digitsPerBall,
                                                       ),
                                                     )
                                                   : const EmptySelectionPlaceholder(),
@@ -845,6 +890,70 @@ class _ProBadge extends StatelessWidget {
     );
   }
 }
+class _DigitsChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  const _DigitsChip({
+    required this.label,
+    required this.selected,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: selected
+              ? const LinearGradient(
+                  colors: [
+                    Color(0xFFFFA726), // naranja suave
+                    Color(0xFFAB47BC), // morado suave
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                )
+              : null,
+          color: selected
+              ? null
+              : theme.colorScheme.surface.withOpacity(0.9),
+          border: Border.all(
+            color: selected
+                ? Colors.transparent
+                : theme.colorScheme.outline.withOpacity(0.4),
+          ),
+          boxShadow: selected
+              ? const [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                  )
+                ]
+              : null,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+            color: selected
+                ? Colors.white
+                : theme.colorScheme.onSurface.withOpacity(0.8),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SocialHintBubble extends StatelessWidget {
   final String text;
   final VoidCallback? onClose;

@@ -5,16 +5,20 @@ class SelectionRow extends StatelessWidget {
   final List<int> balls;
   final bool showActions;
   final VoidCallback onClear;
+  final int digits; // 👈 NUEVO
 
   const SelectionRow({
     super.key,
     required this.balls,
     required this.showActions,
     required this.onClear,
+    this.digits = 3,
   });
 
   @override
   Widget build(BuildContext context) {
+    final bool isFourDigits = digits == 4;
+
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
@@ -36,8 +40,9 @@ class SelectionRow extends StatelessWidget {
                       child: AnimatedBall(
                         finalNumber: number,
                         duration: const Duration(milliseconds: 300),
-                        size: 65,
+                        size: isFourDigits ? 72 : 65, // 👈 un poco más grande
                         enableAnimation: false,
+                        digits: digits, // 👈 respeta 3/4 cifras
                       ),
                     ),
                   );
