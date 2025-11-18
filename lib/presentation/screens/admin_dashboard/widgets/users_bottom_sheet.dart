@@ -6,6 +6,9 @@ import 'dart:async';
 class UsersBottomSheet extends StatefulWidget {
   /// Carga la lista de usuarios.
   final Future<List<UserRow>> Function() loader;
+  /// Activa/renueva PRO manualmente (ej: pago por WhatsApp).
+  /// El controller decide qué product_id usar.
+  final Future<Map<String, dynamic>> Function(int userId)? onManualGrantPro;
 
   /// Actualiza el rol del usuario en backend. Debe devolver el usuario actualizado.
   /// Si por ahora tu backend solo devuelve {ok:true}, igual funcionará (fallback local).
@@ -26,7 +29,9 @@ class UsersBottomSheet extends StatefulWidget {
       RoleItem(id: 1, name: 'Administrador'),
       RoleItem(id: 2, name: 'Usuario'),
     ],
+    this.onManualGrantPro, // 👈 agrega esta línea
   });
+
 
   @override
   State<UsersBottomSheet> createState() => _UsersBottomSheetState();
@@ -169,6 +174,103 @@ class _UsersBottomSheetState extends State<UsersBottomSheet> {
       );
     }
   }
+    Future<void> _grantPro(UserRow u) async {
+    // Si no te pasaron callback, no hace nada
+    if (widget.onManualGrantPro == null) return;
+
+    final ok = await custom.AppDialogs.confirm(
+      context: context,
+      title: 'Activar PRO',
+      message:
+          '¿Quieres activar o renovar PRO por 30 días para "${u.name}"?',
+      okText: 'Sí, activar PRO',
+      cancelText: 'Cancelar',
+      destructive: false,
+      icon: Icons.star,
+    );
+
+    if (ok != true || !mounted) return;
+
+    try {
+      // Llama al controlador/pantalla que hará el POST a /manual-grant
+      final resp = await widget.onManualGrantPro!(u.id);
+
+      if (!mounted) return;
+
+      // Puedes leer "expiresAt" si viene en la respuesta
+      final expiresAt = (resp['expiresAt'] as String?) ?? '';
+
+      await custom.AppDialogs.success(
+        context: context,
+        title: 'PRO activado',
+        message: expiresAt.isEmpty
+            ? 'La suscripción PRO se activó/renovó correctamente.'
+            : 'La suscripción PRO de "${u.name}" está activa hasta:\n$expiresAt',
+        okText: 'Aceptar',
+      );
+
+      // Refresca la lista para ver la etiqueta actualizada
+      await _refresh();
+    } catch (e) {
+      if (!mounted) return;
+      await custom.AppDialogs.error(
+        context: context,
+        title: 'No se pudo activar PRO',
+        message: _prettyError(e),
+        okText: 'Cerrar',
+      );
+    }
+  }
+
+Future<void> _showManualProDialog(BuildContext context, UserRow u) async {
+  final ok = await custom.AppDialogs.confirm(
+    context: context,
+    title: 'Activar PRO manual',
+    message:
+        '¿Deseas activar PRO por 30 días para "${u.name}"?\n\n'
+        'Solo debe usarse cuando el usuario pagó por fuera de Play Store.',
+    okText: 'Activar',
+    cancelText: 'Cancelar',
+    destructive: false,
+    icon: Icons.workspace_premium,
+  );
+
+  if (ok != true) return;
+
+  await _activatePro(u);
+}
+
+Future<void> _activatePro(UserRow u) async {
+  try {
+    // Llamada a tu backend (por ahora SIN endpoint real)
+    // Aquí enviamos: userId y 30 días
+    await widget.onUpdateRole(
+      u.id,
+      u.roleId, // no cambia rol, pero lo usamos como transporte
+    );
+
+    // ❗ REFRESCA LA LISTA COMPLETA
+    await _refresh();
+
+    if (!mounted) return;
+
+    await custom.AppDialogs.success(
+      context: context,
+      title: 'PRO activado',
+      message: 'La suscripción de "${u.name}" fue activada por 30 días.',
+      okText: 'Aceptar',
+    );
+  } catch (e) {
+    if (!mounted) return;
+
+    await custom.AppDialogs.error(
+      context: context,
+      title: 'Error',
+      message: _prettyError(e),
+      okText: 'Cerrar',
+    );
+  }
+}
 
   String _subLabel(UserRow u) {
     final s = (u.subscription ?? '').trim();
@@ -355,62 +457,65 @@ class _UsersBottomSheetState extends State<UsersBottomSheet> {
                                 ],
                               ),
 
-                              // Acciones
-                              trailing: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                child: isEditing
-                                    ? Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          IconButton(
-                                            tooltip: 'Cancelar',
-                                            icon: const Icon(Icons.close),
-                                            color: Colors.red[700],
-                                            onPressed: _saving
-                                                ? null
-                                                : _cancelEdit,
-                                          ),
-                                          IconButton(
-                                            tooltip: 'Guardar',
-                                            icon: const Icon(Icons.check),
-                                            color: Colors.deepPurple,
-                                            onPressed:
-                                                _saving ||
-                                                    _tempRoleId == u.roleId
-                                                ? null
-                                                : () => _saveEdit(u),
-                                          ),
-                                        ],
-                                      )
-                                    : Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          IconButton(
-                                            tooltip: 'Editar rol',
-                                            icon: const Icon(Icons.edit),
-                                            color: Colors.deepPurple,
-                                            onPressed: () => _startEdit(u),
-                                          ),
-                                          IconButton(
-                                            tooltip: 'Eliminar usuario',
-                                            icon: (_deletingId == u.id)
-                                                ? const SizedBox(
-                                                    width: 20,
-                                                    height: 20,
-                                                    child:
-                                                        CircularProgressIndicator(
-                                                          strokeWidth: 2,
-                                                        ),
-                                                  )
-                                                : const Icon(Icons.delete),
-                                            color: Colors.red,
-                                            onPressed: (_deletingId == u.id)
-                                                ? null
-                                                : () => _confirmDelete(u),
-                                          ),
-                                        ],
-                                      ),
-                              ),
+trailing: FittedBox(
+  fit: BoxFit.scaleDown,
+  child: isEditing
+      ? Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Cancelar',
+              icon: const Icon(Icons.close),
+              color: Colors.red[700],
+              onPressed: _saving ? null : _cancelEdit,
+            ),
+            IconButton(
+              tooltip: 'Guardar',
+              icon: const Icon(Icons.check),
+              color: Colors.deepPurple,
+              onPressed:
+                  _saving || _tempRoleId == u.roleId ? null : () => _saveEdit(u),
+            ),
+          ],
+        )
+      : Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ⭐ Nuevo botón PRO
+            IconButton(
+              tooltip: 'Activar PRO 30 días',
+              icon: const Icon(Icons.star),
+              color: Colors.amber[700],
+              onPressed: widget.onManualGrantPro == null
+                  ? null
+                  : () => _grantPro(u),
+            ),
+            IconButton(
+              tooltip: 'Editar rol',
+              icon: const Icon(Icons.edit),
+              color: Colors.deepPurple,
+              onPressed: () => _startEdit(u),
+            ),
+            IconButton(
+              tooltip: 'Eliminar usuario',
+              icon: (_deletingId == u.id)
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(Icons.delete),
+              color: Colors.red,
+              onPressed: (_deletingId == u.id)
+                  ? null
+                  : () => _confirmDelete(u),
+            ),
+          ],
+        ),
+),
+
                             ),
                           ),
                         );

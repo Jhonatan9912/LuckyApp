@@ -145,6 +145,59 @@ Future<List<Map<String, dynamic>>> loadAllUsers({
   // ⬇️ DEVUELVE TAL CUAL cada fila (incluye subscription, status, etc.)
   return items.map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map)).toList();
 }
+  /// Activa / renueva PRO manualmente para un usuario (pago por asesor).
+  /// productId debe ser:
+  ///  - "cm_suscripcion"  -> 60.000
+  ///  - "cml_suscripcion" -> 20.000
+  Future<Map<String, dynamic>> manualGrantPro({
+    required int userId,
+    required String productId,
+    int days = 30,
+  }) async {
+    final token = await SessionManager().getToken();
+    final uri = Uri.parse('$baseUrl/api/subscriptions/manual-grant');
+
+    final res = await http
+        .post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: json.encode({
+            'user_id': userId,
+            'product_id': productId,
+            'days': days,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (kDebugMode) {
+      // ignore: avoid_print
+      print('[POST manual-grant] ${res.statusCode} ${res.body}');
+    }
+
+    if (res.statusCode != 200) {
+      String msg;
+      try {
+        final Map<String, dynamic> body =
+            json.decode(res.body) as Map<String, dynamic>;
+        msg = (body['msg'] ??
+                body['error'] ??
+                body['message'] ??
+                body['detail'] ??
+                'No se pudo activar la suscripción.')
+            .toString();
+      } catch (_) {
+        msg = 'No se pudo activar la suscripción.';
+      }
+      throw Exception(msg);
+    }
+
+    final Map<String, dynamic> body =
+        json.decode(res.body) as Map<String, dynamic>;
+    return body;
+  }
 
   /// Devuelve un Map con: id, name, phone, public_code, role_id, role
   Future<Map<String, dynamic>> updateUserRole(int userId, int newRoleId) async {

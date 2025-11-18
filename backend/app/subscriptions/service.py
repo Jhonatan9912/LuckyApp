@@ -340,6 +340,76 @@ def cancel(user_id: int) -> Dict[str, Any]:
     db.session.commit()
     return {"ok": True}
 
+def manual_grant_pro(
+    user_id: int,
+    product_id: str,
+    days: int = 30,
+) -> Dict[str, Any]:
+    """
+    Activa o renueva la suscripción PRO de forma manual (ej. pago por WhatsApp).
+
+    - NO llama a Google Play.
+    - NO usa purchase_token para que reconcile_subscriptions lo ignore.
+    - Extiende días sobre la fecha de expiración actual si aún estaba activa.
+    """
+    now = _now_utc()
+    uid = int(user_id)
+    pid = (product_id or "").strip()
+
+    # Por ahora solo permitimos estos 2 productos manuales
+    allowed_products = {"cm_suscripcion", "cml_suscripcion"}
+    if pid not in allowed_products:
+        raise ValueError(f"Producto no permitido para activación manual: {pid}")
+
+    # Busca (o crea) la suscripción PRO del usuario
+    sub: Optional[UserSubscription] = (
+        UserSubscription.query
+        .filter_by(user_id=uid, entitlement="pro")
+        .first()
+    )
+    if not sub:
+        sub = UserSubscription(user_id=uid, entitlement="pro")
+
+    # Tomamos la expiración actual si existe
+    current_end = _to_aware_utc(
+        _get_attr(sub, ["expires_at", "current_period_end"])
+    )
+
+    # Si todavía tiene una PRO vigente, extendemos desde esa fecha.
+    # Si ya está vencida o no tiene fecha, empezamos desde ahora.
+    base_start = current_end if (current_end and current_end > now) else now
+    period_start = base_start
+    expiry_dt = base_start + timedelta(days=int(days))
+
+    # Estado lógico: PRO activa, sin auto-renovación
+    sub.status = "active"
+    _set_attr(sub, ["is_premium", "is_active"], True)
+    _set_attr(sub, ["period_start", "current_period_start"], period_start)
+    _set_attr(sub, ["expires_at", "current_period_end"], expiry_dt)
+
+    if hasattr(sub, "auto_renewing"):
+        sub.auto_renewing = False
+
+    # Marca el origen/producto para referencia
+    _set_attr(sub, ["platform"], "manual_offline")
+    _set_attr(sub, ["product_id", "last_product_id"], pid)
+    _set_attr(sub, ["last_sync_at"], now)
+
+    db.session.add(sub)
+    db.session.commit()
+
+    return {
+        "ok": True,
+        "userId": uid,
+        "entitlement": "pro",
+        "isPremium": True,
+        "status": "active",
+        "expiresAt": expiry_dt.isoformat(),
+        "since": period_start.isoformat(),
+        "autoRenewing": False,
+        "productId": pid,
+        "source": "manual_offline",
+    }
 
 def sync_purchase(
     user_id: int,

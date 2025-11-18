@@ -36,7 +36,7 @@ class SocialDockWithLabel extends StatelessWidget {
           child: RotatedBox(
             quarterTurns: 3, // vertical
             child: Text(
-              'Síguenos',
+              'Contactar asesor',
               style: TextStyle(
                 color: textColor,
                 fontWeight: FontWeight.w700,
@@ -44,6 +44,7 @@ class SocialDockWithLabel extends StatelessWidget {
                 fontSize: 12,
               ),
             ),
+
           ),
         ),
         const SizedBox(height: 6),
@@ -89,15 +90,16 @@ class SocialDockWithLabel extends StatelessWidget {
     final icons = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        item(
-          icon: FontAwesomeIcons.whatsapp,
-          color: const Color(0xFF25D366),
-          tooltip: 'Comunidad en WhatsApp',
-          onTap: () => UrlUtils.openExternal(
-            context,
-            url: AppLinks.whatsappChannel,
-          ),
+      item(
+        icon: FontAwesomeIcons.whatsapp,
+        color: const Color(0xFF25D366),
+        tooltip: 'Contactar asesor por WhatsApp',
+        onTap: () => UrlUtils.openExternal(
+          context,
+          url: AppLinks.whatsappAdvisor,
         ),
+      ),
+
         const SizedBox(height: 10),
         item(
           icon: FontAwesomeIcons.facebookF,

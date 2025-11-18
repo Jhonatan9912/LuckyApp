@@ -116,6 +116,50 @@ def subscription_cancel():
     out = cancel(int(user_id))
     return jsonify(out)
 
+@subscriptions_bp.post("/manual-grant")
+@jwt_required()
+def subscription_manual_grant():
+    """
+    Activación/renovación manual de PRO por un administrador (ej: pago por WhatsApp).
+    """
+    # Solo admin: role_id / rid == 2
+    from flask_jwt_extended import get_jwt
+    claims = get_jwt() or {}
+    role_id = claims.get("rid") or claims.get("role_id")
+    if role_id != 2:
+        return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
+
+    # Body JSON: { user_id / userId, product_id / productId, days? }
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"ok": False, "code": "BAD_JSON"}), 400
+
+    user_id = body.get("user_id") or body.get("userId")
+    product_id = (body.get("product_id") or body.get("productId") or "").strip()
+    days = body.get("days", 30)
+
+    if not user_id or not product_id:
+        return jsonify({"ok": False, "code": "MISSING_FIELDS"}), 400
+
+    try:
+        days_int = int(days)
+        if days_int <= 0:
+            days_int = 30
+    except Exception:
+        days_int = 30
+
+    try:
+        from app.subscriptions.service import manual_grant_pro
+        out = manual_grant_pro(int(user_id), product_id, days=days_int)
+        return jsonify(out), 200
+    except ValueError as ve:
+        # Por ejemplo: producto no permitido
+        return jsonify({"ok": False, "code": "BAD_PRODUCT", "msg": str(ve)}), 400
+    except Exception as e:
+        current_app.logger.exception("manual_grant_pro_failed")
+        return jsonify({"ok": False, "code": "MANUAL_GRANT_FAILED", "msg": str(e)}), 500
+
 @subscriptions_bp.post("/reconcile")
 @jwt_required(optional=True)
 def subscription_reconcile():

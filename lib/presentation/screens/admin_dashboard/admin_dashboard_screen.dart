@@ -103,27 +103,37 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => UsersBottomSheet(
-        loader: () async {
-          final list = await ctrl.loadAllUsers();
-          debugPrint(
-            '[users loader] first map: ${list.isNotEmpty ? list.first : 'empty'}',
-          );
-          return list.map<UserRow>((m) => UserRow.fromJson(m)).toList();
-        },
+builder: (_) => UsersBottomSheet(
+  loader: () async {
+    final list = await ctrl.loadAllUsers();
+    debugPrint(
+      '[users loader] first map: ${list.isNotEmpty ? list.first : 'empty'}',
+    );
+    return list.map<UserRow>((m) => UserRow.fromJson(m)).toList();
+  },
 
-        onUpdateRole: (userId, newRoleId) async {
-          final m = await ctrl.updateUserRole(userId, newRoleId);
-          try {
-            return UserRow.fromJson(Map<String, dynamic>.from(m));
-          } catch (_) {
-            // Si tu backend a veces devuelve {ok:true} u otro formato
-            return null; // el sheet de todas formas hace _refresh()
-          }
-        },
+  onUpdateRole: (userId, newRoleId) async {
+    final m = await ctrl.updateUserRole(userId, newRoleId);
+    try {
+      return UserRow.fromJson(Map<String, dynamic>.from(m));
+    } catch (_) {
+      return null;
+    }
+  },
 
-        onDelete: (userId) => ctrl.deleteUser(userId),
-      ),
+  onDelete: (userId) => ctrl.deleteUser(userId),
+
+  // ⭐ NUEVO: activar PRO manualmente (30 días)
+  onManualGrantPro: (userId) async {
+    final resp = await ctrl.manualGrantPro(
+      userId: userId,
+      productId: 'cm_suscripcion', // o 'cml_suscripcion'
+      days: 30,
+    );
+    return resp;
+  },
+),
+
     );
 
     // al cerrar el sheet, refresca KPIs
