@@ -124,14 +124,15 @@ builder: (_) => UsersBottomSheet(
   onDelete: (userId) => ctrl.deleteUser(userId),
 
   // ⭐ NUEVO: activar PRO manualmente (30 días)
-  onManualGrantPro: (userId) async {
-    final resp = await ctrl.manualGrantPro(
-      userId: userId,
-      productId: 'cm_suscripcion', // o 'cml_suscripcion'
-      days: 30,
-    );
-    return resp;
-  },
+onManualGrantPro: (userId, productId) async {
+  final resp = await ctrl.manualGrantPro(
+    userId: userId,
+    productId: productId, // viene desde UsersBottomSheet
+    days: 30,
+  );
+  return resp;
+},
+
 ),
 
     );

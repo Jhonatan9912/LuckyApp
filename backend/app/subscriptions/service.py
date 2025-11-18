@@ -353,6 +353,18 @@ def manual_grant_pro(
     - Extiende días sobre la fecha de expiración actual si aún estaba activa.
     - Si el usuario tiene referidor, crea una comisión de referidos (source=manual_offline).
     """
+    # ⛔ Blindaje: si ya tiene PRO activa, no permitir renovarla manualmente
+    cur = db.session.execute(text("""
+        SELECT is_premium, expires_at
+        FROM user_subscriptions
+        WHERE user_id = :uid
+        ORDER BY id DESC
+        LIMIT 1
+    """), {"uid": user_id}).fetchone()
+
+    if cur and cur.is_premium and cur.expires_at and cur.expires_at > datetime.utcnow():
+        raise ValueError("El usuario ya cuenta con una suscripción PRO activa.")
+
     now = _now_utc()
     uid = int(user_id)
     pid = (product_id or "").strip()

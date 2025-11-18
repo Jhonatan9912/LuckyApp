@@ -201,6 +201,17 @@ Future<String?> _pickPlanDialog(BuildContext context, UserRow u) async {
     }
   }
 Future<void> _grantPro(UserRow u) async {
+  // 🔒 Blindaje extra: si ya es PRO, no permitir activarlo
+if (u.subscriptionEntitlement?.toLowerCase() == 'pro') {
+  await custom.AppDialogs.error(
+    context: context,
+    title: 'Ya tiene suscripción activa',
+    message: 'El usuario "${u.name}" ya cuenta con una suscripción PRO activa.',
+    okText: 'Cerrar',
+  );
+  return;
+}
+
   if (widget.onManualGrantPro == null) return;
 
   // 1) Escoger plan
@@ -517,14 +528,17 @@ trailing: FittedBox(
           mainAxisSize: MainAxisSize.min,
           children: [
             // ⭐ Nuevo botón PRO
-            IconButton(
-              tooltip: 'Activar PRO 30 días',
-              icon: const Icon(Icons.star),
-              color: Colors.amber[700],
-              onPressed: widget.onManualGrantPro == null
-                  ? null
-                  : () => _grantPro(u),
-            ),
+           // Mostrar la estrella SOLO si NO tiene PRO activo
+if (u.subscriptionEntitlement?.toLowerCase() != 'pro')
+  IconButton(
+    tooltip: 'Activar PRO 30 días',
+    icon: const Icon(Icons.star),
+    color: Colors.amber[700],
+    onPressed: widget.onManualGrantPro == null
+        ? null
+        : () => _grantPro(u),
+  ),
+
             IconButton(
               tooltip: 'Editar rol',
               icon: const Icon(Icons.edit),
