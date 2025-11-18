@@ -29,26 +29,38 @@ games_bp = Blueprint("games_bp", __name__, url_prefix="/api/games")
 @games_bp.post("/generate")
 @jwt_required(optional=True)
 def generate():
-    uid_raw = get_jwt_identity()  # puede ser None
+    uid_raw = get_jwt_identity()  # puede ser None (demo / no logueado)
     uid = int(uid_raw) if uid_raw is not None else None
 
+    # Leer digits de la query (?digits=3|4)
     try:
-        # Guard explícito: no abrir/usar juegos si NO es PRO
-        if not uid or not _is_user_pro(uid):
-            return jsonify({
-                "ok": False,
-                "code": "NOT_PREMIUM",
-                "message": "Necesitas la suscripción PRO para jugar."
-            }), 403
+        digits = int(request.args.get("digits", 3))
+    except (TypeError, ValueError):
+        digits = 3
+    if digits not in (3, 4):
+        digits = 3
 
-        gid, numbers = generate_five_available(uid)
+    try:
+        # ⚠️ OJO: ya NO hacemos el guard NOT_PREMIUM aquí.
+        # generate_five_available se encarga:
+        #   - PRO  → usa/crea juego real
+        #   - NO PRO → devuelve preview (gid=None o juego solo lectura)
+        gid, numbers = generate_five_available(
+            user_id=uid,
+            digits=digits,
+            avoid_game_id=None,
+        )
         db.session.commit()
 
-        return jsonify({"ok": True, "data": {"game_id": gid, "numbers": numbers}}), 200
+        return jsonify({
+            "ok": True,
+            "data": {
+                "game_id": gid,
+                "numbers": numbers,
+                "digits": digits,
+            }
+        }), 200
 
-    except PermissionError as e:  # por si el service eleva NOT_PREMIUM
-        db.session.rollback()
-        return jsonify({"ok": False, "code": "NOT_PREMIUM", "message": str(e)}), 403
     except Exception as e:
         db.session.rollback()
         return jsonify({"ok": False, "message": str(e)}), 500
@@ -125,14 +137,36 @@ def my_selection():
     try:
         uid = int(uid_raw)
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "code": "UNAUTHORIZED", "message": "Token inválido"}), 401
+        return jsonify({
+            "ok": False,
+            "code": "UNAUTHORIZED",
+            "message": "Token inválido"
+        }), 401
 
-    res = get_current_selection(uid)
+    # Leer digits de la query (?digits=3|4)
+    try:
+        digits = int(request.args.get("digits", 3))
+    except (TypeError, ValueError):
+        digits = 3
+    if digits not in (3, 4):
+        digits = 3
+
+    res = get_current_selection(uid, digits=digits)
+
     if res.get("ok"):
         return jsonify({"ok": True, "data": res["data"]}), 200
     if res.get("code") == "NOT_FOUND":
-        return jsonify({"ok": False, "code": "NOT_FOUND", "message": "Sin selección previa"}), 404
-    return jsonify({"ok": False, "code": "ERROR", "message": res.get("message", "Error")}), 500
+        return jsonify({
+            "ok": False,
+            "code": "NOT_FOUND",
+            "message": "Sin selección previa"
+        }), 404
+
+    return jsonify({
+        "ok": False,
+        "code": "ERROR",
+        "message": res.get("message", "Error")
+    }), 500
 
 
 @games_bp.post("/<int:game_id>/announce-winner")

@@ -150,8 +150,8 @@ class DashboardController extends ChangeNotifier {
     }
   }
 
-  String _fmtNums(List<int> xs) =>
-      xs.map((e) => e.toString().padLeft(_digitsPerBall, '0')).join('-');
+String _fmtNums(List<int> xs) =>
+    xs.map((e) => e.toString().padLeft(_digitsPerBall, '0')).join('-');
 
 
   void _setAnimating(bool v) {
@@ -275,10 +275,10 @@ class DashboardController extends ChangeNotifier {
     // requiere sesión válida
     if (_authToken == null || _authToken!.isEmpty) return;
 
-        final res = await _gamesApi.getMySelection(
-      token: _authToken,
-      digits: _digitsPerBall,
-    );
+final res = await _gamesApi.getMySelection(
+  token: _authToken,
+);
+
 
     if (res['ok'] != true) return;
 
@@ -385,10 +385,10 @@ class DashboardController extends ChangeNotifier {
 
     if (tokenToUse != null) {
       try {
-                final pre = await _gamesApi.getMySelection(
-          token: tokenToUse,
-          digits: _digitsPerBall,
-        );
+final pre = await _gamesApi.getMySelection(
+  token: tokenToUse,
+);
+
 
         if (pre['ok'] == true) {
           final data = (pre['data'] as Map<String, dynamic>? ?? {});
@@ -427,11 +427,10 @@ class DashboardController extends ChangeNotifier {
     Map<String, dynamic>? data;
 
     for (var i = 0; i < attempts; i++) {
-      final res = await _gamesApi.generate(
-        token: tokenToUse,
-        xUserId: xUserIdToUse,
-        digits: _digitsPerBall, // 👈 3 ó 4
-      );
+final res = await _gamesApi.generate(
+  token: tokenToUse,
+  xUserId: xUserIdToUse,
+);
 
       if (res['ok'] == true) {
         final d = (res['data'] as Map<String, dynamic>? ?? {});
