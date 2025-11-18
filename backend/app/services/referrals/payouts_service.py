@@ -27,6 +27,13 @@ def get_maturity_days() -> int:
 
 
 def mature_commissions(days: int | None = None, minutes: int | None = None) -> int:
+    """
+    Pasa comisiones de 'pending' a 'available' cuando ya cumplieron
+    el tiempo de maduración (event_time <= cutoff).
+
+    Se usa tanto desde cron (flask mature-commissions) como desde
+    sync_purchase/reconcile_subscriptions.
+    """
     if minutes is not None:
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=int(minutes))
     else:
@@ -34,19 +41,18 @@ def mature_commissions(days: int | None = None, minutes: int | None = None) -> i
             days = get_maturity_days()
         cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
 
-    with db.session.begin_nested():
-        res = db.session.execute(
-            text("""
-                UPDATE referral_commissions
-                   SET status = 'available'
-                 WHERE status = 'pending'
-                   AND amount_micros > 0
-                   AND event_time <= :cutoff
-            """),
-            {"cutoff": cutoff},
-        )
-        return int(res.rowcount or 0)
+    # 🔴 OJO: aquí NO usamos begin_nested, para que el commit sea real
+    stmt = text("""
+        UPDATE referral_commissions
+           SET status = 'available'
+         WHERE status = 'pending'
+           AND amount_micros > 0
+           AND event_time <= :cutoff
+    """)
 
+    res = db.session.execute(stmt, {"cutoff": cutoff})
+    db.session.commit()  # 👈 ESTE COMMIT ES LO QUE FALTABA
+    return int(res.rowcount or 0)
 
 def reject_commissions_for_token(purchase_token: str) -> int:
     if not purchase_token:
@@ -207,7 +213,7 @@ def register_referral_commission(
 
     percent = _get_commission_percent_for_product(product_id)
     commission_micros = int(round(amount_micros * (percent / 100.0)))
-    when = (event_time or datetime.now(timezone.utc)).isoformat()
+    when = event_time or datetime.now(timezone.utc)
 
     res = db.session.execute(
         text("""
@@ -231,7 +237,7 @@ def register_referral_commission(
             "product_id": product_id,
             "purchase_token": purchase_token,
             "order_id": order_id,
-            "event_time": when,
+            "event_time": when, 
             "amount_micros": amount_micros,
             "currency_code": currency_code,
             "percent": percent,
