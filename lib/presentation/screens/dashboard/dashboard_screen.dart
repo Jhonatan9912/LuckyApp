@@ -97,6 +97,17 @@ class _DashboardScreenState extends State<DashboardScreen>
 void _onDigitsChanged(int value) async {
   if (_digitsPerBall == value) return;
 
+  // 👇 Leemos el plan actual
+  final subs = context.read<SubscriptionProvider>();
+  final int maxDigits = subs.maxDigits ?? 3;
+
+  // 🛡️ Si intenta ir a 4 cifras sin tener el plan de 60k, lo bloqueamos
+  if (value == 4 && maxDigits < 4) {
+    // Opcional: muestra hoja de suscripción o un mensaje
+    await _openSubscriptionSheet();
+    return;
+  }
+
   // Cambiamos el tipo en la pantalla
   setState(() {
     _digitsPerBall = value;
@@ -108,13 +119,14 @@ void _onDigitsChanged(int value) async {
   // 🔄 Rehidratar estado para este tipo (3 o 4 cifras)
   setState(() => _hydrating = true);
 
-  await _ctrl.loadHistory();          // por si el juego de ese tipo ya cerró
+  await _ctrl.loadHistory();           // por si el juego de ese tipo ya cerró
   await _ctrl.restoreSelectionIfAny(); // intenta traer la reserva de ese tipo
 
   if (mounted) {
     setState(() => _hydrating = false);
   }
 }
+
 
   void _showHelp() {
     showModalBottomSheet(
@@ -229,11 +241,15 @@ void _onDigitsChanged(int value) async {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (context, __) {
-        final subs = context.watch<SubscriptionProvider>();
-        final isPro = subs.isPremium;
+return AnimatedBuilder(
+  animation: _ctrl,
+  builder: (context, __) {
+    final subs = context.watch<SubscriptionProvider>();
+    final isPro = subs.isPremium;
+
+    // 👇 Nuevo: cuántas cifras tiene permitido el usuario según su plan
+    final int maxDigits = subs.maxDigits ?? 3; // 20k => 3, 60k => 4
+
 
         return Scaffold(
           appBar: DashboardAppBar(
@@ -342,34 +358,41 @@ void _onDigitsChanged(int value) async {
                       Column(
                         children: [
                           // 👇 Selector de tipo de juego (solo en Juego Actual)
-                          if (_tabIndex == 0)
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Text(
-                                    'Tipo de juego:',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  _DigitsChip(
-                                    label: '3 cifras',
-                                    selected: _digitsPerBall == 3,
-                                    onTap: () => _onDigitsChanged(3),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _DigitsChip(
-                                    label: '4 cifras',
-                                    selected: _digitsPerBall == 4,
-                                    onTap: () => _onDigitsChanged(4),
-                                  ),
-                                ],
-                              ),
-                            ),
+if (_tabIndex == 0)
+  Padding(
+    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Text(
+          'Tipo de juego:',
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+          ),
+        ),
+        const SizedBox(width: 12),
+
+        // Siempre disponible
+        _DigitsChip(
+          label: '3 cifras',
+          selected: _digitsPerBall == 3,
+          onTap: () => _onDigitsChanged(3),
+        ),
+
+        const SizedBox(width: 8),
+
+        // Solo mostramos "4 cifras" si el plan lo permite
+        if (maxDigits >= 4)
+          _DigitsChip(
+            label: '4 cifras',
+            selected: _digitsPerBall == 4,
+            onTap: () => _onDigitsChanged(4),
+          ),
+      ],
+    ),
+  ),
+
 
 BallTube(
   numbers: _ctrl.numbers,

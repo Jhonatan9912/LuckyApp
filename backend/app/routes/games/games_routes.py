@@ -2,6 +2,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.db.database import db
+from app.subscriptions.service import get_status as get_sub_status
 
 # Usa el guard centralizado del service (fecha + estado)
 from app.services.games.games_service import _is_user_pro
@@ -49,9 +50,22 @@ def generate():
                 "message": "Necesitas la suscripción PRO para jugar."
             }), 403
 
+        # 🆕 Consultar el plan del usuario
+        sub_status = get_sub_status(uid)
+        max_digits = sub_status.max_digits or 0
+
+        # 🛡️ Blindaje: si intenta generar juego de 4 cifras sin plan 60k
+        if digits == 4 and max_digits < 4:
+            return jsonify({
+                "ok": False,
+                "code": "FOUR_DIGITS_NOT_ALLOWED",
+                "message": "Tu plan actual solo permite jugar a 3 cifras."
+            }), 403
+
         # 👇 PASAR digits al service
         gid, numbers = generate_five_available(uid, digits=digits)
         db.session.commit()
+
 
         return jsonify({
             "ok": True,
@@ -154,6 +168,23 @@ def my_selection():
     if digits not in (3, 4):
         digits = 3
 
+    # 🆕 Guard: exigir PRO y validar plan vs dígitos
+    sub_status = get_sub_status(uid)
+
+    if not sub_status.is_premium:
+        return jsonify({
+            "ok": False,
+            "code": "NOT_PREMIUM",
+            "message": "Necesitas la suscripción PRO para ver tus selecciones."
+        }), 403
+
+    if digits == 4 and (sub_status.max_digits or 0) < 4:
+        return jsonify({
+            "ok": False,
+            "code": "FOUR_DIGITS_NOT_ALLOWED",
+            "message": "Tu plan actual solo permite ver/jugar números de 3 cifras."
+        }), 403
+
     # 👇 Pasar digits al service
     res = get_current_selection(uid, digits=digits)
 
@@ -170,7 +201,6 @@ def my_selection():
         "code": "ERROR",
         "message": res.get("message", "Error")
     }), 500
-
 
 @games_bp.post("/<int:game_id>/announce-winner")
 @jwt_required()

@@ -8,6 +8,7 @@ from sqlalchemy import or_
 from datetime import datetime, timezone
 import random
 from app.services.notify.push_sender import send_bulk_push
+from app.subscriptions.service import get_status as get_sub_status  # 👈 NUEVO
 
 def _is_user_pro(user_id: int) -> bool:
     """
@@ -40,7 +41,23 @@ def _is_user_pro(user_id: int) -> bool:
         return period_active and status in ("active", "canceled", "grace", "on_hold", "paused")
     except Exception:
         return False
-    
+
+def _user_max_digits(user_id: int) -> int:
+    """
+    Devuelve el máximo de cifras que el usuario puede jugar según su plan:
+    - 0  => sin PRO / sin plan válido
+    - 3  => plan 20k (solo 3 cifras)
+    - 4  => plan 60k (3 y 4 cifras)
+    """
+    try:
+        status = get_sub_status(user_id)
+        if not getattr(status, "is_premium", False):
+            return 0
+        max_digits = getattr(status, "max_digits", None)
+        return int(max_digits) if max_digits is not None else 0
+    except Exception:
+        return 0
+  
 def _max_number_for_digits(digits: int) -> int:
     """Máximo número permitido según dígitos (3 → 999, 4 → 9999)."""
     return (10 ** digits) - 1
@@ -215,8 +232,14 @@ def generate_five_available(
 
         return gid, numbers
 
-    # ---- Usuario PRO: puede crear juegos por tipo ----
+      # ---- Usuario PRO: puede crear juegos por tipo ----
+    # 🛡️ Blindaje extra por plan (por si llaman al service directo)
+    allowed_digits = _user_max_digits(int(user_id))
+    if digits == 4 and allowed_digits < 4:
+        raise PermissionError("Tu plan actual solo permite jugar a 3 cifras.")
+
     gid = get_or_create_active_unscheduled_game_id(digits=digits, user_id=int(user_id))
+
 
     # Si ya tiene 5 en este juego, devuelve esos mismos 5 (no generes otros)
     existing = db.session.execute(text("""
@@ -286,7 +309,16 @@ def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
             "error": f"Cada número debe estar entre 0 y {max_number}."
         }
 
-    # --- PREMIUM guard: solo PRO pueden reservar ---
+    # 🛡️ Blindaje por plan: 20k no puede jugar 4 cifras
+    user_allowed_digits = _user_max_digits(user_id)
+    if digits == 4 and user_allowed_digits < 4:
+        return {
+            "ok": False,
+            "code": "FOUR_DIGITS_NOT_ALLOWED",
+            "error": "Tu plan actual solo permite jugar a 3 cifras."
+        }
+
+    # --- PREMIUM guard: solo PRO pueden reservar (para 3 y 4 cifras) ---
     if not _is_user_pro(user_id):
         return {
             "ok": False,

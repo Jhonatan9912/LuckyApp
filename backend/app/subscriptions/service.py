@@ -125,9 +125,13 @@ class SubscriptionStatus:
     is_premium: bool
     expires_at: Optional[str]
     status: str
-    reason: Optional[str] = None
-    since: Optional[str] = None              # inicio del periodo vigente
-    auto_renewing: Optional[bool] = None     # si se renueva automáticamente
+    reason: Optional[str] = None              # inicio del periodo vigente
+    since: Optional[str] = None
+    auto_renewing: Optional[bool] = None
+    # 👇 NUEVOS CAMPOS
+    plan: str = "none"                        # "basic", "full", "none"
+    max_digits: Optional[int] = None          # 3, 4 o None
+
     
     def to_json(self) -> Dict[str, Any]:
         # Mantén camelCase para Flutter
@@ -141,6 +145,9 @@ class SubscriptionStatus:
             "since": self.since,
             "autoRenewing": self.auto_renewing,
             "statusLabel": _catalog_get(self.status)["label_es"],
+            # 👇 NUEVOS CAMPOS PARA FLUTTER
+            "plan": self.plan,
+            "maxDigits": self.max_digits,
         }
 
 
@@ -277,6 +284,25 @@ def _price_from_catalog(product_id: str, default_currency: str = "COP") -> tuple
             return v
     return (0, default_currency)
 
+def _infer_plan_from_product_id(product_id: str) -> tuple[str, Optional[int]]:
+    """
+    Devuelve (plan, max_digits) según el product_id:
+    - cml_suscripcion  => 20k => solo 3 cifras ("basic", 3)
+    - cm_suscripcion   => 60k => 3 y 4 cifras ("full", 4)
+    """
+    pid = (product_id or "").strip()
+
+    if pid.startswith("cm_suscripcion"):
+        # 60.000: PRO completa, hasta 4 cifras
+        return "full", 4
+
+    if pid.startswith("cml_suscripcion"):
+        # 20.000: solo juego de 3 cifras
+        return "basic", 3
+
+    # Desconocido / sin producto asociado
+    return "none", None
+
 def get_status(user_id: Optional[int]) -> SubscriptionStatus:
     if not user_id:
         return SubscriptionStatus(
@@ -285,8 +311,11 @@ def get_status(user_id: Optional[int]) -> SubscriptionStatus:
             is_premium=False,
             expires_at=None,
             status="none",
-            reason="not_authenticated"
+            reason="not_authenticated",
+            plan="none",
+            max_digits=None,
         )
+
 
     uid = int(user_id)
 
@@ -317,8 +346,11 @@ def get_status(user_id: Optional[int]) -> SubscriptionStatus:
             entitlement="pro",
             is_premium=False,
             expires_at=None,
-            status="none"
+            status="none",
+            plan="none",
+            max_digits=None,
         )
+
 
     end_at_utc: Optional[datetime] = _to_aware_utc(
         _get_attr(sub, ["expires_at", "current_period_end"])
@@ -339,6 +371,15 @@ def get_status(user_id: Optional[int]) -> SubscriptionStatus:
     grant = _catalog_get(status_str)["grant_access"]
     is_premium = bool(not_expired and grant)
 
+    # 👇 Tomamos el product_id para saber el plan
+    product_id = _get_attr(sub, ["product_id", "last_product_id"], "") or ""
+    plan, max_digits = _infer_plan_from_product_id(product_id)
+
+    # Si no tiene acceso premium (vencida / sin grant_access), no le damos ningún juego especial
+    if not is_premium:
+        plan = "none"
+        max_digits = None
+
     return SubscriptionStatus(
         user_id=uid,
         entitlement="pro",
@@ -347,6 +388,8 @@ def get_status(user_id: Optional[int]) -> SubscriptionStatus:
         status=status_str,
         since=start_at_utc.isoformat() if start_at_utc else None,
         auto_renewing=auto_renewing,
+        plan=plan,
+        max_digits=max_digits,
     )
 
 
