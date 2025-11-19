@@ -42,6 +42,8 @@ class SubscriptionProvider extends ChangeNotifier {
   bool _activating = false;
   bool get activating => _activating;
 
+ int? _maxDigits;
+  int? get maxDigits => _maxDigits;
   // Usuario al que pertenece el estado de esta instancia del provider
   int? _ownerUserId;
 
@@ -116,6 +118,7 @@ class SubscriptionProvider extends ChangeNotifier {
     _autoRenewing = false;
     _lastFetch = null;
     _error = null;
+    _maxDigits = null;
   }
 
   void clear() {
@@ -196,10 +199,23 @@ class SubscriptionProvider extends ChangeNotifier {
       _autoRenewing =
           (json['autoRenewing'] == true) || (json['auto_renewing'] == true);
 
+      // 👇 NUEVO: leer maxDigits desde backend
+      final rawMaxDigits = json['maxDigits'] ?? json['max_digits'];
+
+      if (rawMaxDigits is int) {
+        _maxDigits = rawMaxDigits;
+      } else if (rawMaxDigits is String) {
+        _maxDigits = int.tryParse(rawMaxDigits);
+      } else {
+        // Fallback: si es premium pero backend no manda nada, asumimos 3
+        _maxDigits = _isPremium ? 3 : null;
+      }
+
       // Guarda cache local (por si UI lo necesita muy pronto)
       await session.setIsPremium(_isPremium);
 
       _lastFetch = DateTime.now();
+
     } catch (e) {
       _error = e.toString();
       dev.log('subs.refresh() backend error: $_error');

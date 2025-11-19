@@ -68,11 +68,16 @@ Future<void> main() async {
             session: session,
           ),
         ),
-        ChangeNotifierProvider(
-          create: (_) => ReferralProvider(
-            api: ReferralsApi(baseUrl: Env.apiBaseUrl, session: session),
-          ),
-        ),
+ChangeNotifierProvider(
+  create: (_) => ReferralProvider(
+    api: ReferralsApi(
+      baseUrl: Env.apiBaseUrl,
+      session: session,  // ya lo estabas enviando
+    ),
+    session: session,     // ← AHORA SÍ lo pasamos al provider
+  ),
+),
+
         ChangeNotifierProvider(
           create: (_) => PayoutsProvider(
             api: PayoutsApi(baseUrl: Env.apiBaseUrl, session: session),

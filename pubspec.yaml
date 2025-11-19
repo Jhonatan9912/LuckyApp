@@ -84,6 +84,7 @@ flutter:
       - assets/images/
       - assets/images/faq/
       - assets/images/play/
+      - assets/icons/
       - assets/images/subscriptions/
       - assets/sounds/
       - assets/legal/

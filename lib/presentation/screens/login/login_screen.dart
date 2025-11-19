@@ -55,6 +55,13 @@ class _LoginScreenState extends State<LoginScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const SizedBox(height: 50),
+
+Image.asset(
+  'assets/icons/iconowithout.png',
+  width: 180,      // ← ajusta el tamaño a tu gusto
+  height: 180,
+),
+                const SizedBox(height: 10),
                 Text(
                   '¡Bienvenido!',
                   style: GoogleFonts.montserrat(

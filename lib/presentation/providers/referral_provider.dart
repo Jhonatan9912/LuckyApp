@@ -1,9 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:base_app/data/api/referrals_api.dart';
+import 'package:base_app/data/session/session_manager.dart';
 
 class ReferralProvider extends ChangeNotifier {
   final ReferralsApi api;
-  ReferralProvider({required this.api});
+  final SessionManager session;
+
+  ReferralProvider({
+    required this.api,
+    required this.session,
+  });
 
   bool _loading = false;
   bool get loading => _loading;
@@ -34,23 +40,35 @@ class ReferralProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // 0) VALIDAR TOKEN: si no hay sesión, no llamar al backend
+      final token = await session.getToken();
+      if (token == null || token.isEmpty) {
+        if (kDebugMode) {
+          debugPrint(
+            '[referral_provider] No hay sesión → no cargar referidos',
+          );
+        }
+        return; // el finally igual se ejecuta y apaga _loading
+      }
+
       // 1) Resumen principal (fuente de verdad para saldos actuales)
       final summary = await api.fetchSummary();
       total = summary.total;
       activos = summary.activos;
       inactivos = summary.inactivos;
 
-      // Valores fuertes desde el backend (NO usar dynamic ni duplicar asignaciones)
-      availableCop   = summary.availableCop;
-      pendingCop     = summary.pendingCop;
+      // Valores fuertes desde el backend
+      availableCop    = summary.availableCop;
+      pendingCop      = summary.pendingCop;
       inWithdrawalCop = summary.inWithdrawalCop;
-      paidCop        = summary.paidCop;
-      moneda         = summary.currency ?? 'COP';
+      paidCop         = summary.paidCop;
+      moneda          = summary.currency ?? 'COP';
 
       if (kDebugMode) {
         debugPrint(
           '[referral_provider] summary '
-          'avail=$availableCop held=$pendingCop in_withdrawal=$inWithdrawalCop paid=$paidCop currency=$moneda',
+          'avail=$availableCop held=$pendingCop '
+          'in_withdrawal=$inWithdrawalCop paid=$paidCop currency=$moneda',
         );
       }
 
@@ -58,19 +76,22 @@ class ReferralProvider extends ChangeNotifier {
       items = await api.fetchList(limit: 50, offset: 0);
 
       // 3) Totales de payouts (histórico). NO tocar available/pending aquí.
-      //    Solo mostramos métricas históricas si las necesitas en otra vista.
       try {
         final payouts = await api.fetchPayoutsSummary();
         comisionPendiente = payouts.pending;
-        comisionPagada = payouts.paid;
+        comisionPagada    = payouts.paid;
+
         // Si trae currency y está vacía la actual, úsala; si no, deja la del summary.
-        if ((moneda.isEmpty || moneda == 'COP') && (payouts.currency).isNotEmpty) {
+        if ((moneda.isEmpty || moneda == 'COP') &&
+            (payouts.currency).isNotEmpty) {
           moneda = payouts.currency;
         }
+
         if (kDebugMode) {
           debugPrint(
             '[referral_provider] payouts '
-            'pending(historic)=$comisionPendiente paid(historic)=$comisionPagada currency=$moneda',
+            'pending(historic)=$comisionPendiente '
+            'paid(historic)=$comisionPagada currency=$moneda',
           );
         }
       } catch (e) {
@@ -125,8 +146,7 @@ class ReferralProvider extends ChangeNotifier {
         payoutData: payoutData,
       );
 
-      // IMPORTANTÍSIMO: recargar desde el backend para reflejar
-      // available=0 y enRetiro=monto (o lo que corresponda).
+      // Recargar desde el backend para reflejar nuevos saldos
       await load(refresh: true);
     } catch (e) {
       if (kDebugMode) {
