@@ -94,18 +94,27 @@ class _DashboardScreenState extends State<DashboardScreen>
       setState(() {});
     }
   }
-  void _onDigitsChanged(int value) {
-    if (_digitsPerBall == value) return;
-    setState(() {
-      _digitsPerBall = value;
-    });
+void _onDigitsChanged(int value) async {
+  if (_digitsPerBall == value) return;
 
-    // Avisar al controller (lo implementaremos en el controller luego)
-    _ctrl.setDigitsPerBall(value);
+  // Cambiamos el tipo en la pantalla
+  setState(() {
+    _digitsPerBall = value;
+  });
 
-    // Opcional: limpiar selección actual al cambiar de tipo de juego
-    _ctrl.resetToInitial();
+  // Avisamos al controller
+  _ctrl.setDigitsPerBall(value);
+
+  // 🔄 Rehidratar estado para este tipo (3 o 4 cifras)
+  setState(() => _hydrating = true);
+
+  await _ctrl.loadHistory();          // por si el juego de ese tipo ya cerró
+  await _ctrl.restoreSelectionIfAny(); // intenta traer la reserva de ese tipo
+
+  if (mounted) {
+    setState(() => _hydrating = false);
   }
+}
 
   void _showHelp() {
     showModalBottomSheet(
@@ -362,35 +371,34 @@ class _DashboardScreenState extends State<DashboardScreen>
                               ),
                             ),
 
-                          BallTube(
-                            numbers: _ctrl.numbers,
-                            animating: _ctrl.animating,
-                            digits: _digitsPerBall, // 👈 NUEVO
-                          ),
-                          const SizedBox(height: 8),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: tabs.SelectionTabs(
+BallTube(
+  numbers: _ctrl.numbers,
+  animating: _ctrl.animating,
+  digits: _digitsPerBall,
+),
 
-                              index: _tabIndex,
-                              onChanged: (i) async {
-                                setState(() => _tabIndex = i);
+// ⬇️ Sin espacio fijo, y además subimos las pestañas 12px
+Padding(
+  padding: const EdgeInsets.symmetric(horizontal: 16),
+  child: Transform.translate(
+    offset: const Offset(0, -12), // prueba con -8, -10, -16 según te guste
+    child: tabs.SelectionTabs(
+      index: _tabIndex,
+      onChanged: (i) async {
+        setState(() => _tabIndex = i);
+        if (i == 1) {
+          await _ctrl.loadHistory();
+        } else if (i == 0) {
+          await _ctrl.loadHistory();
+          setState(() {});
+        } else if (i == 2) {
+          await context.read<ReferralProvider>().load();
+        }
+      },
+    ),
+  ),
+),
 
-                                if (i == 1) {
-                                  // Historial
-                                  await _ctrl.loadHistory();
-                                } else if (i == 0) {
-                                  // Juego Actual
-                                  await _ctrl
-                                      .loadHistory(); // por si hubo ganador
-                                  setState(() {});
-                                } else if (i == 2) {
-                                  // Mis referidos
-                                  await context.read<ReferralProvider>().load();
-                                }
-                              },
-                            ),
-                          ),
                         ],
                       ),
 
@@ -427,7 +435,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                                                         digits: _digitsPerBall,
                                                       ),
                                                     )
-                                                  : const EmptySelectionPlaceholder(),
+                                                  : EmptySelectionPlaceholder(
+    digits: _digitsPerBall, // 👈 le mandas 3 o 4
+  ),
+
                                         ),
 
                                   ),

@@ -198,26 +198,64 @@ def _parse_gp_time(v) -> Optional[datetime]:
 
 def _pick_line_item(line_items: list[dict]) -> dict:
     """
-    Devuelve el lineItem 'vigente/reciente'.
-    Regla: el de MAYOR expiryTime (ms o RFC3339). Si no hay fechas válidas, retorna el primero.
-    """
-    def _expiry_of(li: dict) -> Optional[datetime]:
-        v = li.get("expiryTime") or li.get("expiryTimeMillis")
-        return _parse_gp_time(v)
+    Devuelve el lineItem más relevante:
 
+    1) Si hay uno cuyo periodo [start, expiry) contiene 'now', devuelve ese.
+    2) Si no, el de expiración futura más cercana.
+    3) Si solo hay pasados, el de expiración más reciente.
+    """
     items = [li for li in (line_items or []) if isinstance(li, dict)]
     if not items:
         return {}
 
-    best = None
-    best_exp = None
+    now = _now_utc()
+
+    def _period(li: dict):
+        start_raw = li.get("startTime") or li.get("startTimeMillis")
+        exp_raw = li.get("expiryTime") or li.get("expiryTimeMillis")
+        start = _parse_gp_time(start_raw)
+        end = _parse_gp_time(exp_raw)
+        return start, end
+
+    current_li = None
+    current_end = None
+
+    upcoming_li = None
+    upcoming_end = None
+
+    past_li = None
+    past_end = None
+
     for li in items:
-        exp = _expiry_of(li)
-        if exp is None:
+        start, end = _period(li)
+        if end is None:
             continue
-        if best is None or exp > best_exp:
-            best, best_exp = li, exp
-    return best or items[0]
+
+        # 1) Periodo vigente: start <= now < end
+        if start and start <= now < end:
+            if current_li is None or end < current_end:
+                current_li, current_end = li, end
+            continue
+
+        # 2) Futuros (todavía no empiezan): end > now
+        if end > now:
+            if upcoming_li is None or end < upcoming_end:
+                upcoming_li, upcoming_end = li, end
+            continue
+
+        # 3) Pasados: end <= now
+        if past_li is None or end > past_end:
+            past_li, past_end = li, end
+
+    if current_li is not None:
+        return current_li
+    if upcoming_li is not None:
+        return upcoming_li
+    if past_li is not None:
+        return past_li
+
+    # Fallback extremo
+    return items[0]
 
 def _price_from_catalog(product_id: str, default_currency: str = "COP") -> tuple[int, str]:
     """

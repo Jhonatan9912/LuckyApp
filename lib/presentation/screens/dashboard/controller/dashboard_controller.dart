@@ -280,14 +280,24 @@ String _fmtNums(List<int> xs) =>
       digits: _digitsPerBall,
     );
 
-    if (res['ok'] != true) return;
+      if (res['ok'] != true) {
+    // No hay selección para este tipo de juego → deja todo en estado inicial
+    resetToInitial();
+    return;
+  }
+
 
     final data = (res['data'] as Map<String, dynamic>? ?? {});
     final gid = (data['game_id'] as num?)?.toInt();
     final numsDyn = (data['numbers'] as List?) ?? const [];
     final nums = numsDyn.map((e) => int.parse(e.toString())).toList();
 
-    if (gid == null || nums.length != 5) return;
+      if (gid == null || nums.length != 5) {
+    // Datos incompletos → tratar como "sin selección" para este tipo
+    resetToInitial();
+    return;
+  }
+
 
     // ⛔ No restaurar si ese juego ya cerró (según el historial ya cargado)
     final closed = _history.any((m) {
@@ -1200,18 +1210,14 @@ if (code == 'GAME_SWITCHED') {
       'game_id': gameId,
     };
   }
+Future<void> applyPremiumFromStore(bool premium) async {
+  _isPremium = premium;
 
-  Future<void> applyPremiumFromStore(bool premium) async {
-    _isPremium = premium;
+  // Persiste también en sesión, para que al reabrir la app no se pierda
+  await _session.setIsPremium(premium);
 
-    // Persiste también en sesión, para que al reabrir la app no se pierda
-    await _session.setIsPremium(premium);
+  // 👇 Ya no reseteamos la UI aquí para NO perder las balotas reservadas
+  notifyListeners();
+}
 
-    // Opcional: si estabas en algún estado intermedio, limpia para evitar “parpadeo”
-    if (premium) {
-      resetToInitial(); // limpia animaciones/flags que pudieran quedar a medias
-    }
-
-    notifyListeners();
-  }
 }
