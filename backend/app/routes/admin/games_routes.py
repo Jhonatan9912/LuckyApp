@@ -99,7 +99,7 @@ def admin_set_winner(game_id: int):
         return jsonify({"error": "winning_number es requerido"}), 400
 
     raw = body["winning_number"]
-    # Acepta tanto "007" (str) como 7 (int)
+    # Acepta "007" o 7
     if isinstance(raw, str):
         s = raw.strip()
         if not s.isdigit():
@@ -109,10 +109,7 @@ def admin_set_winner(game_id: int):
         try:
             winning_number = int(raw)
         except (TypeError, ValueError):
-            return jsonify({"error": "winning_number debe ser entero 0..999"}), 400
-
-    if winning_number < 0 or winning_number > 999:
-        return jsonify({"error": "winning_number debe estar entre 0 y 999"}), 400
+            return jsonify({"error": "winning_number debe ser entero"}), 400
 
 
 

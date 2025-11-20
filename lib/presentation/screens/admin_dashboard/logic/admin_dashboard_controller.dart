@@ -284,57 +284,56 @@ Future<List<Map<String, dynamic>>> loadAllUsers({
     }
   }
 
-  /// Lista de juegos: GET /api/admin/games
-  Future<List<Map<String, dynamic>>> loadAllGames({
-    String q = '',
-    int page = 1,
-  }) async {
-    final token = await SessionManager().getToken();
-    final uri = Uri.parse('$baseUrl/api/admin/games').replace(
-      queryParameters: {
-        if (q.isNotEmpty) 'q': q,
-        'page': '$page',
-        'per_page': '50',
-      },
-    );
+Future<List<Map<String, dynamic>>> loadAllGames({
+  String q = '',
+  int page = 1,
+}) async {
+  final token = await SessionManager().getToken();
+  final uri = Uri.parse('$baseUrl/api/admin/games').replace(
+    queryParameters: {
+      if (q.isNotEmpty) 'q': q,
+      'page': '$page',
+      'per_page': '50',
+    },
+  );
 
-    final res = await http
-        .get(
-          uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-        )
-        .timeout(const Duration(seconds: 15));
+  final res = await http
+      .get(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      )
+      .timeout(const Duration(seconds: 15));
 
-    if (kDebugMode) {
-      // ignore: avoid_print
-      print('[admin/games] ${res.statusCode} ${res.body}');
-    }
-
-    if (res.statusCode != 200) {
-      throw Exception('HTTP ${res.statusCode}: ${res.body}');
-    }
-
-    final Map<String, dynamic> body =
-        json.decode(res.body) as Map<String, dynamic>;
-    final List items = (body['items'] as List?) ?? const [];
-
-    // Normalizamos campos esperados por la UI
-    return items.map<Map<String, dynamic>>((e) {
-      final m = Map<String, dynamic>.from(e as Map);
-      return {
-        'id': m['id'],
-        'lottery_name': m['lottery_name'] ?? '',
-        'played_date': m['played_date'] ?? '',
-        'played_time': m['played_time'] ?? '',
-        'players_count': m['players_count'] ?? 0,
-        'winning_number': m['winning_number'], // 👈 nuevo
-        'state_id': m['state_id'], // 👈 nuevo
-      };
-    }).toList();
+  if (kDebugMode) {
+    print('[admin/games] ${res.statusCode} ${res.body}');
   }
+
+  if (res.statusCode != 200) {
+    throw Exception('HTTP ${res.statusCode}: ${res.body}');
+  }
+
+  final Map<String, dynamic> body =
+      json.decode(res.body) as Map<String, dynamic>;
+  final List items = (body['items'] as List?) ?? const [];
+
+  return items.map<Map<String, dynamic>>((e) {
+    final m = Map<String, dynamic>.from(e as Map);
+    return {
+      'id': m['id'],
+      'lottery_name': m['lottery_name'] ?? '',
+      'played_date': m['played_date'] ?? '',
+      'played_time': m['played_time'] ?? '',
+      'players_count': m['players_count'] ?? 0,
+      'winning_number': m['winning_number'],
+      'state_id': m['state_id'],
+      'digits': m['digits'] ?? 3,   // ✅ IMPORTANTE
+    };
+  }).toList();
+}
+
 
   /// Cuenta juegos en DB usando el mismo endpoint (lee el campo "total").
   Future<int> countAllGames({String q = ''}) async {
@@ -569,23 +568,25 @@ return GameRow(
       json.decode(res.body) as Map<String, dynamic>;
   final List items = (body['items'] as List?) ?? const [];
 
-  return items.map<Map<String, dynamic>>((e) {
-    final m = Map<String, dynamic>.from(e as Map);
-    final nums = (m['numbers'] as List? ?? const [])
-        .map((x) => x?.toString() ?? '')
-        .toList();
+ return items.map<Map<String, dynamic>>((e) {
+  final m = Map<String, dynamic>.from(e as Map);
+  final nums = (m['numbers'] as List? ?? const [])
+      .map((x) => x?.toString() ?? '')
+      .toList();
 
-    return {
-      'user_id': m['user_id'],
-      'player_name': m['player_name'] ?? '',
-      'public_code': m['code'] ?? m['public_code'] ?? '',
-      'game_id': m['game_id'],
-      'lottery_name': m['lottery_name'] ?? '',
-      'played_date': m['played_date'] ?? '',
-      'played_time': m['played_time'] ?? '',
-      'numbers': nums,
-    };
-  }).toList();
+  return {
+    'user_id': m['user_id'],
+    'player_name': m['player_name'] ?? '',
+    'code': m['code'] ?? m['public_code'] ?? '',
+    'game_id': m['game_id'],
+    'lottery_name': m['lottery_name'] ?? '',
+    'played_date': m['played_date'] ?? '',
+    'played_time': m['played_time'] ?? '',
+    'numbers': nums,
+    'digits': m['digits'] ?? 3,   // 👈 OBLIGATORIO
+  };
+}).toList();
+
 }
 
 Future<int> countAllPlayers({

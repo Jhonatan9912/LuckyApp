@@ -29,14 +29,16 @@ def list_players(q: str, page: int, per_page: int, state: State = "active") -> D
 
     base_list_noq = text(f"""
         SELECT
-          u.id                                  AS user_id,
-          u.name                                AS player_name,
-          u.public_code                         AS code,
-          g.id                                  AS game_id,
-          COALESCE(l.name, g.lottery_name)      AS lottery_name,
-          to_char(g.played_at, 'YYYY-MM-DD')    AS played_date,
-          to_char(g.played_at, 'HH24:MI')       AS played_time,
-          ARRAY_AGG(gn.number ORDER BY gn.position) AS numbers
+        u.id                                  AS user_id,
+        u.name                                AS player_name,
+        u.public_code                         AS code,
+        g.id                                  AS game_id,
+        g.digits                              AS digits,              -- 👈 NUEVO
+        COALESCE(l.name, g.lottery_name)      AS lottery_name,
+        to_char(g.played_at, 'YYYY-MM-DD')    AS played_date,
+        to_char(g.played_at, 'HH24:MI')       AS played_time,
+        ARRAY_AGG(gn.number ORDER BY gn.position) AS numbers
+
         FROM public.game_numbers gn
         JOIN public.games      g  ON g.id = gn.game_id
         LEFT JOIN public.lotteries l ON l.id = g.lottery_id
@@ -67,14 +69,16 @@ def list_players(q: str, page: int, per_page: int, state: State = "active") -> D
 
     base_list_q = text(f"""
         SELECT
-          u.id                                  AS user_id,
-          u.name                                AS player_name,
-          u.public_code                         AS code,
-          g.id                                  AS game_id,
-          COALESCE(l.name, g.lottery_name)      AS lottery_name,
-          to_char(g.played_at, 'YYYY-MM-DD')    AS played_date,
-          to_char(g.played_at, 'HH24:MI')       AS played_time,
-          ARRAY_AGG(gn.number ORDER BY gn.position) AS numbers
+        u.id                                  AS user_id,
+        u.name                                AS player_name,
+        u.public_code                         AS code,
+        g.id                                  AS game_id,
+        g.digits                              AS digits,              -- 👈 NUEVO
+        COALESCE(l.name, g.lottery_name)      AS lottery_name,
+        to_char(g.played_at, 'YYYY-MM-DD')    AS played_date,
+        to_char(g.played_at, 'HH24:MI')       AS played_time,
+        ARRAY_AGG(gn.number ORDER BY gn.position) AS numbers
+
         FROM public.game_numbers gn
         JOIN public.games      g  ON g.id = gn.game_id
         LEFT JOIN public.lotteries l ON l.id = g.lottery_id
@@ -152,7 +156,9 @@ def list_players(q: str, page: int, per_page: int, state: State = "active") -> D
             "played_date": m["played_date"] or "",
             "played_time": m["played_time"] or "",
             "numbers": nums,
+            "digits": m.get("digits", 3),     # 👈 NUEVO
         })
+
 
     return {"items": items, "page": page, "per_page": per_page, "total": int(total)}
 
@@ -200,37 +206,56 @@ class GameLocked(Exception):
 def update_player_numbers(game_id: int, user_id: int, numbers: List[str]) -> List[int]:
     """
     Actualiza las balotas del jugador (user_id) en el juego (game_id).
-    - Valida formato (000–999).
+    - Valida formato según digits del juego (3 o 4 dígitos).
     - Valida duplicados en el payload.
     - Valida que no estén tomadas por OTRO jugador.
     - Bloquea si el juego ya llegó a su fecha/hora (played_at <= NOW()).
     - Reemplaza (delete + insert) de forma transaccional.
     Retorna la lista final (int) guardada.
     """
-    # --- Normaliza + valida rango/duplicados ---
+    # --- Obtener digits del juego + si está bloqueado ---
+    row = db.session.execute(
+        text("""
+            SELECT
+              (played_at <= NOW()) AS is_locked,
+              COALESCE(digits, 3) AS digits
+            FROM games
+            WHERE id = :gid
+        """),
+        {"gid": game_id},
+    ).mappings().first()
+
+    if row is None:
+        raise ValueError("Juego no existe.")
+
+    is_locked = bool(row["is_locked"])
+    digits = int(row["digits"] or 3)
+
+    if is_locked:
+        raise GameLocked()
+
+    # --- Normaliza + valida rango/duplicados según digits ---
     ints: List[int] = []
+    max_val = (10**digits) - 1  # 999 para 3, 9999 para 4, etc.
+
     for n in numbers or []:
         s = str(n).strip()
-        if not s.isdigit() or len(s) > 3:
-            raise ValueError("Cada balota debe ser numérica de 3 dígitos (000–999).")
+        # Permitimos hasta 'digits' dígitos, solo numéricos
+        if not s.isdigit() or len(s) > digits:
+            raise ValueError(
+                f"Cada balota debe ser numérica de máximo {digits} dígitos (0–{max_val})."
+            )
         v = int(s)
-        if v < 0 or v > 999:
-            raise ValueError("Cada balota debe estar entre 000 y 999.")
+        if v < 0 or v > max_val:
+            raise ValueError(
+                f"Cada balota debe estar entre 0 y {max_val}."
+            )
         ints.append(v)
+
     if not ints:
         raise ValueError("Debes enviar al menos una balota.")
     if len(set(ints)) != len(ints):
         raise ValueError("No puedes repetir balotas en la edición.")
-
-    # --- 🔒 Bloqueo por fecha/hora del juego ---
-    is_locked = db.session.execute(
-        text("SELECT (played_at <= NOW()) FROM games WHERE id = :gid"),
-        {"gid": game_id},
-    ).scalar()
-    if is_locked is None:
-        raise ValueError("Juego no existe.")
-    if is_locked:
-        raise GameLocked()
 
     # --- ¿Alguna balota ya está tomada por otro jugador? ---
     taken = db.session.execute(

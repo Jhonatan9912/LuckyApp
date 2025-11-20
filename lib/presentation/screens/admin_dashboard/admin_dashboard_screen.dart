@@ -219,6 +219,7 @@ builder: (_) => PlayersBottomSheet(
         playedDate: (m['played_date'] ?? '').toString(),
         playedTime: (m['played_time'] ?? '').toString(),
         numbers: nums,
+        digits: (m['digits'] as num?)?.toInt() ?? 3,
       );
     }).toList();
   },

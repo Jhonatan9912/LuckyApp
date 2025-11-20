@@ -25,11 +25,12 @@ SELECT
    WHERE gn.game_id = g.id)                                AS players_count,
   g.winning_number                                         AS winning_number,
   g.state_id                                               AS state_id,
-  g.digits                                               AS digits
+  g.digits                                                 AS digits
 FROM public.games g
 LEFT JOIN public.lotteries l ON l.id = g.lottery_id
 WHERE g.id = %(id)s
 """
+
 
 _SQL_LOCKED_BY_TIME_AND_WINNER = """
 SELECT
@@ -54,9 +55,8 @@ SELECT
   COALESCE(to_char(g.scheduled_time, 'HH24:MI'), '')       AS played_time,
   COUNT(DISTINCT gn.taken_by)                              AS players_count,
   MAX(g.winning_number)                                    AS winning_number,
-  MAX(g.state_id)                                          AS state_id
-  MAX(g.digits)                                            AS digits
-
+  MAX(g.state_id)                                          AS state_id,
+  g.digits                                                 AS digits
 FROM public.games g
 LEFT JOIN public.lotteries     l  ON l.id = g.lottery_id
 LEFT JOIN public.game_numbers  gn ON gn.game_id = g.id
@@ -64,7 +64,8 @@ GROUP BY
   g.id,
   COALESCE(l.name, g.lottery_name),
   g.scheduled_date,
-  g.scheduled_time
+  g.scheduled_time,
+  g.digits
 ORDER BY COALESCE(
            g.scheduled_date::timestamp
            + COALESCE(g.scheduled_time, '00:00'::time),
@@ -72,6 +73,7 @@ ORDER BY COALESCE(
          ) DESC
 LIMIT %(limit)s OFFSET %(offset)s
 """
+
 
 SQL_COUNT_NOQ = """
 SELECT COUNT(*) AS total
@@ -90,9 +92,8 @@ SELECT
   COALESCE(to_char(g.scheduled_time, 'HH24:MI'), '')       AS played_time,
   COUNT(DISTINCT gn.taken_by)                              AS players_count,
   MAX(g.winning_number)                                    AS winning_number,
-  MAX(g.state_id)                                          AS state_id
-  MAX(g.digits)                                            AS digits
-
+  MAX(g.state_id)                                          AS state_id,
+  g.digits                                                 AS digits
 FROM public.games g
 LEFT JOIN public.lotteries     l  ON l.id = g.lottery_id
 LEFT JOIN public.game_numbers  gn ON gn.game_id = g.id
@@ -108,7 +109,8 @@ GROUP BY
   g.id,
   COALESCE(l.name, g.lottery_name),
   g.scheduled_date,
-  g.scheduled_time
+  g.scheduled_time,
+  g.digits
 ORDER BY COALESCE(
            g.scheduled_date::timestamp
            + COALESCE(g.scheduled_time, '00:00'::time),
@@ -116,6 +118,7 @@ ORDER BY COALESCE(
          ) DESC
 LIMIT %(limit)s OFFSET %(offset)s
 """
+
 
 SQL_COUNT_Q = """
 SELECT COUNT(*) AS total
@@ -324,41 +327,70 @@ def update_game(conn, game_id: int,
 
     return item
 
-
 # ---------- fijar número ganador + notificar jugadores ----------
 def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: int) -> Optional[Dict[str, Any]]:
     """
     Fija el número ganador del juego y notifica a los jugadores.
-    - Valida rango 0..999 (no valida si el número existe en game_numbers).
-    - Si ya hay ganador, devuelve error.
-    - Actualiza games.winning_number y state_id=2 (Finalizado).
+
+    - Valida el rango según games.digits:
+        digits = 3 -> 000..999
+        digits = 4 -> 0000..9999
+    - Si el juego no existe o el número está fuera de rango, devuelve None.
+    - Actualiza games.winning_number y state_id = 2 (Finalizado).
     - Inserta notificaciones a todos los taken_by del juego.
     - Devuelve el juego actualizado para el frontend.
     """
-    if winning_number < 0 or winning_number > 999:
-        return None
-
     with conn.cursor() as cur:
-        # Tomar lock de la fila; permitimos sobrescribir el ganador si ya existía
-        cur.execute("SELECT id FROM public.games WHERE id = %(gid)s FOR UPDATE", {"gid": game_id})
-        r = cur.fetchone()
-        if not r:
+        # 1) Tomar lock de la fila y leer digits
+        cur.execute(
+            """
+            SELECT id, digits
+            FROM public.games
+            WHERE id = %(gid)s
+            FOR UPDATE
+            """,
+            {"gid": game_id},
+        )
+        row = cur.fetchone()
+        if not row:
+            # Juego inexistente
             conn.rollback()
             return None
 
+        _game_id, digits = row[0], row[1]
 
-        # ⚠️ Ya NO comprobamos que el número exista en game_numbers
+        # Normalizar digits (por seguridad)
+        if digits is None:
+            digits = 3
+        try:
+            digits = int(digits)
+        except (TypeError, ValueError):
+            digits = 3
+        if digits < 1 or digits > 6:
+            digits = 3
 
-        # Guardar ganador
-        cur.execute("""
+        # 2) Validar rango según digits
+        max_val = (10 ** digits) - 1
+        if winning_number < 0 or winning_number > max_val:
+            # Número incompatible con la cantidad de dígitos del juego
+            conn.rollback()
+            return None
+
+        # 3) Guardar ganador y marcar juego como finalizado (state_id = 2)
+        cur.execute(
+            """
             UPDATE public.games
             SET winning_number = %(num)s,
-                state_id = 2          -- 2 = Finalizado
+                state_id       = 2
             WHERE id = %(gid)s
-        """, {"gid": game_id, "num": winning_number})
+            """,
+            {"gid": game_id, "num": winning_number},
+        )
 
-                # Asegurar que exista un juego abierto y sin ganador
-        cur.execute("""
+        # 4) Asegurar que exista al menos UN juego abierto y sin ganador
+        #    (si ya existe, NO es error: simplemente no se inserta nada).
+        cur.execute(
+            """
             WITH existing AS (
                 SELECT id
                 FROM public.games
@@ -370,14 +402,13 @@ def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: i
             INSERT INTO public.games (state_id, played_at)
             SELECT 1, NOW()
             WHERE NOT EXISTS (SELECT 1 FROM existing)
-        """)
+            """
+        )
+        # ⬅️ IMPORTANTE: ya NO revisamos cur.rowcount ni hacemos rollback aquí.
 
-        if cur.rowcount == 0:
-            conn.rollback()
-            return None
-
-        # Notificar a todos los jugadores de ese juego (aunque nadie haya jugado ese número)
-        cur.execute("""
+        # 5) Notificar a todos los jugadores de ese juego
+        cur.execute(
+            """
             INSERT INTO public.notifications (user_id, title, body, data)
             SELECT DISTINCT
                    gn.taken_by AS user_id,
@@ -394,15 +425,17 @@ def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: i
                                 g.played_at
                             ),
                             'YYYY-MM-DD"T"HH24:MI:SSOF'
-                            )
+                       )
                    ) AS data
             FROM public.game_numbers gn
             JOIN public.games g ON g.id = gn.game_id
             WHERE gn.game_id = %(gid)s
               AND gn.taken_by IS NOT NULL
-        """, {"gid": game_id, "num": winning_number})
+            """,
+            {"gid": game_id, "num": winning_number},
+        )
 
-        # Devolver el juego actualizado
+        # 6) Devolver el juego actualizado
         cur.execute(_SQL_ONE_GAME, {"id": game_id})
         item = _fetch_one_dict(cur)
 

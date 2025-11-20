@@ -40,12 +40,15 @@ class PlayersBottomSheet extends StatefulWidget {
 class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
   List<PlayerRow> _all = [];
   String _q = '';
-  String _state = 'active'; // 👈 NUEVO: pestaña actual
+  String _state = 'active'; // pestaña actual: active / historical
   bool _loading = true;
   int _dbTotal = 0;
   int? _workingId;
   DateTime _now = DateTime.now();
   Timer? _ticker;
+
+  /// Filtro interno por dígitos (null = todos, 3 = solo 3 cifras, 4 = solo 4 cifras)
+  int? _digitsFilter;
 
   @override
   void initState() {
@@ -69,12 +72,12 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
       _workingId = null;
     });
     try {
-      // 👇 CAMBIA: pasa state al loader
+      // pasa state al loader
       final data = await widget.loader(q: _q, state: _state);
 
       int total;
       if (widget.countLoader != null) {
-        // 👇 CAMBIA: pasa state al countLoader
+        // pasa state al countLoader
         total = await widget.countLoader!(q: '', state: _state);
       } else {
         total = data.length;
@@ -118,8 +121,6 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
       final mm = m.toString().padLeft(2, '0');
       final ss = s.toString().padLeft(2, '0');
 
-      // Nota: DateTime.parse espera ISO; si tu backend ya envía 'YYYY-MM-DD HH:MM:SS'
-      // y funciona, lo dejamos igual.
       final gameDT = DateTime.parse('$date $hh:$mm:$ss');
 
       return !_now.isBefore(gameDT);
@@ -132,8 +133,11 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
     if (widget.onUpdateNumbers == null) return;
 
     final formKey = GlobalKey<FormState>();
+    final digits = p.digits; // 3 o 4
     final ctrls = p.numbers
-        .map((n) => TextEditingController(text: n.toString().padLeft(3, '0')))
+        .map((n) => TextEditingController(
+              text: n.toString().padLeft(digits, '0'),
+            ))
         .toList();
 
     final ok = await showDialog<bool>(
@@ -153,7 +157,7 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                     keyboardType: TextInputType.number,
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(3),
+                      LengthLimitingTextInputFormatter(digits),
                     ],
                     decoration: InputDecoration(
                       labelText: 'Balota ${i + 1}',
@@ -163,8 +167,11 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                     validator: (val) {
                       final v = (val ?? '').trim();
                       if (v.isEmpty) return 'Requerido';
-                      if (v.length != 3) return 'Debe tener 3 dígitos';
-                      if (!RegExp(r'^\d{3}$').hasMatch(v)) return 'Sólo dígitos';
+                      if (v.length != digits) {
+                        return 'Debe tener $digits dígitos';
+                      }
+                      final reg = RegExp(r'^\d+$');
+                      if (!reg.hasMatch(v)) return 'Sólo dígitos';
                       return null;
                     },
                   ),
@@ -192,8 +199,9 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
 
     if (ok != true || !mounted) return;
 
-    final newNumbers =
-        ctrls.map((c) => c.text.trim().padLeft(3, '0')).toList(growable: false);
+    final newNumbers = ctrls
+        .map((c) => c.text.trim().padLeft(digits, '0'))
+        .toList(growable: false);
 
     try {
       setState(() => _workingId = p.id);
@@ -226,9 +234,41 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
     }
   }
 
+  Widget _buildDigitsFilterChips() {
+    // Solo lo mostramos para la pestaña "Activos"
+    if (_state != 'active') return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      child: Row(
+        children: [
+          _buildDigitsChip(label: 'Todos', value: null),
+          const SizedBox(width: 8),
+          _buildDigitsChip(label: '3 cifras', value: 3),
+          const SizedBox(width: 8),
+          _buildDigitsChip(label: '4 cifras', value: 4),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDigitsChip({required String label, required int? value}) {
+    final selected = _digitsFilter == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) {
+        setState(() {
+          _digitsFilter = value;
+        });
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final filtered = _q.isEmpty
+    // Filtro por texto
+    List<PlayerRow> filtered = _q.isEmpty
         ? _all
         : _all.where((p) {
             final q = _q.toLowerCase();
@@ -241,7 +281,14 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                 p.numbers.any((n) => n.toString().contains(_q));
           }).toList();
 
-    return DefaultTabController( // 👈 NUEVO: tabs Activos / Histórico
+    // Filtro por dígitos (3 / 4) si está seleccionado
+    if (_digitsFilter != null) {
+      filtered =
+          filtered.where((p) => p.digits == _digitsFilter).toList();
+    }
+
+    return DefaultTabController(
+      // tabs Activos / Histórico
       length: 2,
       initialIndex: _state == 'active' ? 0 : 1,
       child: DraggableScrollableSheet(
@@ -281,7 +328,7 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                 ),
               ),
 
-              // 👇 NUEVO: TabBar
+              // TabBar principal: Activos / Histórico
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
                 child: TabBar(
@@ -292,13 +339,20 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                   onTap: (i) {
                     final next = (i == 0) ? 'active' : 'historical';
                     if (_state != next) {
-                      setState(() => _state = next);
+                      setState(() {
+                        _state = next;
+                        // al cambiar de pestaña, quitamos filtro de dígitos
+                        _digitsFilter = null;
+                      });
                       _refresh(); // recarga con el nuevo estado
                     }
                   },
                 ),
               ),
-              const SizedBox(height: 8),
+
+              // Filtro interno de 3 / 4 cifras solo para "Activos"
+              _buildDigitsFilterChips(),
+              const SizedBox(height: 4),
 
               // Buscador
               Padding(
@@ -323,7 +377,8 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                         ? const Center(child: Text('Sin jugadores'))
                         : ListView.builder(
                             controller: controller,
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                            padding:
+                                const EdgeInsets.fromLTRB(12, 0, 12, 12),
                             itemCount: filtered.length,
                             itemBuilder: (_, i) {
                               final p = filtered[i];
@@ -417,7 +472,7 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                                                     .map(
                                                       (n) =>
                                                           n.toString().padLeft(
-                                                                3,
+                                                                p.digits,
                                                                 '0',
                                                               ),
                                                     )
@@ -516,7 +571,9 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                                                 onPressed: !canEdit
                                                     ? null
                                                     : () => _editNumbers(
-                                                        p, i),
+                                                          p,
+                                                          i,
+                                                        ),
                                               );
                                             },
                                           ),
@@ -628,6 +685,7 @@ class PlayerRow {
   final String playedDate; // 'YYYY-MM-DD'
   final String playedTime; // 'HH:MM'
   final List<String> numbers; // balotas (como strings)
+  final int digits; // 3 o 4 según el juego
 
   const PlayerRow({
     required this.id,
@@ -638,6 +696,7 @@ class PlayerRow {
     required this.playedDate,
     required this.playedTime,
     required this.numbers,
+    this.digits = 3,
   });
 
   PlayerRow copyWith({
@@ -649,6 +708,7 @@ class PlayerRow {
     String? playedDate,
     String? playedTime,
     List<String>? numbers,
+    int? digits,
   }) {
     return PlayerRow(
       id: id ?? this.id,
@@ -659,6 +719,7 @@ class PlayerRow {
       playedDate: playedDate ?? this.playedDate,
       playedTime: playedTime ?? this.playedTime,
       numbers: numbers ?? this.numbers,
+      digits: digits ?? this.digits,
     );
   }
 }

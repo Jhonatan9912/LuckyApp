@@ -42,26 +42,25 @@ class _GamesBottomSheetState extends State<GamesBottomSheet> {
   int? _deletingId;
   int? _savingId; // para deshabilitar mientras se guarda
 
-  // Bloqueo: fecha pasada + ganador definido
-// Devuelve true si: HAY número ganador y el (día+hora) del juego ya pasó.
-bool _isLocked(GameRow g) {
-  if (g.winningNumber == null) return false;        // sin ganador -> editable
-  if (g.playedDate.isEmpty || g.playedTime.isEmpty) return false; // si falta fecha u hora, no bloquees
+  // 🔒 Devuelve true si: HAY número ganador y el (día+hora) del juego ya pasó.
+  bool _isLocked(GameRow g) {
+    if (g.winningNumber == null) return false; // sin ganador -> editable
+    if (g.playedDate.isEmpty || g.playedTime.isEmpty) return false;
 
-  // played_date: 'YYYY-MM-DD', played_time: 'HH:MM'
-  final date = DateTime.tryParse(g.playedDate);
-  if (date == null) return false;
+    final date = DateTime.tryParse(g.playedDate);
+    if (date == null) return false;
 
-  final parts = g.playedTime.split(':');
-  if (parts.length < 2) return false;
-  final h = int.tryParse(parts[0]) ?? 0;
-  final m = int.tryParse(parts[1]) ?? 0;
+    final parts = g.playedTime.split(':');
+    if (parts.length < 2) return false;
+    final h = int.tryParse(parts[0]) ?? 0;
+    final m = int.tryParse(parts[1]) ?? 0;
 
-  final gameMoment = DateTime(date.year, date.month, date.day, h, m);
-  final now        = DateTime.now();
+    final gameMoment = DateTime(date.year, date.month, date.day, h, m);
+    final now = DateTime.now();
 
-  return gameMoment.isBefore(now); // estrictamente anterior a ahora
-}
+    return gameMoment.isBefore(now);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -78,10 +77,8 @@ bool _isLocked(GameRow g) {
       final data = await widget.loader(q: _q);
       int total;
       if (widget.countLoader != null) {
-        // total global de DB (sin filtro local)
         total = await widget.countLoader!(q: '');
       } else {
-        // fallback: cantidad filtrada localmente (si no mandas countLoader)
         total = data.length;
       }
 
@@ -121,11 +118,11 @@ bool _isLocked(GameRow g) {
       await widget.onDelete!(g.id);
       if (!mounted) return;
       setState(() {
-        _all.removeWhere((x) => x.id == g.id); // quita de la lista
+        _all.removeWhere((x) => x.id == g.id);
         if (widget.countLoader != null && _dbTotal > 0) {
-          _dbTotal -= 1; // refleja el cambio inmediato
+          _dbTotal -= 1;
         }
-        _deletingId = null; // re-habilita el botón
+        _deletingId = null;
       });
 
       if (!mounted) return;
@@ -162,7 +159,6 @@ bool _isLocked(GameRow g) {
     try {
       lots = await widget.loadLotteries();
     } catch (e) {
-      // Si falla, avisa y permite seguir con edición (pero sin select real)
       if (!mounted) return;
       await custom.AppDialogs.error(
         context: context,
@@ -171,14 +167,13 @@ bool _isLocked(GameRow g) {
       );
     }
 
-    DateTime? selDate = g.playedDate.isEmpty
-        ? null
-        : DateTime.tryParse(g.playedDate);
+    DateTime? selDate =
+        g.playedDate.isEmpty ? null : DateTime.tryParse(g.playedDate);
 
     TimeOfDay? selTime;
     if (g.playedTime.isNotEmpty) {
       final parts = g.playedTime.split(':');
-      if (parts.length == 2) {
+      if (parts.length >= 2) {
         final h = int.tryParse(parts[0]);
         final m = int.tryParse(parts[1]);
         if (h != null && m != null) {
@@ -189,7 +184,7 @@ bool _isLocked(GameRow g) {
 
     int? selWinning = g.winningNumber;
 
-    // Intentar preseleccionar por nombre (si el backend no envía lottery_id)
+    // Preseleccionar lotería por nombre
     int? selLotteryId;
     if (lots.isNotEmpty) {
       final match = lots.firstWhere(
@@ -200,13 +195,13 @@ bool _isLocked(GameRow g) {
     }
     if (!mounted) return;
 
-    // ——— agrega esto ANTES del showDialog ———
+    // === CONTROL DE GANADOR (3 o 4 dígitos según el juego) ==================
+    final int digits = g.digits; // 3 ó 4
     final winnerCtrl = TextEditingController(
       text: (g.winningNumber == null)
           ? ''
-          : g.winningNumber.toString().padLeft(3, '0'), // ✅
+          : g.winningNumber!.toString().padLeft(digits, '0'),
     );
-
     bool isWinnerValid = true;
 
     final ok = await showDialog<bool>(
@@ -248,7 +243,6 @@ bool _isLocked(GameRow g) {
                               ? 'Elegir fecha'
                               : '${selDate!.year.toString().padLeft(4, '0')}-${selDate!.month.toString().padLeft(2, '0')}-${selDate!.day.toString().padLeft(2, '0')}',
                         ),
-
                         onPressed: () async {
                           final d = await showDatePicker(
                             context: ctx,
@@ -281,31 +275,32 @@ bool _isLocked(GameRow g) {
                   ],
                 ),
                 const SizedBox(height: 12),
+
+                // 👇 Campo de ganador DINÁMICO: 3 o 4 dígitos
                 TextFormField(
                   controller: winnerCtrl,
                   decoration: InputDecoration(
                     labelText:
-                        'Número ganador (exactamente 3 dígitos: 000–999)',
+                        'Número ganador (exactamente $digits dígitos)',
                     isDense: true,
                     border: const OutlineInputBorder(),
                     counterText: '',
                     errorText: isWinnerValid
                         ? null
-                        : 'Debe tener exactamente 3 dígitos',
+                        : 'Debe tener exactamente $digits dígitos',
                   ),
                   keyboardType: TextInputType.number,
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
-                    LengthLimitingTextInputFormatter(3),
+                    LengthLimitingTextInputFormatter(digits),
                   ],
-
                   onChanged: (v) {
-                    final ok = v.isEmpty || v.length == 3;
+                    final ok = v.isEmpty || v.length == digits;
                     setLocal(() {
                       isWinnerValid = ok;
                       if (v.isEmpty) {
                         selWinning = null;
-                      } else if (v.length == 3) {
+                      } else if (v.length == digits) {
                         selWinning = int.tryParse(v);
                       } else {
                         selWinning = null;
@@ -323,20 +318,17 @@ bool _isLocked(GameRow g) {
               FilledButton(
                 onPressed: () {
                   final txt = winnerCtrl.text.trim();
-                  final okLen = txt.isEmpty || txt.length == 3;
+                  final okLen = txt.isEmpty || txt.length == digits;
 
                   if (!okLen) {
                     setLocal(() => isWinnerValid = false);
-                    return; // ❌ no cerrar el diálogo si está mal
+                    return;
                   }
 
-                  // sincroniza selWinning por si no cambiaron el campo
                   if (txt.isEmpty) {
                     selWinning = null;
                   } else {
-                    selWinning = int.tryParse(
-                      txt,
-                    ); // ya sabemos que tiene 3 dígitos
+                    selWinning = int.tryParse(txt);
                   }
 
                   Navigator.pop(ctx, true);
@@ -348,6 +340,7 @@ bool _isLocked(GameRow g) {
         );
       },
     );
+
     final d = selDate;
     final t = selTime;
 
@@ -364,35 +357,36 @@ bool _isLocked(GameRow g) {
       lotteryId: selLotteryId,
       playedDate: newDate ?? (g.playedDate.isEmpty ? null : g.playedDate),
       playedTime: newTime ?? (g.playedTime.isEmpty ? null : g.playedTime),
+      // si usas onSetWinner, aquí NO mandamos el ganador
       winningNumber: (widget.onSetWinner == null) ? selWinning : null,
     );
 
     final bool winnerChanged =
         selWinning != g.winningNumber && selWinning != null;
+
     try {
       setState(() => _savingId = g.id);
 
-      // Fallback local si no hay backend onUpdate
       GameRow updated = g.copyWith(
         lotteryName: (selLotteryId == null)
             ? g.lotteryName
             : (lots
-                  .firstWhere(
-                    (it) => it.id == selLotteryId,
-                    orElse: () => const LotteryItem(id: -1, name: ''),
-                  )
-                  .name),
+                    .firstWhere(
+                      (it) => it.id == selLotteryId,
+                      orElse: () => const LotteryItem(id: -1, name: ''),
+                    )
+                    .name),
         playedDate: payload.playedDate ?? g.playedDate,
         playedTime: payload.playedTime ?? g.playedTime,
       );
 
-      // Si hay callback, guarda en backend y usa lo que devuelva.
       if (widget.onUpdate != null) {
         final fromApi = await widget.onUpdate!(g.id, payload);
         if (fromApi != null) {
           updated = fromApi;
         }
       }
+
       if (winnerChanged && widget.onSetWinner != null) {
         try {
           final fromWinner = await widget.onSetWinner!(g.id, selWinning!);
@@ -410,7 +404,7 @@ bool _isLocked(GameRow g) {
             );
           }
           if (mounted) setState(() => _savingId = null);
-          return; // 👈 evita mostrar el diálogo de éxito
+          return;
         }
       }
 
@@ -447,7 +441,8 @@ bool _isLocked(GameRow g) {
                 '${g.id}'.contains(q) ||
                 g.playedDate.contains(_q) ||
                 g.playedTime.contains(_q) ||
-                (g.winningNumber != null && '${g.winningNumber}'.contains(_q));
+                (g.winningNumber != null &&
+                    '${g.winningNumber}'.contains(_q));
           }).toList();
 
     return DraggableScrollableSheet(
@@ -477,7 +472,6 @@ bool _isLocked(GameRow g) {
                     'Juegos (${widget.countLoader != null ? _dbTotal : filtered.length})',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
-
                   const Spacer(),
                   IconButton(
                     tooltip: 'Refrescar',
@@ -487,7 +481,6 @@ bool _isLocked(GameRow g) {
                 ],
               ),
             ),
-            // Buscador
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: TextField(
@@ -502,203 +495,222 @@ bool _isLocked(GameRow g) {
               ),
             ),
             const SizedBox(height: 8),
-
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : filtered.isEmpty
-                  ? const Center(child: Text('Sin juegos'))
-                  : ListView.builder(
-                      controller: controller,
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                      itemCount: filtered.length,
-                      itemBuilder: (_, i) {
-                        final g = filtered[i];
-                        final locked = _isLocked(g);
-                        return Card(
-                          margin: const EdgeInsets.symmetric(vertical: 6),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            child: ListTile(
-                              isThreeLine: true,
-                              contentPadding: const EdgeInsets.only(right: 4),
-                              leading: const Icon(Icons.casino),
-                              title: Text(
-                                'Juego #${g.id}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
+                      ? const Center(child: Text('Sin juegos'))
+                      : ListView.builder(
+                          controller: controller,
+                          padding:
+                              const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          itemCount: filtered.length,
+                          itemBuilder: (_, i) {
+                            final g = filtered[i];
+                            final locked = _isLocked(g);
+                            return Card(
+                              margin:
+                                  const EdgeInsets.symmetric(vertical: 6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
                               ),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const SizedBox(height: 4),
-                                  Text.rich(
-                                    TextSpan(
-                                      children: [
-                                        const TextSpan(
-                                          text: 'Lotería: ',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        TextSpan(text: g.lotteryName),
-                                      ],
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text.rich(
-                                    TextSpan(
-                                      children: [
-                                        const TextSpan(
-                                          text: 'Tipo: ',
-                                          style: TextStyle(fontWeight: FontWeight.w600),
-                                        ),
-                                        TextSpan(
-                                          text: g.digits == 4 ? '4 cifras' : '3 cifras',
-                                        ),
-                                      ],
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8),
+                                child: ListTile(
+                                  isThreeLine: true,
+                                  contentPadding:
+                                      const EdgeInsets.only(right: 4),
+                                  leading: const Icon(Icons.casino),
+                                  title: Text(
+                                    'Juego #${g.id}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
                                     ),
                                   ),
-
-                                  const SizedBox(height: 2),
-                                  Text.rich(
-                                    TextSpan(
-                                      children: [
-                                        const TextSpan(
-                                          text: 'Jugadores: ',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        TextSpan(text: '${g.playersCount}'),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Wrap(
-                                    spacing: 12,
-                                    runSpacing: 2,
+                                  subtitle: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
+                                      const SizedBox(height: 4),
                                       Text.rich(
                                         TextSpan(
                                           children: [
                                             const TextSpan(
-                                              text: 'Fecha: ',
+                                              text: 'Lotería: ',
                                               style: TextStyle(
-                                                fontWeight: FontWeight.w600,
+                                                fontWeight:
+                                                    FontWeight.w600,
                                               ),
                                             ),
                                             TextSpan(
-                                              text: (g.playedDate.isEmpty
-                                                  ? '—'
-                                                  : g.playedDate),
+                                                text: g.lotteryName),
+                                          ],
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text.rich(
+                                        TextSpan(
+                                          children: [
+                                            const TextSpan(
+                                              text: 'Tipo: ',
+                                              style: TextStyle(
+                                                  fontWeight:
+                                                      FontWeight.w600),
+                                            ),
+                                            TextSpan(
+                                              text: g.digits == 4
+                                                  ? '4 cifras'
+                                                  : '3 cifras',
                                             ),
                                           ],
                                         ),
                                       ),
+                                      const SizedBox(height: 2),
                                       Text.rich(
                                         TextSpan(
                                           children: [
                                             const TextSpan(
-                                              text: 'Hora: ',
+                                              text: 'Jugadores: ',
                                               style: TextStyle(
-                                                fontWeight: FontWeight.w600,
+                                                fontWeight:
+                                                    FontWeight.w600,
                                               ),
                                             ),
                                             TextSpan(
-                                              text: (g.playedTime.isEmpty
+                                                text:
+                                                    '${g.playersCount}'),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Wrap(
+                                        spacing: 12,
+                                        runSpacing: 2,
+                                        children: [
+                                          Text.rich(
+                                            TextSpan(
+                                              children: [
+                                                const TextSpan(
+                                                  text: 'Fecha: ',
+                                                  style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.w600,
+                                                  ),
+                                                ),
+                                                TextSpan(
+                                                  text: (g.playedDate
+                                                          .isEmpty
+                                                      ? '—'
+                                                      : g.playedDate),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          Text.rich(
+                                            TextSpan(
+                                              children: [
+                                                const TextSpan(
+                                                  text: 'Hora: ',
+                                                  style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.w600,
+                                                  ),
+                                                ),
+                                                TextSpan(
+                                                  text: (g.playedTime
+                                                          .isEmpty
+                                                      ? '—'
+                                                      : g.playedTime),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text.rich(
+                                        TextSpan(
+                                          children: [
+                                            const TextSpan(
+                                              text: 'Número ganador: ',
+                                              style: TextStyle(
+                                                fontWeight:
+                                                    FontWeight.w600,
+                                              ),
+                                            ),
+                                            TextSpan(
+                                              text: g.winningNumber ==
+                                                      null
                                                   ? '—'
-                                                  : g.playedTime),
+                                                  : g.winningNumber!
+                                                      .toString()
+                                                      .padLeft(
+                                                          g.digits, '0'),
                                             ),
                                           ],
                                         ),
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(height: 2),
-                                  Text.rich(
-                                    TextSpan(
+                                  trailing: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        const TextSpan(
-                                          text: 'Número ganador: ',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
+                                        IconButton(
+                                          tooltip: locked
+                                              ? 'Edición bloqueada'
+                                              : 'Editar juego',
+                                          icon: (_savingId == g.id)
+                                              ? const SizedBox(
+                                                  width: 20,
+                                                  height: 20,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                  ),
+                                                )
+                                              : Icon(locked
+                                                  ? Icons.lock
+                                                  : Icons.edit),
+                                          color: locked
+                                              ? Colors.grey
+                                              : Colors.deepPurple,
+                                          onPressed: (_savingId == g.id ||
+                                                  locked)
+                                              ? null
+                                              : () => _openEdit(g),
                                         ),
-                                        TextSpan(
-                                          text: g.winningNumber == null
-                                              ? '—'
-                                              : g.winningNumber!
-                                                    .toString()
-                                                    .padLeft(3, '0'),
+                                        IconButton(
+                                          tooltip: 'Eliminar juego',
+                                          icon: (_deletingId == g.id)
+                                              ? const SizedBox(
+                                                  width: 20,
+                                                  height: 20,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                  ),
+                                                )
+                                              : const Icon(Icons.delete),
+                                          color: Colors.red,
+                                          onPressed:
+                                              (widget.onDelete == null ||
+                                                      _deletingId == g.id)
+                                                  ? null
+                                                  : () => _confirmDelete(g),
                                         ),
                                       ],
                                     ),
                                   ),
-                                ],
-                              ),
-                              trailing: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    // ← EDITAR (púrpura)
-                                    IconButton(
-                                      tooltip: locked
-                                          ? 'Edición bloqueada'
-                                          : 'Editar juego',
-                                      icon: (_savingId == g.id)
-                                          ? const SizedBox(
-                                              width: 20,
-                                              height: 20,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : Icon(
-                                              locked ? Icons.lock : Icons.edit,
-                                            ),
-                                      color: locked
-                                          ? Colors.grey
-                                          : Colors.deepPurple,
-                                      onPressed: (_savingId == g.id || locked)
-                                          ? null
-                                          : () => _openEdit(g),
-                                    ),
-
-                                    // ← ELIMINAR (rojo)
-                                    IconButton(
-                                      tooltip: 'Eliminar juego',
-                                      icon: (_deletingId == g.id)
-                                          ? const SizedBox(
-                                              width: 20,
-                                              height: 20,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : const Icon(Icons.delete),
-                                      color: Colors.red,
-                                      onPressed:
-                                          (widget.onDelete == null ||
-                                              _deletingId == g.id)
-                                          ? null
-                                          : () => _confirmDelete(g),
-                                    ),
-                                  ],
                                 ),
                               ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                            );
+                          },
+                        ),
             ),
           ],
         ),
@@ -716,7 +728,7 @@ class GameRow {
   final int? winningNumber;
   final int? stateId;
 
-  /// 🚀 NUEVO: 3 o 4 cifras
+  /// 3 o 4 cifras
   final int digits;
 
   const GameRow({
@@ -753,7 +765,6 @@ class GameRow {
   }
 }
 
-
 /// Catálogo de loterías para el select
 class LotteryItem {
   final int id;
@@ -775,9 +786,9 @@ class GameEdit {
   });
 
   Map<String, dynamic> toJson() => {
-    "lottery_id": lotteryId,
-    "played_date": playedDate,
-    "played_time": playedTime,
-    "winning_number": winningNumber,
-  };
+        "lottery_id": lotteryId,
+        "played_date": playedDate,
+        "played_time": playedTime,
+        "winning_number": winningNumber,
+      };
 }
