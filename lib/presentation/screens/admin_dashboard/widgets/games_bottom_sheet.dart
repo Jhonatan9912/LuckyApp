@@ -556,6 +556,21 @@ bool _isLocked(GameRow g) {
                                     TextSpan(
                                       children: [
                                         const TextSpan(
+                                          text: 'Tipo: ',
+                                          style: TextStyle(fontWeight: FontWeight.w600),
+                                        ),
+                                        TextSpan(
+                                          text: g.digits == 4 ? '4 cifras' : '3 cifras',
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  const SizedBox(height: 2),
+                                  Text.rich(
+                                    TextSpan(
+                                      children: [
+                                        const TextSpan(
                                           text: 'Jugadores: ',
                                           style: TextStyle(
                                             fontWeight: FontWeight.w600,
@@ -692,21 +707,25 @@ bool _isLocked(GameRow g) {
   }
 }
 
-/// Modelo para el listado de Juegos (coincide con el backend)
 class GameRow {
-  final int id; // número de juego
-  final String lotteryName; // nombre de lotería/sorteo
-  final String playedDate; // 'YYYY-MM-DD'
-  final String playedTime; // 'HH:MM'
-  final int playersCount; // cantidad de jugadores
-  final int? winningNumber; // número ganador (0..999) o null
+  final int id;
+  final String lotteryName;
+  final String playedDate;
+  final String playedTime;
+  final int playersCount;
+  final int? winningNumber;
   final int? stateId;
+
+  /// 🚀 NUEVO: 3 o 4 cifras
+  final int digits;
+
   const GameRow({
     required this.id,
     required this.lotteryName,
     required this.playedDate,
     required this.playedTime,
     required this.playersCount,
+    required this.digits,
     this.winningNumber,
     this.stateId,
   });
@@ -719,6 +738,7 @@ class GameRow {
     int? playersCount,
     int? winningNumber,
     int? stateId,
+    int? digits,
   }) {
     return GameRow(
       id: id ?? this.id,
@@ -728,9 +748,11 @@ class GameRow {
       playersCount: playersCount ?? this.playersCount,
       winningNumber: winningNumber ?? this.winningNumber,
       stateId: stateId ?? this.stateId,
+      digits: digits ?? this.digits,
     );
   }
 }
+
 
 /// Catálogo de loterías para el select
 class LotteryItem {

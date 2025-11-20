@@ -467,17 +467,19 @@ Future<List<Map<String, dynamic>>> loadAllUsers({
     int toInt(dynamic v) => int.tryParse(v?.toString() ?? '0') ?? 0;
     String toStr(dynamic v) => v?.toString() ?? '';
 
-    return GameRow(
-      id: toInt(item['id']),
-      lotteryName: toStr(item['lottery_name']),
-      playedDate: toStr(item['played_date']),
-      playedTime: toStr(item['played_time']),
-      playersCount: toInt(item['players_count']),
-      winningNumber: item['winning_number'] == null
-          ? null
-          : toInt(item['winning_number']),
-      stateId: item['state_id'] == null ? null : toInt(item['state_id']),
-    );
+return GameRow(
+  id: toInt(item['id']),
+  lotteryName: toStr(item['lottery_name']),
+  playedDate: toStr(item['played_date']),
+  playedTime: toStr(item['played_time']),
+  playersCount: toInt(item['players_count']),
+  winningNumber: item['winning_number'] == null
+      ? null
+      : toInt(item['winning_number']),
+  stateId: item['state_id'] == null ? null : toInt(item['state_id']),
+  digits: toInt(item['digits'] ?? 3),
+);
+
   }
 
   Future<GameRow?> setGameWinner(int gameId, int winningNumber) async {
@@ -513,17 +515,19 @@ Future<List<Map<String, dynamic>>> loadAllUsers({
     int toInt(dynamic v) => int.tryParse(v?.toString() ?? '0') ?? 0;
     String toStr(dynamic v) => v?.toString() ?? '';
 
-    return GameRow(
-      id: toInt(item['id']),
-      lotteryName: toStr(item['lottery_name']),
-      playedDate: toStr(item['played_date']),
-      playedTime: toStr(item['played_time']),
-      playersCount: toInt(item['players_count']),
-      winningNumber: item['winning_number'] == null
-          ? null
-          : toInt(item['winning_number']),
-      stateId: item['state_id'] == null ? null : toInt(item['state_id']),
-    );
+return GameRow(
+  id: toInt(item['id']),
+  lotteryName: toStr(item['lottery_name']),
+  playedDate: toStr(item['played_date']),
+  playedTime: toStr(item['played_time']),
+  playersCount: toInt(item['players_count']),
+  winningNumber: item['winning_number'] == null
+      ? null
+      : toInt(item['winning_number']),
+  stateId: item['state_id'] == null ? null : toInt(item['state_id']),
+  digits: toInt(item['digits'] ?? 3),
+);
+
   }
 
   /// === JUGADORES: GET /api/admin/players ================================

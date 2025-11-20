@@ -160,22 +160,24 @@ onManualGrantPro: (userId, productId) async {
 
           String toStr(dynamic v) => v?.toString() ?? '';
           return list
-              .map(
-                (m) => GameRow(
-                  id: toInt(m['id']),
-                  lotteryName: toStr(m['lottery_name']),
-                  playedDate: toStr(m['played_date']),
-                  playedTime: toStr(m['played_time']),
-                  playersCount: toInt(m['players_count']),
-                  winningNumber: (m['winning_number'] == null)
-                      ? null
-                      : toInt(m['winning_number']),
-                  stateId: (m['state_id'] == null)
-                      ? null
-                      : toInt(m['state_id']),
-                ),
-              )
-              .toList();
+    .map(
+      (m) => GameRow(
+        id: toInt(m['id']),
+        lotteryName: toStr(m['lottery_name']),
+        playedDate: toStr(m['played_date']),
+        playedTime: toStr(m['played_time']),
+        playersCount: toInt(m['players_count']),
+        winningNumber: m['winning_number'] == null
+            ? null
+            : toInt(m['winning_number']),
+        stateId: m['state_id'] == null
+            ? null
+            : toInt(m['state_id']),
+        digits: toInt(m['digits'] ?? 3),
+      ),
+    )
+    .toList();
+
         },
         loadLotteries: ctrl.loadLotteries,
         countLoader: ({String q = ''}) => ctrl.countAllGames(q: q),

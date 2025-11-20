@@ -24,7 +24,8 @@ SELECT
    FROM public.game_numbers gn
    WHERE gn.game_id = g.id)                                AS players_count,
   g.winning_number                                         AS winning_number,
-  g.state_id                                               AS state_id
+  g.state_id                                               AS state_id,
+  g.digits                                               AS digits
 FROM public.games g
 LEFT JOIN public.lotteries l ON l.id = g.lottery_id
 WHERE g.id = %(id)s
@@ -54,6 +55,8 @@ SELECT
   COUNT(DISTINCT gn.taken_by)                              AS players_count,
   MAX(g.winning_number)                                    AS winning_number,
   MAX(g.state_id)                                          AS state_id
+  MAX(g.digits)                                            AS digits
+
 FROM public.games g
 LEFT JOIN public.lotteries     l  ON l.id = g.lottery_id
 LEFT JOIN public.game_numbers  gn ON gn.game_id = g.id
@@ -88,6 +91,8 @@ SELECT
   COUNT(DISTINCT gn.taken_by)                              AS players_count,
   MAX(g.winning_number)                                    AS winning_number,
   MAX(g.state_id)                                          AS state_id
+  MAX(g.digits)                                            AS digits
+
 FROM public.games g
 LEFT JOIN public.lotteries     l  ON l.id = g.lottery_id
 LEFT JOIN public.game_numbers  gn ON gn.game_id = g.id
