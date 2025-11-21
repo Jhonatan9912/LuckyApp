@@ -194,7 +194,7 @@ def generate_five_available(
     avoid_game_id: int | None = None,
 ) -> Tuple[int | None, List[int]]:
     """
-    - PRO: usa/crea el juego abierto sin programar para ese digits y trae 5 libres.
+    - PRO: NO crea juego al jugar. Si hay juego abierto, muestra 5 libres de ese juego.
     - NO PRO: NO crea juegos. Si hay juego abierto, muestra 5 libres de ese juego.
               Si no hay juego abierto, devuelve un PREVIEW y game_id=None.
     """
@@ -232,27 +232,19 @@ def generate_five_available(
 
         return gid, numbers
 
-      # ---- Usuario PRO: puede crear juegos por tipo ----
-    # 🛡️ Blindaje extra por plan (por si llaman al service directo)
+    # ---- Usuario PRO: NO CREAR JUEGO AL JUGAR ----
     allowed_digits = _user_max_digits(int(user_id))
     if digits == 4 and allowed_digits < 4:
         raise PermissionError("Tu plan actual solo permite jugar a 3 cifras.")
 
-    gid = get_or_create_active_unscheduled_game_id(digits=digits, user_id=int(user_id))
+    # 👉 Buscar juego abierto SIN crear uno nuevo
+    gid = find_active_unscheduled_game_id(digits=digits)
 
+    if gid is None:
+        # No hay juego abierto → puro preview
+        return None, _generate_preview_numbers(k=5, digits=digits)
 
-    # Si ya tiene 5 en este juego, devuelve esos mismos 5 (no generes otros)
-    existing = db.session.execute(text("""
-        SELECT number
-        FROM game_numbers
-        WHERE game_id = :gid AND taken_by = :uid
-        ORDER BY position ASC
-    """), {"gid": gid, "uid": int(user_id)}).fetchall()
-
-    if existing and len(existing) >= 5:
-        numbers = [int(r[0]) for r in existing[:5]]
-        return gid, numbers
-
+    # Sí hay juego abierto → devolver 5 números disponibles reales
     rows = db.session.execute(text("""
         WITH taken AS (
             SELECT number FROM game_numbers WHERE game_id = :gid
@@ -265,7 +257,41 @@ def generate_five_available(
     """), {"gid": gid, "max_number": max_number}).fetchall()
 
     numbers = [int(r[0]) for r in rows]
+
+    # Si faltaron números (por cualquier razón), completar con preview
+    if len(numbers) < 5:
+        faltan = 5 - len(numbers)
+        extra = [
+            n for n in _generate_preview_numbers(5 + faltan, digits=digits)
+            if n not in numbers
+        ][:faltan]
+        numbers += extra
+
     return gid, numbers
+
+
+def commit_selection_auto(user_id: int, numbers: List[int], digits: int = 3) -> dict:
+    """
+    Si NO hay juego abierto → crea uno y reserva ahí.
+    Si YA hay juego abierto → reserva ahí.
+    """
+    # Blindaje por plan
+    allowed_digits = _user_max_digits(user_id)
+    if digits == 4 and allowed_digits < 4:
+        return {
+            "ok": False,
+            "code": "FOUR_DIGITS_NOT_ALLOWED",
+            "error": "Tu plan actual solo permite jugar a 3 cifras."
+        }
+
+    # Buscar si ya hay uno abierto
+    gid = find_active_unscheduled_game_id(digits=digits)
+
+    # Crear uno solo si no existe
+    if gid is None:
+        gid = get_or_create_active_unscheduled_game_id(digits=digits, user_id=user_id)
+
+    return commit_selection(user_id, gid, numbers)
 
 def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
     """

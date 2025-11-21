@@ -12,9 +12,11 @@ from app.services.games import games_service
 from app.services.games.games_service import (
     generate_five_available,
     commit_selection,
+    commit_selection_auto,  # 👈 NUEVO
     get_current_selection,  # ← usar la selección SOLO del juego abierto
     list_user_history,
 )
+
 
 
 from app.services.notify.notifications_service import (
@@ -95,21 +97,36 @@ def commit():
     data = request.get_json(silent=True) or {}
     game_id = data.get("game_id")
     numbers = data.get("numbers")
+    digits = data.get("digits", 3)  # 👈 nuevo campo
 
-    if not isinstance(game_id, int):
-        return jsonify({"error": "game_id inválido"}), 400
     if not isinstance(numbers, list):
         return jsonify({"error": "numbers debe ser una lista"}), 400
+
     try:
         numbers_int = [int(n) for n in numbers]
     except Exception:
         return jsonify({"error": "numbers debe contener enteros"}), 400
 
-    # Deja que el service valide PRO y reglas del juego
-    res = commit_selection(uid, game_id, numbers_int)
+    try:
+        digits = int(digits)
+    except Exception:
+        digits = 3
+    if digits not in (3, 4):
+        digits = 3
+
+    # 👇 SI NO VIENE game_id → crear/usar juego automáticamente
+    if game_id in (None, 0, "0"):
+        res = games_service.commit_selection_auto(
+            uid,
+            numbers_int,
+            digits=digits,
+        )
+    else:
+        if not isinstance(game_id, int):
+            return jsonify({"error": "game_id inválido"}), 400
+        res = commit_selection(uid, game_id, numbers_int)
 
     if res.get("ok"):
-        # 👉 FLATTEN: expone los campos al tope de "data"
         flat = {k: v for k, v in res.items() if k != "ok"}
         return jsonify({"ok": True, "data": flat}), 200
 
