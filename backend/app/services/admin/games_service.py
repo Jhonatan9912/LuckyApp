@@ -327,7 +327,6 @@ def update_game(conn, game_id: int,
 
     return item
 
-# ---------- fijar número ganador + notificar jugadores ----------
 def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: int) -> Optional[Dict[str, Any]]:
     """
     Fija el número ganador del juego y notifica a los jugadores.
@@ -338,13 +337,14 @@ def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: i
     - Si el juego no existe o el número está fuera de rango, devuelve None.
     - Actualiza games.winning_number y state_id = 2 (Finalizado).
     - Inserta notificaciones a todos los taken_by del juego.
+    - Crea, si hace falta, un nuevo juego ABIERTO con los mismos dígitos.
     - Devuelve el juego actualizado para el frontend.
     """
     with conn.cursor() as cur:
         # 1) Tomar lock de la fila y leer digits
         cur.execute(
             """
-            SELECT id, digits
+            SELECT id, digits, lottery_id
             FROM public.games
             WHERE id = %(gid)s
             FOR UPDATE
@@ -353,21 +353,31 @@ def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: i
         )
         row = cur.fetchone()
         if not row:
-            # Juego inexistente
             conn.rollback()
             return None
 
-        _game_id, digits = row[0], row[1]
+        _game_id, digits, lottery_id = row[0], row[1], row[2]
 
-        # Normalizar digits (por seguridad)
+        # ---------- NUEVO BLOQUE DE NORMALIZACIÓN DE DIGITS ----------
+        # Si digits viene NULL en la BD, tratamos de inferirlo por el número ganador.
         if digits is None:
-            digits = 3
-        try:
-            digits = int(digits)
-        except (TypeError, ValueError):
-            digits = 3
+            # Largo del número ganador, por ejemplo 9805 -> 4
+            inferred = len(str(winning_number))
+            # Solo aceptamos 3 o 4; si no, cae a 3 por seguridad
+            if inferred in (3, 4):
+                digits = inferred
+            else:
+                digits = 3
+        else:
+            try:
+                digits = int(digits)
+            except (TypeError, ValueError):
+                digits = 3
+
+        # Aseguramos rango razonable (1 a 6 dígitos, pero tú solo usas 3 o 4)
         if digits < 1 or digits > 6:
             digits = 3
+        # ---------- FIN BLOQUE NUEVO ----------
 
         # 2) Validar rango según digits
         max_val = (10 ** digits) - 1
@@ -377,34 +387,48 @@ def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: i
             return None
 
         # 3) Guardar ganador y marcar juego como finalizado (state_id = 2)
+        #    👇 EXTRA: si digits estaba NULL antes, lo dejamos persistido
         cur.execute(
             """
             UPDATE public.games
             SET winning_number = %(num)s,
-                state_id       = 2
+                state_id       = 2,
+                digits         = %(digits)s
             WHERE id = %(gid)s
             """,
-            {"gid": game_id, "num": winning_number},
+            {"gid": game_id, "num": winning_number, "digits": digits},
         )
-
-        # 4) Asegurar que exista al menos UN juego abierto y sin ganador
-        #    (si ya existe, NO es error: simplemente no se inserta nada).
+        # 4) Crear, si hace falta, un juego nuevo ABIERTO con los mismos dígitos.
+        #
+        #    Regla NUEVA: para cada valor de 'digits' (3 o 4) queremos
+        #    tener al menos UN juego ABIERTO, sin importar la lotería.
+        #    Si ya existe uno ABIERTO con esos dígitos, NO creamos otro.
         cur.execute(
             """
-            WITH existing AS (
-                SELECT id
-                FROM public.games
-                WHERE state_id = 1
-                  AND winning_number IS NULL
-                ORDER BY id DESC
-                LIMIT 1
-            )
-            INSERT INTO public.games (state_id, played_at)
-            SELECT 1, NOW()
-            WHERE NOT EXISTS (SELECT 1 FROM existing)
-            """
+            SELECT 1
+            FROM public.games g
+            WHERE
+                g.digits = %(digits)s
+                AND g.state_id = 1     -- ABIERTO
+            LIMIT 1
+            """,
+            {"digits": digits},
         )
-        # ⬅️ IMPORTANTE: ya NO revisamos cur.rowcount ni hacemos rollback aquí.
+        exists_open = cur.fetchone() is not None
+
+        if not exists_open:
+            # Creamos un nuevo juego:
+            # - mismos dígitos
+            # - mismo lottery_id (si quieres puedes dejarlo en NULL
+            #   al insertar si no te interesa la lotería)
+            cur.execute(
+                """
+                INSERT INTO public.games (state_id, digits, lottery_id, played_at)
+                VALUES (1, %(digits)s, %(lottery_id)s, NOW())
+                """,
+                {"digits": digits, "lottery_id": lottery_id},
+            )
+
 
         # 5) Notificar a todos los jugadores de ese juego
         cur.execute(
@@ -413,11 +437,18 @@ def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: i
             SELECT DISTINCT
                    gn.taken_by AS user_id,
                    CONCAT('Resultado del juego #', g.id) AS title,
-                   CONCAT('El número ganador es ', %(num)s) AS body,
+                   CONCAT(
+                       'El número ganador es ',
+                       LPAD(%(num)s::text, COALESCE(g.digits, 3), '0')
+                   ) AS body,
                    jsonb_build_object(
                        'type', 'winner_announced',
                        'game_id', g.id,
-                       'winning_number', %(num)s,
+                       -- número ganador ya con ceros a la izquierda
+                       'winning_number',
+                           LPAD(%(num)s::text, COALESCE(g.digits, 3), '0'),
+                       -- mandamos también los dígitos del juego
+                       'digits', COALESCE(g.digits, 3),
                        'played_at', to_char(
                             COALESCE(
                                 g.scheduled_date::timestamp
@@ -441,6 +472,7 @@ def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: i
 
     conn.commit()
     return item
+
 
 # ---------- eliminar ----------
 def delete_game(conn, game_id: int) -> int:

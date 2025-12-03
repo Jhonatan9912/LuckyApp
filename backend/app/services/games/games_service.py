@@ -533,41 +533,68 @@ def get_last_selection(user_id: int) -> dict:
 
 def set_winner(game_id: int, winning_number: int) -> tuple[bool, str | None]:
     try:
-        # 1) Obtener dígitos del juego (para crear el siguiente juego igual)
+        # 1) Tomar lock de la fila y leer dígitos + estado actual
         row = db.session.execute(text("""
-            SELECT digits
+            SELECT id, digits, winning_number, state_id
             FROM games
             WHERE id = :gid
+            FOR UPDATE
         """), {"gid": game_id}).first()
 
         if row is None:
             return False, "Juego no encontrado"
 
-        digits = int(row[0] or 3)
+        _gid, digits_db, current_winner, state_id = row
 
-        # 2) Marcar el juego actual como cerrado con número ganador
+        # Si ya tiene ganador o está cerrado, no hacemos nada
+        if current_winner is not None or state_id == 2:
+            db.session.rollback()
+            return False, "El juego ya fue cerrado"
+
+        # 2) Normalizar digits
+        digits = digits_db
+        if digits is None:
+            inferred = len(str(winning_number))
+            if inferred in (3, 4):
+                digits = inferred
+            else:
+                digits = 3
+        else:
+            try:
+                digits = int(digits)
+            except (TypeError, ValueError):
+                digits = 3
+
+        if digits < 1 or digits > 6:
+            digits = 3
+
+        # 3) Validar rango del ganador
+        max_val = (10 ** digits) - 1
+        if winning_number < 0 or winning_number > max_val:
+            db.session.rollback()
+            return (
+                False,
+                f"winning_number fuera de rango para juego de {digits} cifras (0..{max_val})"
+            )
+
+        # 4) Cerrar este juego
         db.session.execute(text("""
             UPDATE games
             SET winning_number = :wn,
                 state_id       = 2,
-                played_at      = NOW()
+                played_at      = NOW(),
+                digits         = :digits
             WHERE id = :gid
-        """), {"gid": game_id, "wn": winning_number})
+        """), {
+            "gid": game_id,
+            "wn": winning_number,
+            "digits": digits,
+        })
 
-        # 3) Asegurar que exista un juego nuevo ABIERTO del mismo tipo (mismos dígitos)
+        # 5) Crear SIEMPRE un juego nuevo ABIERTO con los mismos dígitos
         db.session.execute(text("""
-            WITH existing AS (
-                SELECT id
-                FROM games
-                WHERE state_id = 1
-                  AND winning_number IS NULL
-                  AND digits = :digits
-                ORDER BY id DESC
-                LIMIT 1
-            )
             INSERT INTO games (state_id, digits, played_at)
-            SELECT 1, :digits, NOW()
-            WHERE NOT EXISTS (SELECT 1 FROM existing)
+            VALUES (1, :digits, NOW())
         """), {"digits": digits})
 
         db.session.commit()
@@ -576,6 +603,7 @@ def set_winner(game_id: int, winning_number: int) -> tuple[bool, str | None]:
     except Exception as e:
         db.session.rollback()
         return False, str(e)
+
 
 
 def list_user_history(conn, user_id: int, page: int, per_page: int) -> dict:

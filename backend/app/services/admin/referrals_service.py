@@ -147,18 +147,20 @@ def get_top_referrers(limit: int = 5) -> list[dict]:
     """
     try:
         stmt = text("""
-            WITH last_sub AS (        -- última suscripción del REFERIDO
-                SELECT
-                    s.user_id,
-                    s.is_premium,
-                    s.expires_at,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY s.user_id
-                        ORDER BY COALESCE(s.expires_at, s.updated_at, s.created_at)
-                             DESC NULLS LAST
-                    ) AS rn
-                FROM public.user_subscriptions s
-            ),
+WITH last_sub AS (
+    SELECT
+        s.user_id,
+        s.is_premium,
+        s.expires_at,
+        s.created_at,  -- 👈 NUEVO: fecha de compra/alta de la sub
+        ROW_NUMBER() OVER (
+            PARTITION BY s.user_id
+            ORDER BY COALESCE(s.expires_at, s.updated_at, s.created_at)
+                 DESC NULLS LAST
+        ) AS rn
+    FROM public.user_subscriptions s
+),
+
             last_sub_ref AS (         -- última suscripción del PROMOTOR
                 SELECT
                     s.user_id,
@@ -194,38 +196,47 @@ def get_top_referrers(limit: int = 5) -> list[dict]:
                 -- 👇 Lista de referidos activos (los mismos que cuentan en active_count)
                 COALESCE(
                   (
-                    SELECT json_agg(
-                      json_build_object(
-                        'user_id', ru.id,
-                        'name', COALESCE(
-                                   NULLIF(ru.name, ''),
-                                   ru.email,
-                                   'ID #' || ru.id::text
-                               ),
-                        'phone', COALESCE(NULLIF(ru.phone, ''), ''),
-                        'status',
-                          CASE
-                            WHEN lsr2.is_premium IS TRUE
-                             AND lsr2.expires_at IS NOT NULL
-                             AND lsr2.expires_at > NOW()
-                            THEN 'PRO' ELSE 'FREE'
-                          END
-                      )
-                      ORDER BY ru.id
-                    )
-                    FROM public.referrals r2
-                    JOIN last_sub ls2
-                      ON ls2.user_id = r2.referred_user_id
-                     AND ls2.rn = 1
-                    JOIN public.users ru
-                      ON ru.id = r2.referred_user_id
-                    LEFT JOIN last_sub lsr2
-                      ON lsr2.user_id = r2.referred_user_id
-                     AND lsr2.rn = 1
-                    WHERE r2.referrer_user_id = r.referrer_user_id
-                      AND ls2.is_premium IS TRUE
-                      AND ls2.expires_at IS NOT NULL
-                      AND ls2.expires_at > NOW()
+SELECT json_agg(
+  json_build_object(
+    'user_id', ru.id,
+    'name', COALESCE(
+               NULLIF(ru.name, ''),
+               ru.email,
+               'ID #' || ru.id::text
+           ),
+    'phone', COALESCE(NULLIF(ru.phone, ''), ''),
+
+    'status',
+      CASE
+        WHEN lsr2.is_premium IS TRUE
+         AND lsr2.expires_at IS NOT NULL
+         AND lsr2.expires_at > NOW()
+        THEN 'PRO' ELSE 'FREE'
+      END,
+
+    -- 👇 NUEVO: fecha de suscripción para ese referido activo
+    'subscription_date',
+      COALESCE(
+        ls2.created_at,    -- cuando se creó la sub
+        ls2.expires_at     -- fallback por si acaso
+      )
+  )
+  ORDER BY ru.id
+)
+FROM public.referrals r2
+JOIN last_sub ls2
+  ON ls2.user_id = r2.referred_user_id
+ AND ls2.rn = 1
+JOIN public.users ru
+  ON ru.id = r2.referred_user_id
+LEFT JOIN last_sub lsr2
+  ON lsr2.user_id = r2.referred_user_id
+ AND lsr2.rn = 1
+WHERE r2.referrer_user_id = r.referrer_user_id
+  AND ls2.is_premium IS TRUE
+  AND ls2.expires_at IS NOT NULL
+  AND ls2.expires_at > NOW()
+
                   ),
                   '[]'::json
                 ) AS active_users
@@ -433,23 +444,27 @@ def get_commission_request_breakdown(request_id: int) -> Dict[str, Any]:
               ) AS rn
             FROM public.user_subscriptions s
         )
-        SELECT
-          rc.referred_user_id,
-          u.public_code,
-          u.name AS referred_name,
-          u.identification_number AS referred_id_number,
-          CASE
-            WHEN ls.is_premium IS TRUE
-            AND ls.expires_at IS NOT NULL
-            AND ls.expires_at > NOW()
-            THEN TRUE ELSE FALSE
-          END AS is_pro,
-          rc.commission_micros
-        FROM public.referral_commissions rc
-        JOIN public.users u ON u.id = rc.referred_user_id
-        LEFT JOIN last_sub ls ON ls.user_id = rc.referred_user_id AND ls.rn = 1
-        WHERE rc.payout_request_id = :rid
-        ORDER BY rc.id ASC
+       SELECT
+  rc.referred_user_id,
+  u.public_code,
+  u.name AS referred_name,
+  u.identification_number AS referred_id_number,
+  CASE
+    WHEN ls.is_premium IS TRUE
+    AND ls.expires_at IS NOT NULL
+    AND ls.expires_at > NOW()
+    THEN TRUE ELSE FALSE
+  END AS is_pro,
+  rc.commission_micros,
+  rc.created_at                   -- 👈 NUEVO
+FROM public.referral_commissions rc
+JOIN public.users u ON u.id = rc.referred_user_id
+LEFT JOIN last_sub ls
+  ON ls.user_id = rc.referred_user_id
+ AND ls.rn = 1
+WHERE rc.payout_request_id = :rid
+ORDER BY rc.id ASC
+
     """)
 
     rows = db.session.execute(items_sql, {"rid": request_id}).mappings().all()
