@@ -66,5 +66,6 @@ local.properties
 
 # Python backend
 venv/
+.venv/
 __pycache__/
 *.pyc
