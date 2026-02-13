@@ -139,13 +139,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _showMessage('Debes aceptar el Tratamiento de Datos.', isError: true);
       return;
     }
-    if (_wasReferred && referralCodeController.text.trim().isEmpty) {
-      _showMessage(
-        'Ingresa el código de referido o desmarca la opción.',
-        isError: true,
-      );
-      return;
-    }
+if (_wasReferred && referralCodeController.text.trim().isEmpty) {
+  _showMessage(
+    'Ingresa el código de referido o desmarca la opción.',
+    isError: true,
+  );
+  return;
+}
+
 
     setState(() => _submitting = true);
     try {
@@ -253,11 +254,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ConfirmPasswordInput(controller: confirmPasswordController),
             // ✅ Referido + consentimientos
             const SizedBox(height: 8),
-            ReferralCheckboxWithInput(
-              value: _wasReferred,
-              onChanged: (v) => setState(() => _wasReferred = v),
-              controller: referralCodeController,
-            ),
+ReferralCheckboxWithInput(
+  value: _wasReferred,
+  onChanged: (v) => setState(() => _wasReferred = v),
+  controller: referralCodeController,
+),
+
+
             const SizedBox(height: 8),
             ConsentCheckRow(
               value: _acceptTerms,
