@@ -1,6 +1,16 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- ✅ Permisos necesarios -->
+    <!-- ❌ Forzar eliminación de permisos de galería agregados por plugins -->
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_IMAGES"
+        tools:node="remove" />
+
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_VIDEO"
+        tools:node="remove" />
+
+    <!-- ✅ Permisos válidos -->
     <uses-permission android:name="com.android.vending.BILLING" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -30,13 +40,12 @@
             </intent-filter>
         </activity>
 
-        <!-- No borrar: lo usa Flutter -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
 
-    <!-- ✅ Visibilidad para Play Store (Android 11+) -->
+    <!-- Visibilidad para Play Store -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT" />
@@ -44,4 +53,5 @@
         </intent>
         <package android:name="com.android.vending" />
     </queries>
+
 </manifest>

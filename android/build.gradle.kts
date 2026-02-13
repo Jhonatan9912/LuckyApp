@@ -1,5 +1,7 @@
 import org.gradle.api.tasks.Delete
 import org.gradle.api.file.Directory
+import com.android.build.api.dsl.ApplicationExtension
+import com.android.build.api.dsl.LibraryExtension
 
 plugins {
     id("dev.flutter.flutter-gradle-plugin") apply false
@@ -37,4 +39,22 @@ subprojects {
  */
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
+}
+
+/**
+ * ✅ Forzar la misma versión de NDK para TODOS los módulos
+ * (app + plugins como rive_common)
+ */
+subprojects {
+    plugins.withId("com.android.application") {
+        extensions.configure<ApplicationExtension> {
+            ndkVersion = "28.2.13676358"
+        }
+    }
+
+    plugins.withId("com.android.library") {
+        extensions.configure<LibraryExtension> {
+            ndkVersion = "28.2.13676358"
+        }
+    }
 }

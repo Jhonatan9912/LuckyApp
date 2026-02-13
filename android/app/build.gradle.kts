@@ -1,5 +1,4 @@
 import java.util.Properties
-import java.io.File
 import java.io.FileInputStream
 
 plugins {
@@ -10,27 +9,42 @@ plugins {
 }
 
 android {
-    namespace = "com.tuempresa.base_app" // Ajusta si tu paquete es diferente
+    namespace = "com.tuempresa.base_app"
+
+    // Deja que Flutter controle esto por ahora.
+    // Cuando estés seguro de tener SDK 35 instalado puedes forzar:
+    // compileSdk = 35
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = "27.0.12077973"
+
+    // ✅ Recomendado: usar NDK r28+ cuando lo instales desde Android Studio.
+    // Por ahora puedes dejar este valor, pero cuando veas en el SDK Manager
+    // algo tipo "ndk;28.0.xxxxx", cámbialo exactamente a ese string.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true
     }
-    kotlinOptions { jvmTarget = JavaVersion.VERSION_17.toString() }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_17.toString()
+    }
 
     defaultConfig {
         applicationId = "com.tuempresa.base_app" // NO cambiar si ya publicaste
         minSdk = flutter.minSdkVersion
+
+
+        // Igual que compileSdk: hoy lo maneja Flutter.
+        // Cuando migres a Android 15 puedes fijar targetSdk = 35.
         targetSdk = flutter.targetSdkVersion
+
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         multiDexEnabled = true
     }
 
-    // --- Firma para release usando key.properties ---
     signingConfigs {
         create("release") {
             val keystoreProps = Properties()
@@ -47,42 +61,45 @@ android {
         }
     }
 
-buildTypes {
-    getByName("debug") {
-        isMinifyEnabled = false
-        isShrinkResources = false
+    buildTypes {
+        getByName("debug") {
+            isMinifyEnabled = false
+            isShrinkResources = false
+        }
+        maybeCreate("profile").apply {
+            initWith(getByName("debug"))
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+            // Si quieres menos problemas al depurar, puedes desactivar:
+            // isMinifyEnabled = false
+            // isShrinkResources = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
     }
-    // Flutter usa "profile"; a veces hereda config que activa shrink
-    maybeCreate("profile").apply {
-        // si no existe, lo crea; si existe, lo modifica
-        initWith(getByName("debug"))
-        isMinifyEnabled = false
-        isShrinkResources = false
-        signingConfig = signingConfigs.getByName("release")
-    }
-    getByName("release") {
-        signingConfig = signingConfigs.getByName("release")
-        // Si no quieres optimizar todavía, pon ambos en false.
-        isMinifyEnabled = true
-        isShrinkResources = true
-        proguardFiles(
-            getDefaultProguardFile("proguard-android-optimize.txt"),
-            "proguard-rules.pro"
-        )
-    }
-}
 
-    // Excluir licencias duplicadas (buena práctica)
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+
+        // ⚠️ IMPORTANTE: NO toques jniLibs/useLegacyPackaging aquí,
+        // deja que Flutter/AGP manejen las libs nativas.
     }
 }
 
 flutter {
     source = "../.."
 }
+
 dependencies {
     implementation("com.android.billingclient:billing-ktx:6.2.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
