@@ -23,6 +23,7 @@ def create_app():
     # Base de Datos
     # =========================
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+    app.logger.info("DATABASE_URL value: %s", os.getenv("DATABASE_URL"))
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
     # =========================
