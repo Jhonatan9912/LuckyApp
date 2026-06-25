@@ -199,15 +199,14 @@ def generate_five_available(
               Si no hay juego abierto, devuelve un PREVIEW y game_id=None.
     """
     max_number = _max_number_for_digits(digits)
+    is_free_mode = (digits == 2)
 
-    # ---- Usuario NO PRO: no crear juegos ----
-    if not user_id or not _is_user_pro(int(user_id)):
+    # ---- Usuario NO PRO y NO modo gratis: no crear juegos ----
+    if not is_free_mode and (not user_id or not _is_user_pro(int(user_id))):
         gid = find_active_unscheduled_game_id(digits=digits)
         if gid is None:
-            # No hay juego abierto -> devolvemos preview sin tocar DB
             return None, _generate_preview_numbers(k=5, digits=digits)
 
-        # Hay juego abierto -> mostramos 5 disponibles de ese juego (sin reservar)
         rows = db.session.execute(text("""
             WITH taken AS (
                 SELECT number FROM game_numbers WHERE game_id = :gid
@@ -221,7 +220,6 @@ def generate_five_available(
 
         numbers = [int(r[0]) for r in rows]
 
-        # Si por cualquier razón hay menos de 5, completamos con preview local
         if len(numbers) < 5:
             faltan = 5 - len(numbers)
             extra = [
@@ -232,10 +230,10 @@ def generate_five_available(
 
         return gid, numbers
 
-    # ---- Usuario PRO: NO CREAR JUEGO AL JUGAR ----
-    allowed_digits = _user_max_digits(int(user_id))
-    if digits == 4 and allowed_digits < 4:
-        raise PermissionError("Tu plan actual solo permite jugar a 3 cifras.")
+    if not is_free_mode:
+        allowed_digits = _user_max_digits(int(user_id))
+        if digits in (4, 5) and allowed_digits < digits:
+            raise PermissionError(f"Tu plan actual no permite jugar {digits} cifras.")
 
     # 👉 Buscar juego abierto SIN crear uno nuevo
     gid = find_active_unscheduled_game_id(digits=digits)
@@ -275,14 +273,19 @@ def commit_selection_auto(user_id: int, numbers: List[int], digits: int = 3) -> 
     Si NO hay juego abierto → crea uno y reserva ahí.
     Si YA hay juego abierto → reserva ahí.
     """
-    # Blindaje por plan
-    allowed_digits = _user_max_digits(user_id)
-    if digits == 4 and allowed_digits < 4:
-        return {
-            "ok": False,
-            "code": "FOUR_DIGITS_NOT_ALLOWED",
-            "error": "Tu plan actual solo permite jugar a 3 cifras."
-        }
+
+    is_free_mode = (digits == 2)
+
+    # Blindaje por plan (solo para modos de pago)
+    if not is_free_mode:
+        allowed_digits = _user_max_digits(user_id)
+        if digits in (4, 5) and allowed_digits < digits:
+            return {
+                "ok": False,
+                "code": "DIGITS_NOT_ALLOWED",
+                "error": f"Tu plan actual no permite jugar {digits} cifras."
+            }
+
 
     # Buscar si ya hay uno abierto
     gid = find_active_unscheduled_game_id(digits=digits)
@@ -335,22 +338,23 @@ def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
             "error": f"Cada número debe estar entre 0 y {max_number}."
         }
 
-    # 🛡️ Blindaje por plan: 20k no puede jugar 4 cifras
-    user_allowed_digits = _user_max_digits(user_id)
-    if digits == 4 and user_allowed_digits < 4:
-        return {
-            "ok": False,
-            "code": "FOUR_DIGITS_NOT_ALLOWED",
-            "error": "Tu plan actual solo permite jugar a 3 cifras."
-        }
+    is_free_mode = (digits == 2)
 
-    # --- PREMIUM guard: solo PRO pueden reservar (para 3 y 4 cifras) ---
-    if not _is_user_pro(user_id):
-        return {
-            "ok": False,
-            "code": "NOT_PREMIUM",
-            "error": "Necesitas la suscripción PRO para reservar."
-        }
+    if not is_free_mode:
+        user_allowed_digits = _user_max_digits(user_id)
+        if digits in (4, 5) and user_allowed_digits < digits:
+            return {
+                "ok": False,
+                "code": "DIGITS_NOT_ALLOWED",
+                "error": f"Tu plan actual no permite jugar {digits} cifras."
+            }
+
+        if not _is_user_pro(user_id):
+            return {
+                "ok": False,
+                "code": "NOT_PREMIUM",
+                "error": "Necesitas la suscripción PRO para reservar."
+            }
 
     winning_number, state_id, used = row[1], row[2], int(row[3])
     # lottery_id, lottery_name, scheduled_date, scheduled_time = row[4], row[5], row[6], row[7]
@@ -555,10 +559,11 @@ def set_winner(game_id: int, winning_number: int) -> tuple[bool, str | None]:
         digits = digits_db
         if digits is None:
             inferred = len(str(winning_number))
-            if inferred in (3, 4):
+            if inferred in (2, 3, 4, 5):
                 digits = inferred
             else:
                 digits = 3
+
         else:
             try:
                 digits = int(digits)
@@ -606,80 +611,66 @@ def set_winner(game_id: int, winning_number: int) -> tuple[bool, str | None]:
 
 
 
-def list_user_history(conn, user_id: int, page: int, per_page: int) -> dict:
+def list_user_history(conn, user_id: int, page: int, per_page: int, max_digits: int = 5) -> dict:
     """
     Devuelve el historial paginado de juegos en los que el usuario participó.
-    - conn: raw_connection() (ya lo abres/cierra la ruta)
-    - user_id: id del usuario
-    - page / per_page: paginación
-
-    Retorna:
-    {
-      "ok": True,
-      "page": <int>,
-      "per_page": <int>,
-      "total": <int>,
-      "items": [
-        {
-          "game_id": <int>,
-          "numbers": [n1, n2, n3, n4, n5],  # según los que ese usuario reservó en ese juego
-          "state_id": <int|null>,
-          "winning_number": <int|null>
-        },
-        ...
-      ]
-    }
+    max_digits: muestra solo juegos con g.digits <= max_digits.
+      - free users → max_digits=2 (solo 2 cifras)
+      - PRO básico  → max_digits=3
+      - PRO avanzado→ max_digits=4
+      - PRO máximo  → max_digits=5
     """
-    # --- PREMIUM guard: historial solo para PRO ---
-    if not _is_user_pro(user_id):
-        return {
-            "ok": False,
-            "code": "NOT_PREMIUM",
-            "message": "El historial es solo para usuarios PRO."
-        }
-
     try:
         offset = max(0, (int(page) - 1) * int(per_page))
         limit = max(1, int(per_page))
         cur = conn.cursor()
 
-        # Total de juegos en los que el usuario tiene al menos 1 número
+        digits_clause = "AND g.digits <= %s"
+
+        count_params = [user_id, max_digits]
+
         cur.execute(
-            """
+            f"""
             SELECT COUNT(*) FROM (
               SELECT gn.game_id
               FROM game_numbers gn
+              JOIN games g ON g.id = gn.game_id
               WHERE gn.taken_by = %s
+              {digits_clause}
               GROUP BY gn.game_id
             ) t;
             """,
-            (user_id,),
+            count_params,
         )
         total = int(cur.fetchone()[0])
 
+        list_params = [user_id, max_digits, limit, offset]
+
         cur.execute(
-            """
+            f"""
             SELECT
-            g.id AS game_id,                 -- r[0]
-            g.state_id,                      -- r[1]
-            g.winning_number,                -- r[2]
-            COALESCE(g.lottery_name, l.name) AS lottery_name,  -- r[3]
-            g.scheduled_date,                -- r[4]
-            g.scheduled_time,                -- r[5]
-            g.played_at,                     -- r[6]
-            ARRAY_AGG(gn.number ORDER BY gn.position) AS numbers  -- r[7]
+            g.id AS game_id,
+            g.state_id,
+            g.winning_number,
+            COALESCE(g.lottery_name, l.name) AS lottery_name,
+            g.scheduled_date,
+            g.scheduled_time,
+            g.played_at,
+            ARRAY_AGG(gn.number ORDER BY gn.position) AS numbers,
+            COALESCE(g.digits, 3) AS digits
             FROM games g
             JOIN game_numbers gn ON gn.game_id = g.id
             LEFT JOIN lotteries l ON l.id = g.lottery_id
             WHERE gn.taken_by = %s
+            {digits_clause}
             GROUP BY
             g.id, g.state_id, g.winning_number,
             COALESCE(g.lottery_name, l.name),
-            g.scheduled_date, g.scheduled_time, g.played_at
+            g.scheduled_date, g.scheduled_time, g.played_at, g.digits
             ORDER BY g.id DESC
             LIMIT %s OFFSET %s;
             """,
-            (user_id, limit, offset),
+            list_params,
         )
 
         rows = cur.fetchall()
@@ -687,9 +678,6 @@ def list_user_history(conn, user_id: int, page: int, per_page: int) -> dict:
 
         items = []
         for r in rows:
-            # r[0]..r[7] según el SELECT que te pasé:
-            # 0 game_id, 1 state_id, 2 winning_number, 3 lottery_name (COALESCE),
-            # 4 scheduled_date, 5 scheduled_time, 6 played_at, 7 numbers[]
             items.append({
                 "game_id": int(r[0]),
                 "state_id": int(r[1]) if r[1] is not None else None,
@@ -699,8 +687,8 @@ def list_user_history(conn, user_id: int, page: int, per_page: int) -> dict:
                 "scheduled_time": str(r[5]) if r[5] else None,
                 "played_at": r[6].isoformat() if r[6] else None,
                 "numbers": [int(n) for n in (r[7] or [])],
+                "digits": int(r[8]) if r[8] is not None else 3,
             })
-
 
         return {
             "ok": True,

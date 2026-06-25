@@ -69,3 +69,15 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+# --- Android/Gradle caches y builds ---
+android/.gradle/
+android/build/
+android/app/build/
+android/**/.cxx/
+**/.gradle/
+
+# --- Vendor (parches temporales de plugins, no subir) ---
+vendor/
+
+# --- Tools descargadas localmente ---
+bundletool*.jar

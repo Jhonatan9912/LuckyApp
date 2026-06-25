@@ -40,29 +40,31 @@ def generate():
         digits = int(request.args.get("digits", "3"))
     except ValueError:
         digits = 3
-    if digits not in (3, 4):
+    if digits not in (2, 3, 4, 5):
         digits = 3
 
+    is_free_mode = (digits == 2)
+
     try:
-        # Guard explícito: solo PRO pueden generar (como ya lo tenías)
-        if not uid or not _is_user_pro(uid):
-            return jsonify({
-                "ok": False,
-                "code": "NOT_PREMIUM",
-                "message": "Necesitas la suscripción PRO para jugar."
-            }), 403
+        # 2 cifras es gratis: no requiere PRO
+        if not is_free_mode:
+            if not uid or not _is_user_pro(uid):
+                return jsonify({
+                    "ok": False,
+                    "code": "NOT_PREMIUM",
+                    "message": "Necesitas la suscripción PRO para jugar."
+                }), 403
 
-        # 🆕 Consultar el plan del usuario
-        sub_status = get_sub_status(uid)
-        max_digits = sub_status.max_digits or 0
+            sub_status = get_sub_status(uid)
+            max_digits = sub_status.max_digits or 0
 
-        # 🛡️ Blindaje: si intenta generar juego de 4 cifras sin plan 60k
-        if digits == 4 and max_digits < 4:
-            return jsonify({
-                "ok": False,
-                "code": "FOUR_DIGITS_NOT_ALLOWED",
-                "message": "Tu plan actual solo permite jugar a 3 cifras."
-            }), 403
+            if digits in (4, 5) and max_digits < digits:
+                return jsonify({
+                    "ok": False,
+                    "code": "DIGITS_NOT_ALLOWED",
+                    "message": f"Tu plan actual no permite jugar {digits} cifras."
+                }), 403
+
 
         # 👇 PASAR digits al service
         gid, numbers = generate_five_available(uid, digits=digits)
@@ -111,8 +113,9 @@ def commit():
         digits = int(digits)
     except Exception:
         digits = 3
-    if digits not in (3, 4):
+    if digits not in (2, 3, 4, 5):
         digits = 3
+
 
     # 👇 SI NO VIENE game_id → crear/usar juego automáticamente
     if game_id in (None, 0, "0"):
@@ -177,30 +180,33 @@ def my_selection():
             "message": "Token inválido"
         }), 401
 
-    # 👇 Leer digits del query (?digits=3|4)
     try:
         digits = int(request.args.get("digits", "3"))
     except ValueError:
         digits = 3
-    if digits not in (3, 4):
+    if digits not in (2, 3, 4, 5):
         digits = 3
 
-    # 🆕 Guard: exigir PRO y validar plan vs dígitos
-    sub_status = get_sub_status(uid)
+    is_free_mode = (digits == 2)
 
-    if not sub_status.is_premium:
-        return jsonify({
-            "ok": False,
-            "code": "NOT_PREMIUM",
-            "message": "Necesitas la suscripción PRO para ver tus selecciones."
-        }), 403
+    # 2 cifras es gratis: no requiere PRO
+    if not is_free_mode:
+        sub_status = get_sub_status(uid)
 
-    if digits == 4 and (sub_status.max_digits or 0) < 4:
-        return jsonify({
-            "ok": False,
-            "code": "FOUR_DIGITS_NOT_ALLOWED",
-            "message": "Tu plan actual solo permite ver/jugar números de 3 cifras."
-        }), 403
+        if not sub_status.is_premium:
+            return jsonify({
+                "ok": False,
+                "code": "NOT_PREMIUM",
+                "message": "Necesitas la suscripción PRO para ver tus selecciones."
+            }), 403
+
+        if digits in (4, 5) and (sub_status.max_digits or 0) < digits:
+            return jsonify({
+                "ok": False,
+                "code": "DIGITS_NOT_ALLOWED",
+                "message": f"Tu plan actual no permite ver/jugar {digits} cifras."
+            }), 403
+
 
     # 👇 Pasar digits al service
     res = get_current_selection(uid, digits=digits)
@@ -219,14 +225,35 @@ def my_selection():
         "message": res.get("message", "Error")
     }), 500
 
+def _parse_winning_number(raw) -> int:
+    """
+    Acepta:
+      - int: 14441
+      - str: "14441"
+      - str visual quinta: "1444-1"
+    Devuelve int sin guion.
+    """
+    if raw is None:
+        raise ValueError("winning_number requerido")
+
+    s = str(raw).strip()
+    # quita separadores visuales (quinta)
+    s = s.replace("-", "").replace(" ", "")
+
+    if not s.isdigit():
+        raise ValueError("winning_number inválido")
+
+    return int(s)
+
 @games_bp.post("/<int:game_id>/announce-winner")
 @jwt_required()
 def announce_winner(game_id: int):
     body = request.get_json(silent=True) or {}
     try:
-        winning_number = int(body.get("winning_number"))
-    except Exception:
-        return jsonify({"ok": False, "message": "winning_number inválido"}), 400
+        winning_number = _parse_winning_number(body.get("winning_number"))
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 400
+
 
     ok, msg = games_service.set_winner(game_id=game_id, winning_number=winning_number)
     if not ok:
@@ -254,20 +281,17 @@ def api_history():
     if not uid:
         return jsonify({"error": "No autorizado"}), 403
 
-    # Mismo guard que en el service: fecha + estado
-    if not _is_user_pro(int(uid)):
-        return jsonify({
-            "ok": False,
-            "code": "NOT_PREMIUM",
-            "message": "El historial es solo para usuarios PRO."
-        }), 403
-
     page = int(request.args.get("page") or 1)
     per_page = int(request.args.get("per_page") or 20)
 
+    # Filtrar historial según el plan del usuario:
+    # free → solo 2 cifras; PRO → hasta max_digits de su plan
+    sub_status = get_sub_status(int(uid))
+    max_digits = (sub_status.max_digits or 3) if sub_status.is_premium else 2
+
     conn = db.engine.raw_connection()
     try:
-        data = list_user_history(conn, int(uid), page, per_page)
+        data = list_user_history(conn, int(uid), page, per_page, max_digits=max_digits)
         return jsonify(data), 200
     finally:
         conn.close()

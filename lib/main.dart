@@ -158,11 +158,145 @@ class BaseApp extends StatelessWidget {
       navigatorKey: navigatorKey,
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.amber,
-          brightness: Brightness.light,
+        brightness: Brightness.light,
+        colorScheme: const ColorScheme.light(
+          primary: Color(0xFFB8860B),
+          onPrimary: Colors.white,
+          primaryContainer: Color(0xFFFFF3C0),
+          onPrimaryContainer: Color(0xFF3A2800),
+          secondary: Color(0xFF8B6914),
+          onSecondary: Colors.white,
+          secondaryContainer: Color(0xFFFFE8A0),
+          onSecondaryContainer: Color(0xFF2A1C00),
+          surface: Colors.white,
+          onSurface: Color(0xFF1A1A1A),
+          surfaceContainerHighest: Color(0xFFFFF9E8),
+          onSurfaceVariant: Color(0xFF5A4A20),
+          background: Color(0xFFFDF9F0),
+          onBackground: Color(0xFF1A1A1A),
+          error: Color(0xFFB00020),
+          onError: Colors.white,
+          outline: Color(0xFFD4AF37),
+          outlineVariant: Color(0xFFEAD88A),
         ),
-        scaffoldBackgroundColor: Colors.grey[50],
+        scaffoldBackgroundColor: const Color(0xFFFDF9F0),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF0A0A0A),
+          foregroundColor: Color(0xFFD4AF37),
+          elevation: 0,
+          centerTitle: true,
+          iconTheme: IconThemeData(color: Color(0xFFD4AF37)),
+          actionsIconTheme: IconThemeData(color: Color(0xFFD4AF37)),
+          surfaceTintColor: Colors.transparent,
+        ),
+        cardTheme: const CardThemeData(
+          color: Colors.white,
+          elevation: 1,
+          margin: EdgeInsets.zero,
+          shadowColor: Color(0x22D4AF37),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(16)),
+            side: BorderSide(color: Color(0xFFEAD88A), width: 1),
+          ),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFFD4AF37),
+            foregroundColor: const Color(0xFF0A0A0A),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            textStyle: const TextStyle(fontWeight: FontWeight.w700, letterSpacing: 0.5),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFFB8860B),
+            side: const BorderSide(color: Color(0xFFD4AF37)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFD4AF37),
+            foregroundColor: const Color(0xFF0A0A0A),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xFFFFFCF5),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFEAD88A)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFEAD88A)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFD4AF37), width: 1.5),
+          ),
+          labelStyle: const TextStyle(color: Color(0xFF8B6914)),
+          hintStyle: const TextStyle(color: Color(0xFFC8A84B)),
+        ),
+        chipTheme: ChipThemeData(
+          backgroundColor: const Color(0xFFFFF9E0),
+          selectedColor: const Color(0xFFD4AF37),
+          labelStyle: const TextStyle(fontSize: 13),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFFEAD88A)),
+          ),
+        ),
+        dividerTheme: const DividerThemeData(color: Color(0xFFEAD88A)),
+        iconTheme: const IconThemeData(color: Color(0xFFB8860B)),
+        tabBarTheme: const TabBarThemeData(
+          labelColor: Color(0xFF4A3800),
+          unselectedLabelColor: Color(0xFF8B7030),
+          indicatorColor: Color(0xFFD4AF37),
+          dividerColor: Color(0xFFEAD88A),
+          labelStyle: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          unselectedLabelStyle: TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
+        ),
+        popupMenuTheme: const PopupMenuThemeData(
+          color: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+            side: BorderSide(color: Color(0xFFEAD88A)),
+          ),
+        ),
+        bottomSheetTheme: const BottomSheetThemeData(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+        ),
+        dialogTheme: const DialogThemeData(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(16)),
+          ),
+        ),
+        snackBarTheme: const SnackBarThemeData(
+          backgroundColor: Color(0xFF2A2000),
+          contentTextStyle: TextStyle(color: Colors.white),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(10)),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+        listTileTheme: const ListTileThemeData(
+          iconColor: Color(0xFFB8860B),
+          textColor: Color(0xFF1A1A1A),
+        ),
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(foregroundColor: const Color(0xFFD4AF37)),
+        ),
       ),
       locale: const Locale('es', 'CO'),
       supportedLocales: const [Locale('es', 'CO'), Locale('es'), Locale('en')],

@@ -238,15 +238,20 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
     // Solo lo mostramos para la pestaña "Activos"
     if (_state != 'active') return const SizedBox.shrink();
 
-    return Padding(
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       child: Row(
         children: [
           _buildDigitsChip(label: 'Todos', value: null),
           const SizedBox(width: 8),
+          _buildDigitsChip(label: '2 cifras', value: 2),
+          const SizedBox(width: 8),
           _buildDigitsChip(label: '3 cifras', value: 3),
           const SizedBox(width: 8),
           _buildDigitsChip(label: '4 cifras', value: 4),
+          const SizedBox(width: 8),
+          _buildDigitsChip(label: 'Quinta', value: 5),
         ],
       ),
     );
@@ -255,13 +260,21 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
   Widget _buildDigitsChip({required String label, required int? value}) {
     final selected = _digitsFilter == value;
     return ChoiceChip(
-      label: Text(label),
+      label: Text(
+        label,
+        style: TextStyle(
+          color: selected ? const Color(0xFF4A3800) : const Color(0xFF5A4A20),
+          fontWeight: FontWeight.w600,
+          fontSize: 13,
+        ),
+      ),
       selected: selected,
-      onSelected: (_) {
-        setState(() {
-          _digitsFilter = value;
-        });
-      },
+      selectedColor: const Color(0xFFD4AF37),
+      backgroundColor: const Color(0xFFFFF9E0),
+      side: BorderSide(
+        color: selected ? const Color(0xFFD4AF37) : const Color(0xFFEAD88A),
+      ),
+      onSelected: (_) => setState(() => _digitsFilter = value),
     );
   }
 
@@ -332,6 +345,10 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
                 child: TabBar(
+                  labelColor: const Color(0xFF4A3800),
+                  unselectedLabelColor: const Color(0xFF8B7030),
+                  indicatorColor: const Color(0xFFD4AF37),
+                  dividerColor: const Color(0xFFEAD88A),
                   tabs: const [
                     Tab(text: 'Activos'),
                     Tab(text: 'Histórico'),
@@ -566,7 +583,7 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                                                         ? Icons.lock_clock
                                                         : Icons.edit),
                                                 color: canEdit
-                                                    ? Colors.deepPurple
+                                                    ? const Color(0xFFD4AF37)
                                                     : null,
                                                 onPressed: !canEdit
                                                     ? null

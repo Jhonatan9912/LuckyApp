@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:base_app/core/utils/lottery_number_format.dart';
 
 class HistoryPanel extends StatelessWidget {
   /// items: { game_id|id, numbers: [int|str], winning_number?, result|status?,
@@ -15,13 +16,14 @@ class HistoryPanel extends StatelessWidget {
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.9),
+          color: Colors.white.withValues(alpha: 0.95),
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
+          border: Border.all(color: const Color(0xFFEAD88A), width: 1),
+          boxShadow: const [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.08),
+              color: Color(0x18D4AF37),
               blurRadius: 8,
-              offset: const Offset(0, 3),
+              offset: Offset(0, 3),
             ),
           ],
         ),
@@ -36,8 +38,8 @@ class HistoryPanel extends StatelessWidget {
 
                   final gameId =
                       (it['game_id'] as num?)?.toInt() ??
-                      (it['id'] as num?)?.toInt() ??
-                      0;
+                          (it['id'] as num?)?.toInt() ??
+                          0;
 
                   final rawNums = (it['numbers'] as List?) ?? const [];
                   final nums = rawNums
@@ -46,17 +48,42 @@ class HistoryPanel extends StatelessWidget {
 
                   final win = (it['winning_number'] as num?)?.toInt();
 
-                  // Estado textual (si viene desde backend)
+                  // ---------- Cálculo ROBUSTO de dígitos ----------
+                  int digits = (it['digits'] as num?)?.toInt() ??
+                      (it['numbers_digits'] as num?)?.toInt() ??
+                      0;
+
+                  if (digits <= 0) {
+                    int inferred = 0;
+
+                    for (final e in rawNums) {
+                      final len = e.toString().length;
+                      if (len > inferred) inferred = len;
+                    }
+
+                    if (win != null) {
+                      final lenWin = win.toString().length;
+                      if (lenWin > inferred) inferred = lenWin;
+                    }
+
+                    // 👇 aquí ya puedes decidir si permitir quinta:
+                    // - si el backend manda 5 cifras, inferred=5 y lo respetamos
+                    // normalizamos (mínimo 3, máximo 6)
+                    if (inferred < 2) inferred = 2;
+                    if (inferred > 6) inferred = 6;
+
+                    digits = inferred;
+                  }
+
                   final resStr = (it['result'] ?? it['status'] ?? '')
                       .toString()
                       .toLowerCase();
 
-                  // Datos visibles SOLO si el admin los puso (sin fallback a played_at / created_at)
-                  final lottery = (it['lottery_name'] ?? it['lottery'] ?? '')
-                      .toString()
-                      .trim();
+                  final lottery =
+                      (it['lottery_name'] ?? it['lottery'] ?? '')
+                          .toString()
+                          .trim();
 
-                  // Admin puede cargar cualquiera de estos campos; si están vacíos, no mostramos nada.
                   final dateText =
                       (it['scheduled_date'] ??
                               it['played_date'] ??
@@ -73,15 +100,12 @@ class HistoryPanel extends StatelessWidget {
                           .toString()
                           .trim();
 
-                  // Lógica de outcome
                   final outcome = _computeOutcome(
                     resStr: resStr,
                     win: win,
                     nums: nums,
                   );
-                  debugPrint(
-                    '[HISTORY] #$gameId lot="$lottery" date="$dateText" time="$timeText" raw=${items[i]}',
-                  );
+
                   return _HistoryCard(
                     gameId: gameId,
                     numbers: nums,
@@ -90,6 +114,7 @@ class HistoryPanel extends StatelessWidget {
                     lottery: lottery,
                     dateText: dateText,
                     timeText: timeText,
+                    digits: digits,
                   );
                 },
               ),
@@ -102,13 +127,12 @@ class HistoryPanel extends StatelessWidget {
     required int? win,
     required List<int> nums,
   }) {
-    // Si backend ya manda algo tipo 'playing', 'en juego', etc.
     final isPlayingByText =
         resStr.contains('play') ||
-        resStr.contains('en juego') ||
-        resStr.contains('jugando') ||
-        resStr.contains('scheduled') ||
-        resStr.contains('program');
+            resStr.contains('en juego') ||
+            resStr.contains('jugando') ||
+            resStr.contains('scheduled') ||
+            resStr.contains('program');
 
     if (win == null && (isPlayingByText || resStr.isEmpty)) {
       return _Outcome.inPlay;
@@ -129,6 +153,7 @@ class _HistoryCard extends StatelessWidget {
   final String lottery;
   final String dateText;
   final String timeText;
+  final int digits; // 3,4,5
 
   const _HistoryCard({
     required this.gameId,
@@ -138,6 +163,7 @@ class _HistoryCard extends StatelessWidget {
     required this.lottery,
     required this.dateText,
     required this.timeText,
+    required this.digits,
   });
 
   @override
@@ -158,7 +184,6 @@ class _HistoryCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Encabezado
           Row(
             children: [
               Text(
@@ -173,7 +198,7 @@ class _HistoryCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
-          // Tus números
+
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -182,7 +207,6 @@ class _HistoryCard extends StatelessWidget {
 
           const SizedBox(height: 10),
 
-          // Número ganador (solo si ya existe)
           if (winningNumber != null)
             Row(
               children: [
@@ -191,37 +215,38 @@ class _HistoryCard extends StatelessWidget {
                   style: TextStyle(fontWeight: FontWeight.w600),
                 ),
                 Text(
-                  winningNumber!.toString().padLeft(3, '0'),
+                  formatGameNumber(winningNumber!, digits),
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     color: outcome == _Outcome.won
                         ? Colors.green
                         : (outcome == _Outcome.lost
-                              ? Colors.red
-                              : Colors.blueGrey),
+                            ? Colors.red
+                            : Colors.blueGrey),
                   ),
                 ),
               ],
             ),
-          // Info de Lotería/Fecha/Hora (solo si existen)
-          if (lottery.isNotEmpty ||
-              dateText.isNotEmpty ||
-              timeText.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            const Divider(height: 1),
-            const SizedBox(height: 10),
-            if (lottery.isNotEmpty) _InfoRow(label: 'Lotería', value: lottery),
-            if (dateText.isNotEmpty) _InfoRow(label: 'Fecha', value: dateText),
-            if (timeText.isNotEmpty) _InfoRow(label: 'Hora', value: timeText),
-          ],
+
+          if (lottery.isNotEmpty || dateText.isNotEmpty || timeText.isNotEmpty)
+            ...[
+              const SizedBox(height: 10),
+              const Divider(height: 1),
+              const SizedBox(height: 10),
+              if (lottery.isNotEmpty) _InfoRow(label: 'Lotería', value: lottery),
+              if (dateText.isNotEmpty) _InfoRow(label: 'Fecha', value: dateText),
+              if (timeText.isNotEmpty) _InfoRow(label: 'Hora', value: timeText),
+            ],
         ],
       ),
     );
   }
 
   Widget _ball(int n) {
-    final txt = n.toString().padLeft(3, '0');
+    final txt = formatGameNumber(n, digits);
     final isWin = (winningNumber != null && n == winningNumber);
+
+    final double w = digits <= 2 ? 40 : (digits == 3 ? 44 : (digits == 4 ? 52 : 60));
 
     Color fill;
     Color stroke;
@@ -248,17 +273,23 @@ class _HistoryCard extends StatelessWidget {
     }
 
     return Container(
-      width: 44,
-      height: 44,
+      width: w,
+      height: w,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: fill,
         border: Border.all(color: stroke, width: 1.4),
       ),
-      child: Text(
-        txt,
-        style: TextStyle(fontWeight: FontWeight.w700, color: textColor),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            txt,
+            style: TextStyle(fontWeight: FontWeight.w700, color: textColor),
+          ),
+        ),
       ),
     );
   }
@@ -272,23 +303,23 @@ class _StatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final (bg, fg, label, border) = switch (outcome) {
       _Outcome.won => (
-        Colors.green.withValues(alpha: 0.15),
-        Colors.green[800],
-        'Ganado',
-        Colors.green.withValues(alpha: 0.4),
-      ),
+          Colors.green.withValues(alpha: 0.15),
+          Colors.green[800],
+          'Ganado',
+          Colors.green.withValues(alpha: 0.4),
+        ),
       _Outcome.lost => (
-        Colors.red.withValues(alpha: 0.15),
-        Colors.red[800],
-        'Perdido',
-        Colors.red.withValues(alpha: 0.4),
-      ),
+          Colors.red.withValues(alpha: 0.15),
+          Colors.red[800],
+          'Perdido',
+          Colors.red.withValues(alpha: 0.4),
+        ),
       _Outcome.inPlay => (
-        Colors.blueGrey.withValues(alpha: 0.15),
-        Colors.blueGrey[900],
-        'En juego',
-        Colors.blueGrey.withValues(alpha: 0.4),
-      ),
+          Colors.blueGrey.withValues(alpha: 0.15),
+          Colors.blueGrey[900],
+          'En juego',
+          Colors.blueGrey.withValues(alpha: 0.4),
+        ),
     };
 
     return Container(
@@ -340,7 +371,6 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      // permite que el contenido se desplace si el contenedor es muy bajito
       padding: const EdgeInsets.all(24),
       child: Center(
         child: Column(
@@ -349,7 +379,7 @@ class _EmptyState extends StatelessWidget {
             Icon(
               Icons.history,
               size: 40,
-              color: Colors.black.withValues(alpha: 0.5),
+              color: Colors.black.withValues(alpha: 0.35),
             ),
             const SizedBox(height: 12),
             const Text(

@@ -21,6 +21,23 @@ class NotificationDetailSheet extends StatelessWidget {
     final re = RegExp(r'\B(?=(\d{3})+(?!\d))');
     return '\$${s.replaceAllMapped(re, (m) => '.')}';
   }
+String _formatWinning(dynamic raw, int digits) {
+  if (raw == null) return '';
+  var s = raw.toString().trim();
+  if (s.isEmpty) return '';
+
+  if (s.contains('-')) return s;
+
+  s = s.replaceAll(RegExp(r'[^0-9]'), '');
+  if (s.isEmpty) return '';
+
+  s = s.padLeft(digits, '0');
+
+  if (digits == 5 && s.length >= 5) {
+    return '${s.substring(0, 4)}-${s.substring(4, 5)}';
+  }
+  return s;
+}
 
   IconData _iconFor(String k) {
     switch (k) {
@@ -70,7 +87,28 @@ class NotificationDetailSheet extends StatelessWidget {
     final kind = (data['kind'] ?? '').toString();
     final title = (data['title'] ?? '').toString();
     final body = (data['body'] ?? '').toString();
-    final payload = (data['payload'] ?? {}) as Map<String, dynamic>;
+final payload = (data['payload'] ?? const {}) as Map<String, dynamic>;
+
+final int digits =
+    (payload['digits'] ?? data['digits'] ?? 3) is int
+        ? (payload['digits'] ?? data['digits'] ?? 3) as int
+        : int.tryParse((payload['digits'] ?? data['digits'] ?? '3').toString()) ?? 3;
+
+final dynamic winningRaw =
+    data['winning_formatted'] ??
+    data['winning_raw'] ??
+    payload['winning_number'] ??
+    data['winning_number'];
+
+final String winningFormatted = _formatWinning(winningRaw, digits);
+
+
+    // Tipos de notificación de resultado de juego
+    final bool isWinnerKind =
+        kind == 'winner_announced' ||
+        kind == 'winner_congrats' ||
+        kind == 'you_won' ||
+        kind == 'result';
 
     final reason = (payload['reason'] ?? payload['rejected_reason'] ?? '')
         .toString();
@@ -227,10 +265,16 @@ class NotificationDetailSheet extends StatelessWidget {
                       ),
                     ),
                   ]
-                  // ======== GENÉRICO ========
-                  else ...[
-                    Text(body.isNotEmpty ? body : 'Sin contenido'),
-                  ],
+// ======== GENÉRICO ========
+else ...[
+  Text(
+(isWinnerKind && winningFormatted.isNotEmpty)
+
+        ? 'El número ganador es $winningFormatted'
+        : (body.isNotEmpty ? body : 'Sin contenido'),
+  ),
+],
+
 
                   const SizedBox(height: 8),
                 ],

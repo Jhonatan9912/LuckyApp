@@ -1,9 +1,14 @@
 import 'dart:async';
+import 'dart:developer' as dev;
+
 import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
+
 import 'package:base_app/data/api/subscriptions_api.dart';
 import 'package:base_app/data/session/session_manager.dart';
-import 'dart:developer' as dev;
+
+// 👇 NUEVO: modos escalables (3,4,quinta)
+import 'package:base_app/presentation/screens/dashboard/logic/game_mode.dart';
 
 /// Provider de suscripción usando Google Play Billing (in_app_purchase)
 class SubscriptionProvider extends ChangeNotifier {
@@ -26,6 +31,7 @@ class SubscriptionProvider extends ChangeNotifier {
 
   String _status = 'none'; // active | expired | none | not_authenticated
   String get status => _status;
+
   DateTime? _since;
   DateTime? get since => _since;
 
@@ -36,14 +42,34 @@ class SubscriptionProvider extends ChangeNotifier {
   DateTime? get expiresAt => _expiresAt;
 
   DateTime? _lastFetch;
+
   String? _error;
   String? get error => _error;
 
   bool _activating = false;
   bool get activating => _activating;
 
- int? _maxDigits;
-  int? get maxDigits => _maxDigits;
+  // ==========================================================
+  // ✅ NUEVO: Modo(s) permitidos (esto reemplaza maxDigits)
+  // ==========================================================
+  Set<GameMode> _allowedModes = <GameMode>{};
+  Set<GameMode> get allowedModes => Set.unmodifiable(_allowedModes);
+
+  bool canUse(GameMode mode) => mode.isFreeMode || _allowedModes.contains(mode);
+
+  /// ✅ Compatibilidad con tu app actual:
+  /// - si allowedModes contiene solo 3 → maxDigits = 3
+  /// - si contiene 4 → maxDigits = 4
+  /// - si contiene quinta → maxDigits = 5 (interpretación: "3 opciones")
+  /// Nota: digits2 siempre está permitido (gratis), no afecta maxDigits
+  int? get maxDigits {
+    if (!_isPremium) return null;
+    if (_allowedModes.contains(GameMode.quinta)) return 5;
+    if (_allowedModes.contains(GameMode.digits4)) return 4;
+    if (_allowedModes.contains(GameMode.digits3)) return 3;
+    return null;
+  }
+
   // Usuario al que pertenece el estado de esta instancia del provider
   int? _ownerUserId;
 
@@ -61,8 +87,8 @@ class SubscriptionProvider extends ChangeNotifier {
     'cm_suscripcion',
     'cml_suscripcion',
   };
+
   ProductDetails? _product;
-  // NUEVO: lista completa de productos consultados
   List<ProductDetails> _products = [];
 
   // Getters de compat + múltiples
@@ -75,7 +101,7 @@ class SubscriptionProvider extends ChangeNotifier {
 
   String? priceStringFor(String id) => productById(id)?.price;
 
-  // Evita refresh() superpuestos (causa clásica de parpadeo)
+  // Evita refresh() superpuestos
   bool _refreshing = false;
 
   // ========= Compat alias para no tocar tu app =========
@@ -89,23 +115,18 @@ class SubscriptionProvider extends ChangeNotifier {
 
     final available = await _iap.isAvailable();
     if (!available) {
-      dev.log(
-        'Billing no disponible (¿Play Store instalada / app desde Play? )',
-      );
+      dev.log('Billing no disponible (¿Play Store instalada / app desde Play? )');
       _billingConfigured = false;
       return;
     }
 
-    // Suscripción al stream de compras
     _purchaseSub ??= _iap.purchaseStream.listen(
       _onPurchaseUpdates,
       onError: (e) => dev.log('purchaseStream error: $e'),
       onDone: () => dev.log('purchaseStream done'),
     );
 
-    // Cargar catálogo
     await _queryProduct();
-
     _billingConfigured = true;
   }
 
@@ -118,7 +139,9 @@ class SubscriptionProvider extends ChangeNotifier {
     _autoRenewing = false;
     _lastFetch = null;
     _error = null;
-    _maxDigits = null;
+
+    // 👇 NUEVO
+    _allowedModes = <GameMode>{};
   }
 
   void clear() {
@@ -130,7 +153,6 @@ class SubscriptionProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Parse seguro de ISO8601 a DateTime local
   DateTime? _parseDate(dynamic v) {
     if (v == null) return null;
     try {
@@ -140,37 +162,77 @@ class SubscriptionProvider extends ChangeNotifier {
     }
   }
 
+  // ==========================================================
+  // ✅ Normalizador: backend -> allowedModes
+  // ==========================================================
+  Set<GameMode> _modesFromBackend(Map<String, dynamic> json, bool isPremium) {
+    // digits2 siempre está permitido (gratis para todos)
+    final base = <GameMode>{GameMode.digits2};
+
+    if (!isPremium) return base;
+
+    // 1) Soporte futuro: backend envía allowedModes / allowed_modes como lista
+    final rawAllowed = json['allowedModes'] ?? json['allowed_modes'];
+    if (rawAllowed is List) {
+      final set = <GameMode>{...base};
+      for (final v in rawAllowed) {
+        final s = v.toString().trim().toLowerCase();
+        if (s == '2' || s == 'digits2' || s == '2digits') set.add(GameMode.digits2);
+        if (s == '3' || s == 'digits3' || s == '3digits') set.add(GameMode.digits3);
+        if (s == '4' || s == 'digits4' || s == '4digits') set.add(GameMode.digits4);
+        if (s == 'quinta' || s == '5' || s == 'fifth') set.add(GameMode.quinta);
+      }
+      if (set.length > 1) return set;
+    }
+
+    // 2) Compat actual: backend manda maxDigits/max_digits
+    final rawMaxDigits = json['maxDigits'] ?? json['max_digits'];
+    int? md;
+    if (rawMaxDigits is int) {
+      md = rawMaxDigits;
+    } else if (rawMaxDigits is String) {
+      md = int.tryParse(rawMaxDigits);
+    }
+
+    // ✅ Reglas:
+    // md=3 -> 2 + 3 cifras
+    // md=4 -> 2 + 3 y 4 cifras
+    // md=5 -> 2 + 3, 4 y quinta
+    if (md == 3) return <GameMode>{GameMode.digits2, GameMode.digits3};
+    if (md == 4) return <GameMode>{GameMode.digits2, GameMode.digits3, GameMode.digits4};
+    if (md == 5) return <GameMode>{GameMode.digits2, GameMode.digits3, GameMode.digits4, GameMode.quinta};
+
+    // Fallback: premium pero sin info -> mínimo 2+3 cifras
+    return <GameMode>{GameMode.digits2, GameMode.digits3};
+  }
+
   Future<void> refresh({bool force = false}) async {
-    if (_refreshing) return; // ← evita solapes
+    if (_refreshing) return;
     _refreshing = true;
+
     _loading = true;
     _error = null;
     notifyListeners();
 
     try {
-      // Detectar usuario actual
       final uidDyn = await session.getUserId();
       final uid = uidDyn is int ? uidDyn : int.tryParse('$uidDyn');
 
-      // Si cambió el usuario, resetea el estado a FREE
       if (_ownerUserId != uid) {
         _ownerUserId = uid;
         _reset();
-        _loading = true; // volvemos a marcar loading después del reset
+        _loading = true;
         notifyListeners();
       }
 
-      // Intentar configurar billing (no cambia el estado premium por sí solo)
       try {
         if (!_billingConfigured) {
           await configureBilling();
         }
-        // No hagas restorePurchases() aquí; hazlo bajo demanda (botón Restaurar).
       } catch (e) {
-        dev.log('subs.refresh() restore error: $e');
+        dev.log('subs.refresh() billing error: $e');
       }
 
-      // TTL por usuario
       if (!force &&
           _lastFetch != null &&
           DateTime.now().difference(_lastFetch!) < ttl) {
@@ -182,7 +244,7 @@ class SubscriptionProvider extends ChangeNotifier {
         _reset();
         _status = 'not_authenticated';
         _lastFetch = DateTime.now();
-        return; // el finally apaga loading/refreshing
+        return;
       }
 
       final json = await api.getStatus(token: token);
@@ -194,35 +256,25 @@ class SubscriptionProvider extends ChangeNotifier {
       _isPremium = backendIsPremium;
       _status = backendIsPremium ? 'active' : backendStatus;
 
-      _since = _parseDate(json['since']); // e.g. "2025-08-15T12:00:00Z"
-      _expiresAt = _parseDate(json['expiresAt']); // e.g. "2025-09-15T12:00:00Z"
+      _since = _parseDate(json['since']);
+      _expiresAt = _parseDate(json['expiresAt']);
       _autoRenewing =
           (json['autoRenewing'] == true) || (json['auto_renewing'] == true);
 
-      // 👇 NUEVO: leer maxDigits desde backend
-      final rawMaxDigits = json['maxDigits'] ?? json['max_digits'];
+      // 👇 NUEVO: aquí se decide todo lo “jugable”
+      _allowedModes = _modesFromBackend(
+        (json is Map<String, dynamic>) ? json : <String, dynamic>{},
+        _isPremium,
+      );
 
-      if (rawMaxDigits is int) {
-        _maxDigits = rawMaxDigits;
-      } else if (rawMaxDigits is String) {
-        _maxDigits = int.tryParse(rawMaxDigits);
-      } else {
-        // Fallback: si es premium pero backend no manda nada, asumimos 3
-        _maxDigits = _isPremium ? 3 : null;
-      }
-
-      // Guarda cache local (por si UI lo necesita muy pronto)
       await session.setIsPremium(_isPremium);
-
       _lastFetch = DateTime.now();
-
     } catch (e) {
       _error = e.toString();
       dev.log('subs.refresh() backend error: $_error');
-      // No forzamos _reset() para no “brincar” de PRO a FREE ante un glitch.
     } finally {
       _loading = false;
-      _refreshing = false; // ← libera el candado
+      _refreshing = false;
       notifyListeners();
     }
   }
@@ -232,25 +284,20 @@ class SubscriptionProvider extends ChangeNotifier {
       if (!_billingConfigured) {
         await configureBilling();
         if (!_billingConfigured) {
-          throw Exception(
-            'Google Play Billing no disponible en este dispositivo.',
-          );
+          throw Exception('Google Play Billing no disponible en este dispositivo.');
         }
       }
 
       if (_products.isEmpty) {
         await _queryProduct();
         if (_products.isEmpty) {
-          throw Exception(
-            'Productos no encontrados en Play Console: $_gpProductIds',
-          );
+          throw Exception('Productos no encontrados en Play Console: $_gpProductIds');
         }
       }
 
-      // Si no te pasan productId, usa el primero (compatibilidad)
       final ProductDetails? product =
           (productId != null ? productById(productId) : _product) ??
-          (_products.isNotEmpty ? _products.first : null);
+              (_products.isNotEmpty ? _products.first : null);
 
       if (product == null) {
         throw Exception('Producto no disponible.');
@@ -258,8 +305,7 @@ class SubscriptionProvider extends ChangeNotifier {
 
       final params = PurchaseParam(productDetails: product);
       await _iap.buyNonConsumable(purchaseParam: params);
-
-      return true; // el resultado final llega por _onPurchaseUpdates
+      return true;
     } catch (e) {
       dev.log('buyPro() error: $e');
       return false;
@@ -275,7 +321,6 @@ class SubscriptionProvider extends ChangeNotifier {
     }
   }
 
-  /// Cancela desde tu backend (si tienes endpoint para anular / marcar no-PRO).
   Future<bool> cancel() async {
     if (_loading) return false;
 
@@ -288,6 +333,7 @@ class SubscriptionProvider extends ChangeNotifier {
       if (token == null || token.isEmpty) {
         _status = 'not_authenticated';
         _isPremium = false;
+        _allowedModes = <GameMode>{};
         return false;
       }
 
@@ -318,7 +364,6 @@ class SubscriptionProvider extends ChangeNotifier {
         _product = null;
         dev.log('queryProduct: no se encontraron $_gpProductIds');
       } else {
-        // Mantén compatibilidad: el “producto por defecto” será el primero
         _product = _products.first;
         dev.log('queryProduct OK: ${_products.map((p) => p.id).toList()}');
       }
@@ -353,7 +398,6 @@ class SubscriptionProvider extends ChangeNotifier {
             dev.log('syncPurchase error: $e');
           } finally {
             await _complete(p);
-            // Breve espera por propagación en backend (ajústalo si quieres)
             await Future.delayed(const Duration(seconds: 1));
             await refresh(force: true);
             _activating = false;
@@ -374,7 +418,7 @@ class SubscriptionProvider extends ChangeNotifier {
 
   Future<void> _complete(PurchaseDetails purchase) async {
     if (purchase.pendingCompletePurchase) {
-      await _iap.completePurchase(purchase); // acknowledge/finish
+      await _iap.completePurchase(purchase);
     }
   }
 

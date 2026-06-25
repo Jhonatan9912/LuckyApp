@@ -84,7 +84,7 @@ class _UserDetailSheetState extends State<UserDetailSheet> {
                     children: [
                       const Icon(
                         Icons.person_search_outlined,
-                        color: Colors.deepPurple,
+                        color: const Color(0xFFD4AF37),
                       ),
                       const SizedBox(width: 8),
 
@@ -136,7 +136,7 @@ class _UserDetailSheetState extends State<UserDetailSheet> {
                             children: [
                               const Icon(
                                 Icons.comment_outlined,
-                                color: Colors.deepPurple,
+                                color: const Color(0xFFD4AF37),
                               ),
                               const SizedBox(width: 8),
                               Expanded(
@@ -224,7 +224,7 @@ class _UserInfoCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Icon(Icons.badge_outlined, color: Colors.deepPurple),
+                const Icon(Icons.badge_outlined, color: const Color(0xFFD4AF37)),
                 const SizedBox(width: 8),
                 Text('Usuario', style: Theme.of(context).textTheme.titleSmall),
                 const Spacer(),
@@ -313,7 +313,7 @@ class _BankInfoCard extends StatelessWidget {
               children: [
                 const Icon(
                   Icons.account_balance_outlined,
-                  color: Colors.deepPurple,
+                  color: const Color(0xFFD4AF37),
                 ),
                 const SizedBox(width: 8),
                 Text(
@@ -351,7 +351,7 @@ class _BreakdownHeader extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         child: Row(
           children: [
-            const Icon(Icons.receipt_long_outlined, color: Colors.deepPurple),
+            const Icon(Icons.receipt_long_outlined, color: const Color(0xFFD4AF37)),
             const SizedBox(width: 8),
             Expanded(
               child: Wrap(

@@ -37,22 +37,26 @@ class DashboardAppBar extends StatelessWidget implements PreferredSizeWidget {
         duration: const Duration(milliseconds: 800),
         builder: (context, value, child) => Opacity(
           opacity: value,
-          child: Transform.scale(
-            scale: value,
+          child: ShaderMask(
+            shaderCallback: (bounds) => const LinearGradient(
+              colors: [Color(0xFFD4AF37), Color(0xFFF5C842), Color(0xFFD4AF37)],
+            ).createShader(bounds),
             child: Text(
               'Sorteo en Vivo',
               style: GoogleFonts.montserrat(
                 fontWeight: FontWeight.bold,
-                color: Colors.orange[800],
+                color: Colors.white,
+                letterSpacing: 0.5,
               ),
             ),
           ),
         ),
       ),
-      backgroundColor: Colors.white,
-      elevation: 1,
+      backgroundColor: const Color(0xFF0A0A0A),
+      elevation: 0,
       centerTitle: true,
-      iconTheme: const IconThemeData(color: Colors.deepPurple),
+      iconTheme: const IconThemeData(color: Color(0xFFD4AF37)),
+      actionsIconTheme: const IconThemeData(color: Color(0xFFD4AF37)),
       actions: [
         if (isLoggedIn) ...[
           NotificationIcon(

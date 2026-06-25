@@ -1,62 +1,55 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:base_app/presentation/providers/subscription_provider.dart';
 
 class SelectionTabs extends StatelessWidget {
   final int index;
   final ValueChanged<int> onChanged;
-  const SelectionTabs({super.key, required this.index, required this.onChanged});
+  final bool historyUnlocked;
+  final VoidCallback? onHistoryLocked;
+
+  const SelectionTabs({
+    super.key,
+    required this.index,
+    required this.onChanged,
+    this.historyUnlocked = true,
+    this.onHistoryLocked,
+  });
 
   @override
   Widget build(BuildContext context) {
-    assert(index >= 0 && index <= 2, 'index debe ser 0, 1 o 2');
-
     return Container(
-      height: 36,
+      height: 40,
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.9),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(24),
-        boxShadow: [
+        border: Border.all(color: const Color(0xFFEAD88A), width: 1),
+        boxShadow: const [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+            color: Color(0x22D4AF37),
+            blurRadius: 8,
+            offset: Offset(0, 2),
           ),
         ],
       ),
-      child: Selector<SubscriptionProvider, bool>(
-        selector: (_, p) => p.isPremium,
-        builder: (context, isPremium, _) {
-          return Row(
-            children: [
-              _TabButton(
-                label: 'Juego Actual',
-                active: index == 0,
-                onTap: () => onChanged(0),
-              ),
-              _TabButton(
-                label: isPremium ? 'Historial' : 'Historial 🔒',
-                active: index == 1,
-                onTap: () {
-                  if (isPremium) {
-                    onChanged(1);
-                  } else {
-                    // paywall sin cambiar de pestaña
-                    Navigator.pushNamed(context, '/pro');
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Esta sección es solo para PRO')),
-                    );
-                  }
-                },
-              ),
-              _TabButton(
-                label: 'Mis referidos',
-                active: index == 2,
-                onTap: () => onChanged(2),
-              ),
-            ],
-          );
-        },
+      child: Row(
+        children: [
+          _TabButton(
+            label: 'Juego',
+            active: index == 0,
+            onTap: () => onChanged(0),
+          ),
+          _TabButton(
+            label: historyUnlocked ? 'Historial' : 'Historial 🔒',
+            active: index == 1,
+            onTap: historyUnlocked
+                ? () => onChanged(1)
+                : () => onHistoryLocked?.call(),
+          ),
+          _TabButton(
+            label: 'Referidos',
+            active: index == 2,
+            onTap: () => onChanged(2),
+          ),
+        ],
       ),
     );
   }
@@ -66,35 +59,42 @@ class _TabButton extends StatelessWidget {
   final String label;
   final bool active;
   final VoidCallback onTap;
-  const _TabButton({
-    required this.label,
-    required this.active,
-    required this.onTap,
-  });
+  const _TabButton({required this.label, required this.active, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final selectedBg = const Color(0xFF7C4DFF).withValues(alpha: 0.15);
-    final selectedFg = const Color(0xFF7C4DFF);
-
     return Expanded(
       child: GestureDetector(
         onTap: onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
+          duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
+          margin: const EdgeInsets.all(3),
           alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: active ? selectedBg : Colors.transparent,
-            borderRadius: BorderRadius.circular(24),
-          ),
+          decoration: active
+              ? BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFD4AF37), Color(0xFFC09000)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x44D4AF37),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                )
+              : null,
           child: Text(
             label,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontWeight: FontWeight.w700,
-              fontSize: 14,
-              color: active ? selectedFg : Colors.black54,
+              fontSize: 13,
+              color: active ? const Color(0xFF0A0A0A) : const Color(0xFF8B7030),
             ),
           ),
         ),

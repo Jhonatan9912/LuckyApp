@@ -10,29 +10,30 @@ class PlayButton extends StatelessWidget {
     return GestureDetector(
       onTap: onPressed,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 16),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(30),
           gradient: const LinearGradient(
-            colors: [Color(0xFFFF4B2B), Color(0xFFFF416C)], // Rojo fucsia
+            colors: [Color(0xFFD4AF37), Color(0xFFF5C842), Color(0xFFD4AF37)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
-          boxShadow: [
+          boxShadow: const [
             BoxShadow(
-              color: Colors.black.withAlpha((0.2 * 255).toInt()), // ✅ corregido
-              blurRadius: 6,
-              offset: const Offset(0, 3),
+              color: Color(0x66D4AF37),
+              blurRadius: 18,
+              spreadRadius: 1,
+              offset: Offset(0, 4),
             ),
           ],
         ),
-        child: Text(
+        child: const Text(
           'JUGAR',
-          style: const TextStyle(
-            color: Colors.yellow,
+          style: TextStyle(
+            color: Color(0xFF0A0A0A),
             fontSize: 18,
             fontWeight: FontWeight.w900,
-            letterSpacing: 1.2,
+            letterSpacing: 2.0,
           ),
         ),
       ),

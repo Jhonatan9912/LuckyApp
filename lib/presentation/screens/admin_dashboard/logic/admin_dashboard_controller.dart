@@ -693,91 +693,104 @@ Future<int> countAllPlayers({
     }
   }
 
-  Future<List<String>> updatePlayerNumbers({
-    required int userId,
-    required int gameId,
-    required List<String> numbers,
-  }) async {
-    final normalized = numbers.map((n) => n.trim().padLeft(3, '0')).toList();
+Future<List<String>> updatePlayerNumbers({
+  required int userId,
+  required int gameId,
+  required List<String> numbers,
+  int? digits, // 👈 ahora OPCIONAL
+}) async {
+  // Inferimos cantidad de dígitos si no viene:
+  // - si hay números, usamos la longitud del primero
+  // - si no, por defecto 3
+  final d = digits ?? (
+    numbers.isNotEmpty
+        ? numbers.first.trim().length
+        : 3
+  );
 
-    final token = await SessionManager().getToken();
-    final uri = Uri.parse(
-      '$baseUrl/api/admin/players/$userId/games/$gameId/numbers',
-    );
+  // Normalizamos según cantidad de dígitos
+  final normalized = numbers
+      .map((n) => n.trim().padLeft(d, '0'))
+      .toList();
 
-    final res = await http
-        .patch(
-          uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-          body: json.encode({'numbers': normalized}),
-        )
-        .timeout(const Duration(seconds: 15));
+  final token = await SessionManager().getToken();
+  final uri = Uri.parse(
+    '$baseUrl/api/admin/players/$userId/games/$gameId/numbers',
+  );
 
-    // 423: juego bloqueado por fecha/hora
-    if (res.statusCode == 423) {
-      String msg;
-      try {
-        final Map<String, dynamic> body =
-            json.decode(res.body) as Map<String, dynamic>;
-        msg =
-            (body['error'] ??
-                    body['message'] ??
-                    body['detail'] ??
-                    'El juego ya comenzó o está cerrado; no se pueden editar balotas.')
-                .toString();
-      } catch (_) {
-        msg =
-            'El juego ya comenzó o está cerrado; no se pueden editar balotas.';
-      }
-      throw Exception(msg);
+  final res = await http
+      .patch(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: json.encode({'numbers': normalized}),
+      )
+      .timeout(const Duration(seconds: 15));
+
+  // 423: juego bloqueado por fecha/hora
+  if (res.statusCode == 423) {
+    String msg;
+    try {
+      final Map<String, dynamic> body =
+          json.decode(res.body) as Map<String, dynamic>;
+      msg = (body['error'] ??
+              body['message'] ??
+              body['detail'] ??
+              'El juego ya comenzó o está cerrado; no se pueden editar balotas.')
+          .toString();
+    } catch (_) {
+      msg =
+          'El juego ya comenzó o está cerrado; no se pueden editar balotas.';
     }
-
-    // 409: conflicto con números ya tomados por OTRO jugador
-    if (res.statusCode == 409) {
-      try {
-        final Map<String, dynamic> body =
-            json.decode(res.body) as Map<String, dynamic>;
-        final List conflict = (body['conflict'] as List?) ?? const [];
-        final txt = conflict
-            .map((e) => e.toString().padLeft(3, '0'))
-            .join(', ');
-        throw Exception(
-          'Los siguientes números ya están reservados en este juego: $txt',
-        );
-      } catch (_) {
-        throw Exception(
-          'Algunas balotas ya están reservadas por otro jugador.',
-        );
-      }
-    }
-
-    // 4xx/5xx: toma sólo el mensaje humano del backend
-    if (res.statusCode >= 400) {
-      String msg;
-      try {
-        final Map<String, dynamic> body =
-            json.decode(res.body) as Map<String, dynamic>;
-        final List errs = (body['errors'] as List?) ?? const [];
-        msg =
-            (body['error'] ??
-                    body['message'] ??
-                    body['detail'] ??
-                    (errs.isNotEmpty ? errs.join('\n') : null))
-                ?.toString() ??
-            'Error ${res.statusCode} al actualizar balotas.';
-      } catch (_) {
-        msg = 'Error ${res.statusCode} al actualizar balotas.';
-      }
-      throw Exception(msg);
-    }
-
-    // OK
-    final Map<String, dynamic> body =
-        json.decode(res.body) as Map<String, dynamic>;
-    final List returned = (body['numbers'] as List?) ?? const [];
-    return returned.map((e) => e.toString().padLeft(3, '0')).toList();
+    throw Exception(msg);
   }
+
+  // 409: conflicto con números ya tomados por OTRO jugador
+  if (res.statusCode == 409) {
+    try {
+      final Map<String, dynamic> body =
+          json.decode(res.body) as Map<String, dynamic>;
+      final List conflict = (body['conflict'] as List?) ?? const [];
+      final txt = conflict
+          .map((e) => e.toString().padLeft(d, '0')) // 👈 usamos d
+          .join(', ');
+      throw Exception(
+        'Los siguientes números ya están reservados en este juego: $txt',
+      );
+    } catch (_) {
+      throw Exception(
+        'Algunas balotas ya están reservadas por otro jugador.',
+      );
+    }
+  }
+
+  // 4xx/5xx: toma sólo el mensaje humano del backend
+  if (res.statusCode >= 400) {
+    String msg;
+    try {
+      final Map<String, dynamic> body =
+          json.decode(res.body) as Map<String, dynamic>;
+      final List errs = (body['errors'] as List?) ?? const [];
+      msg = (body['error'] ??
+              body['message'] ??
+              body['detail'] ??
+              (errs.isNotEmpty ? errs.join('\n') : null))
+          ?.toString() ??
+          'Error ${res.statusCode} al actualizar balotas.';
+    } catch (_) {
+      msg = 'Error ${res.statusCode} al actualizar balotas.';
+    }
+    throw Exception(msg);
+  }
+
+  // OK
+  final Map<String, dynamic> body =
+      json.decode(res.body) as Map<String, dynamic>;
+  final List returned = (body['numbers'] as List?) ?? const [];
+  return returned
+      .map((e) => e.toString().padLeft(d, '0')) // 👈 aquí también d
+      .toList();
+}
 }

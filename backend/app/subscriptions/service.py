@@ -267,40 +267,49 @@ def _pick_line_item(line_items: list[dict]) -> dict:
 def _price_from_catalog(product_id: str, default_currency: str = "COP") -> tuple[int, str]:
     """
     Precios por defecto para cuando NO tenemos info real de Google.
+    (COP en micros: 1 COP = 1_000_000 micros)
     """
     CATALOG = {
         # 60.000 COP → 60_000_000_000 micros
         "cm_suscripcion":  (60_000_000_000, "COP"),
         # 20.000 COP → 20_000_000_000 micros
         "cml_suscripcion": (20_000_000_000, "COP"),
+        # 100.000 COP → 100_000_000_000 micros  ✅ NUEVO ULTRA
+        "cmu_suscripcion": (100_000_000_000, "COP"),
     }
+
     pid = (product_id or "").strip()
+
     # match exacto
     if pid in CATALOG:
         return CATALOG[pid]
-    # match por prefijo (ej: "cm_suscripcion:plan_mensual")
+
+    # match por prefijo (por si llega algo como "cmu_suscripcion:ultra-mensual")
     for k, v in CATALOG.items():
         if pid.startswith(k):
             return v
+
     return (0, default_currency)
+
 
 def _infer_plan_from_product_id(product_id: str) -> tuple[str, Optional[int]]:
     """
-    Devuelve (plan, max_digits) según el product_id:
-    - cml_suscripcion  => 20k => solo 3 cifras ("basic", 3)
-    - cm_suscripcion   => 60k => 3 y 4 cifras ("full", 4)
+    Devuelve (plan, max_digits) según el product_id.
     """
     pid = (product_id or "").strip()
 
+    # ✅ NUEVO: Ultra 100k → hasta 5 cifras
+    if pid.startswith("cmu_suscripcion"):
+        return "ultra", 5
+
+    # 60.000: PRO completa, hasta 4 cifras
     if pid.startswith("cm_suscripcion"):
-        # 60.000: PRO completa, hasta 4 cifras
         return "full", 4
 
+    # 20.000: solo juego de 3 cifras
     if pid.startswith("cml_suscripcion"):
-        # 20.000: solo juego de 3 cifras
         return "basic", 3
 
-    # Desconocido / sin producto asociado
     return "none", None
 
 def get_status(user_id: Optional[int]) -> SubscriptionStatus:
@@ -451,7 +460,8 @@ def manual_grant_pro(
     pid = (product_id or "").strip()
 
     # Por ahora solo permitimos estos 2 productos manuales
-    allowed_products = {"cm_suscripcion", "cml_suscripcion"}
+    allowed_products = {"cm_suscripcion", "cml_suscripcion", "cmu_suscripcion"}
+
     if pid not in allowed_products:
         raise ValueError(f"Producto no permitido para activación manual: {pid}")
 
@@ -898,9 +908,11 @@ def backfill_commissions(limit: int = 1000) -> Dict[str, Any]:
     DEFAULT_PRICE_MICROS = 20_000_000_000  # fallback mínimo
 
     PRICE_BY_PRODUCT = {
-        "cm_suscripcion":  60_000_000_000,  # 60.000
-        "cml_suscripcion": 20_000_000_000,  # 20.000
+        "cm_suscripcion":  60_000_000_000,
+        "cml_suscripcion": 20_000_000_000,
+        "cmu_suscripcion": 100_000_000_000,  # ✅ ULTRA
     }
+
 
 
     checked = 0

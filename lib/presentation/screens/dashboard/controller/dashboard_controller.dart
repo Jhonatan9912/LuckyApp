@@ -6,6 +6,7 @@ import 'package:base_app/data/api/games_api.dart';
 import 'package:base_app/data/session/session_manager.dart';
 import 'package:base_app/domain/auth/auth_repository.dart';
 import 'dart:math';
+import 'package:base_app/presentation/screens/dashboard/logic/game_mode.dart';
 
 /// Estados/Resultados para operaciones clave del tablero
 enum GenerateState { ok, error }
@@ -65,33 +66,135 @@ class DashboardController extends ChangeNotifier {
   String? _authToken;
   String? referralCode; // <- se lee desde el UI (_ctrl.referralCode)
   final int _devUserId;
+  // Alias genéricos de la última reserva (modo actual)
   int? _lastReservedGameId;
-  List<int>? _lastReservedNumbers; // números de la última reserva confirmada
-  bool _releasedPrevious =
-      false; // en este ciclo de add() se liberó una reserva previa
+  List<int>? _lastReservedNumbers;
+  bool _releasedPrevious = false;
+
+  // ======= Reservas por tipo de juego =======
+  int? _lastReservedGameId2;
+  List<int>? _lastReservedNumbers2;
+  bool _releasedPrevious2 = false;
+
+  int? _lastReservedGameId3;
+  List<int>? _lastReservedNumbers3;
+  bool _releasedPrevious3 = false;
+
+  int? _lastReservedGameId4;
+  List<int>? _lastReservedNumbers4;
+  bool _releasedPrevious4 = false;
+
+int? _lastReservedGameId5;       // quinta
+List<int>? _lastReservedNumbers5; // quinta
+bool _releasedPrevious5 = false;
+
+void _setCurrentLastReservedGameId(int? v) {
+  if (_mode == GameMode.digits2) _lastReservedGameId2 = v;
+  else if (_mode == GameMode.digits3) _lastReservedGameId3 = v;
+  else if (_mode == GameMode.digits4) _lastReservedGameId4 = v;
+  else if (_mode == GameMode.quinta) _lastReservedGameId5 = v;
+}
+
+void _setCurrentLastReservedNumbers(List<int>? v) {
+  if (_mode == GameMode.digits2) _lastReservedNumbers2 = v;
+  else if (_mode == GameMode.digits3) _lastReservedNumbers3 = v;
+  else if (_mode == GameMode.digits4) _lastReservedNumbers4 = v;
+  else if (_mode == GameMode.quinta) _lastReservedNumbers5 = v;
+}
+
+void _setCurrentReleasedPrevious(bool v) {
+  if (_mode == GameMode.digits2) _releasedPrevious2 = v;
+  else if (_mode == GameMode.digits3) _releasedPrevious3 = v;
+  else if (_mode == GameMode.digits4) _releasedPrevious4 = v;
+  else if (_mode == GameMode.quinta) _releasedPrevious5 = v;
+}
+
   int? _lastClosedGameId; // id del último juego que quedó cerrado
   int? get lastClosedGameId => _lastClosedGameId;
   int? _userId;
   int? get userId => _userId;
   bool _isPremium = false;
   bool get isPremium => _isPremium;
+// ✅ Máximo de dígitos permitidos por plan (3/4/5)
+int _maxDigitsAllowed = 3;
+int get maxDigitsAllowed => _maxDigitsAllowed;
 
-  // ======= Configuración del juego (3 o 4 cifras) =======
-  int _digitsPerBall = 3;          // valor por defecto: 3 cifras
+bool get canPlay2 => true; // siempre gratis
+bool get canPlay3 => true;
+bool get canPlay4 => _maxDigitsAllowed >= 4;
+bool get canPlay5 => _maxDigitsAllowed >= 5;
 
-  int get digitsPerBall => _digitsPerBall;
+  // ======= Configuración del juego (ESCALABLE) =======
+  GameMode _mode = GameMode.digits2; // por defecto: 2 cifras (gratis)
 
-  void setDigitsPerBall(int value) {
-    // Solo permitimos 3 o 4 cifras
-    if (value != 3 && value != 4) return;
+  // Cache por modo (escala a 5ta, etc.)
+  final Map<GameMode, int?> _gameIdByMode = {
+    GameMode.digits2: null,
+    GameMode.digits3: null,
+    GameMode.digits4: null,
+    GameMode.quinta: null,
+  };
 
-    // Si no cambia, no notifiques
-    if (_digitsPerBall == value) return;
+final Map<GameMode, List<int>> _numbersByMode = {
+  GameMode.digits2: List.filled(5, 0),
+  GameMode.digits3: List.filled(5, 0),
+  GameMode.digits4: List.filled(5, 0),
+  GameMode.quinta: List.filled(5, 0),
+};
 
-    _digitsPerBall = value;
-    notifyListeners();
+
+  int get digitsPerBall => (_mode == GameMode.quinta) ? 5 : _mode.baseDigits;
+
+
+  GameMode get mode => _mode;
+
+
+void setGameMode(GameMode value) {
+  if (_mode == value) return;
+
+  _mode = value;
+
+  // 🔹 1) Limpiar todo lo visual / de reserva del modo anterior
+  _setReserving(false);
+  _displayedBalls.clear();
+  _setShowActionIcons(false);
+  _setHasAdded(false);
+  _setHasAddedFinal(false);
+  _setShowFinalButtons(false);
+  _setCurrentBigBall(null);
+  _setHasPlayedOnce(false);
+
+  // 🔹 2) Cargar cache del modo correspondiente
+  _gameId = _gameIdByMode[_mode];
+
+  final cachedNums = _numbersByMode[_mode] ?? List.filled(5, 0);
+  _setNumbers(List<int>.from(cachedNums));
+
+  // 🔹 3) Si ya había selección real, mostrarla
+  if (_gameId != null && cachedNums.any((n) => n != 0)) {
+    _displayedBalls.addAll(cachedNums);
+    _setHasAdded(true);
+    _setHasAddedFinal(true);
+    _setShowActionIcons(true);
+    _setShowFinalButtons(true);
+    _setHasPlayedOnce(true);
+  }
+}
+
+void setDigitsPerBall(int value) {
+  if (value == 2) return setGameMode(GameMode.digits2);
+  if (value == 3) return setGameMode(GameMode.digits3);
+
+  if (value == 4) {
+    if (!canPlay4) return;
+    return setGameMode(GameMode.digits4);
   }
 
+  if (value == 5) {
+    if (!canPlay5) return;
+    return setGameMode(GameMode.quinta);
+  }
+}
 
   // ======= Getters públicos =======
   List<int> get numbers => List.unmodifiable(_numbers);
@@ -150,8 +253,22 @@ class DashboardController extends ChangeNotifier {
     }
   }
 
-String _fmtNums(List<int> xs) =>
-    xs.map((e) => e.toString().padLeft(_digitsPerBall, '0')).join('-');
+String _fmtNums(List<int> xs) {
+  String fmtOne(int n) {
+    final s = n.toString().padLeft(digitsPerBall, '0');
+
+    // Quinta: 5 dígitos visuales como 1234-5 (solo UI)
+    if (_mode == GameMode.quinta) {
+      return '${s.substring(0, 4)}-${s.substring(4)}';
+    }
+
+    // 3 o 4 dígitos normal
+    return s;
+  }
+
+  return xs.map(fmtOne).join(' · ');
+}
+
 
 
   void _setAnimating(bool v) {
@@ -169,10 +286,11 @@ String _fmtNums(List<int> xs) =>
     notifyListeners();
   }
 
-  void _setNumbers(List<int> list) {
-    _numbers = list;
-    notifyListeners();
-  }
+void _setNumbers(List<int> list) {
+  _numbers = List<int>.from(list); // ✅ copia defensiva
+  notifyListeners();
+}
+
 
   void _setCurrentBigBall(int? v) {
     _currentBigBall = v;
@@ -209,45 +327,76 @@ String _fmtNums(List<int> xs) =>
     notifyListeners();
   }
 
-  // ======= Sesión =======
-  Future<void> initSession() async {
-    final token = await _session.getToken();
-    if (token == null || token.isEmpty) {
-      _authToken = null;
-      _userId = null;
-      _isPremium = false; // 👈 sin sesión, no PRO
-      _setSessionReady(false);
-      notifyListeners();
-      return;
-    }
+// ======= Sesión =======
+Future<void> initSession() async {
+  final token = await _session.getToken();
 
-    _authToken = token;
-    final dynamic uid = await _session.getUserId();
-    if (uid is int) {
-      _userId = uid;
-    } else if (uid is String) {
-      _userId = int.tryParse(uid);
-    } else {
-      _userId = null;
-    }
+  // 🔴 Sin token: limpiar todo y dejar tablero vacío
+  if (token == null || token.isEmpty) {
+    _authToken = null;
+    _userId = null;
+    _isPremium = false;
+    _history = [];
+    _lastReservedGameId = null;
+    _lastReservedNumbers = null;
+    _lastClosedGameId = null;
+    _shownNotifIds.clear();
 
-    // 👇 NUEVO: sincroniza PRO de la sesión (persistido por tu backend tras validar compra)
-    final fromSession = await _session.getIsPremium() == true;
-    // Solo promociona a PRO si la sesión lo dice; no lo bajes aquí.
-    if (fromSession) {
-      _isPremium = true;
-    }
-    // _isPremium se seguirá actualizando por applyPremiumFromStore()
+    // 👇 limpiar caches por tipo de juego
+    _gameIdByMode[GameMode.digits2] = null;
+    _numbersByMode[GameMode.digits2] = List.filled(5, 0);
 
-    _setSessionReady(true);
+    _gameIdByMode[GameMode.digits3] = null;
+    _numbersByMode[GameMode.digits3] = List.filled(5, 0);
+
+    _gameIdByMode[GameMode.digits4] = null;
+    _numbersByMode[GameMode.digits4] = List.filled(5, 0);
+
+    _gameIdByMode[GameMode.quinta] = null;
+    _numbersByMode[GameMode.quinta] = List.filled(5, 0);
+
+    _lastReservedGameId2 = null;
+    _lastReservedNumbers2 = null;
+    _lastReservedGameId3 = null;
+    _lastReservedNumbers3 = null;
+    _lastReservedGameId4 = null;
+    _lastReservedNumbers4 = null;
+
+    resetToInitial();
+    _setSessionReady(false);
     notifyListeners();
-      // 🔴 NUEVO: apenas hay sesión válida, cargo historial y restauro selección
-  unawaited(() async {
-    await loadHistory();           // primero historial (lo usas para saber si el juego ya cerró)
-    await restoreSelectionIfAny(); // luego restaura si la selección sigue vigente
-  }());
-
+    return;
   }
+
+
+  // ✅ Hay sesión
+  _authToken = token;
+
+  final dynamic uid = await _session.getUserId();
+  if (uid is int) {
+    _userId = uid;
+  } else if (uid is String) {
+    _userId = int.tryParse(uid);
+  } else {
+    _userId = null;
+  }
+
+  // PRO guardado en sesión (tu backend lo marca cuando valida la compra)
+  final fromSession = await _session.getIsPremium() == true;
+  _isPremium = fromSession;
+final storedMax = await _session.getMaxDigitsAllowed();
+_maxDigitsAllowed = storedMax ?? (_isPremium ? 4 : 3); 
+// 👆 fallback: si es premium pero no sabemos cuál, asumimos 4 (cm)
+
+  _setSessionReady(true);
+  notifyListeners();
+
+  // 👇 IMPORTANTE:
+  // 1) Traer historial para saber qué juegos están cerrados
+  // 2) Restaurar la selección SOLO si el juego sigue abierto
+  await loadHistory();
+  await restoreSelectionIfAny();
+}
 
   Future<void> loadReferralCode() async {
     // ✅ opción 2: factoriza la condición
@@ -271,85 +420,105 @@ String _fmtNums(List<int> xs) =>
     notifyListeners();
   }
 
-  Future<void> restoreSelectionIfAny() async {
-    // requiere sesión válida
-    if (_authToken == null || _authToken!.isEmpty) return;
+Future<void> restoreSelectionIfAny() async {
+    final modeSnapshot = _mode;
+  final digitsSnapshot = (modeSnapshot == GameMode.quinta) ? 5 : modeSnapshot.baseDigits;
+  // requiere sesión válida
+  if (_authToken == null || _authToken!.isEmpty) return;
 
-        final res = await _gamesApi.getMySelection(
-      token: _authToken,
-      digits: _digitsPerBall,
-    );
+  final res = await _gamesApi.getMySelection(
+    token: _authToken,
+    digits: digitsSnapshot,
 
-      if (res['ok'] != true) {
+  );
+
+  if (res['ok'] != true) {
     // No hay selección para este tipo de juego → deja todo en estado inicial
     resetToInitial();
     return;
   }
 
+  final data = (res['data'] as Map<String, dynamic>? ?? {});
+  final gid = (data['game_id'] as num?)?.toInt();
+  final numsDyn = (data['numbers'] as List?) ?? const [];
+  final nums = numsDyn.map((e) => int.parse(e.toString())).toList();
 
-    final data = (res['data'] as Map<String, dynamic>? ?? {});
-    final gid = (data['game_id'] as num?)?.toInt();
-    final numsDyn = (data['numbers'] as List?) ?? const [];
-    final nums = numsDyn.map((e) => int.parse(e.toString())).toList();
-
-      if (gid == null || nums.length != 5) {
+  if (gid == null || nums.length != 5) {
     // Datos incompletos → tratar como "sin selección" para este tipo
     resetToInitial();
     return;
   }
 
+  // ⛔ No restaurar si ese juego ya cerró (según el historial ya cargado)
+  final closed = _history.any((m) {
+    final mid = (m['game_id'] as num?)?.toInt();
+    if (mid != gid) return false;
+    final status =
+        (m['status'] ?? m['result'] ?? '').toString().toLowerCase();
+    final hasWinner =
+        m['winning_number'] != null ||
+        status.contains('closed') ||
+        status.contains('completed') ||
+        status.contains('perdido') ||
+        status.contains('ganado');
+    return hasWinner;
+  });
 
-    // ⛔ No restaurar si ese juego ya cerró (según el historial ya cargado)
-    final closed = _history.any((m) {
-      final mid = (m['game_id'] as num?)?.toInt();
-      if (mid != gid) return false;
-      final status = (m['status'] ?? m['result'] ?? '')
-          .toString()
-          .toLowerCase();
-      final hasWinner =
-          m['winning_number'] != null ||
-          status.contains('closed') ||
-          status.contains('completed') ||
-          status.contains('perdido') ||
-          status.contains('ganado');
-      return hasWinner;
-    });
+  if (closed) {
+    _gameId = null;
+    _lastReservedGameId = null;
+    _lastReservedNumbers = null;
+    _displayedBalls.clear();
 
-    if (closed) {
-      _gameId = null;
-      _lastReservedGameId = null;
-      _lastReservedNumbers = null;
-      _displayedBalls.clear();
-      _setNumbers(List.filled(5, 0));
-      _setHasAdded(false);
-      _setHasAddedFinal(false);
-      _setShowFinalButtons(false);
-      _setHasPlayedOnce(false);
-      _setShowActionIcons(false);
-      notifyListeners();
-      return;
-    }
+    // 👇 Juego cerrado y sin selección vigente → 000
+    _setNumbers(List.filled(5, 0));
 
-    // ✅ Si el juego sigue abierto, ahora sí restaura la selección
-    _gameId = gid;
-    _lastReservedGameId = gid;
-    _lastReservedNumbers = List<int>.from(nums);
-
-    final uidUsed = (data['user_id_used'] as num?)?.toInt();
-    _lastReservedUserId = uidUsed ?? _lastReservedUserId;
-
-    _setNumbers(List<int>.from(nums));
-    _displayedBalls
-      ..clear()
-      ..addAll(nums);
-
-    _setHasAdded(true);
-    _setHasAddedFinal(true);
-    _setShowActionIcons(true);
-    _setShowFinalButtons(true);
-    _setHasPlayedOnce(true);
+    _setHasAdded(false);
+    _setHasAddedFinal(false);
+    _setShowFinalButtons(false);
+    _setHasPlayedOnce(false);
+    _setShowActionIcons(false);
     notifyListeners();
+    return;
   }
+
+  // ✅ Si el juego sigue abierto, ahora sí restaura la selección
+  _gameId = gid;
+  _lastReservedGameId = gid;
+  _lastReservedNumbers = List<int>.from(nums);
+  // Guardar la reserva por tipo de juego (cache + variables mode-específicas)
+  _gameIdByMode[modeSnapshot] = gid;
+  _numbersByMode[modeSnapshot] = List<int>.from(nums);
+  if (modeSnapshot == GameMode.digits2) {
+    _lastReservedGameId2 = gid;
+    _lastReservedNumbers2 = List<int>.from(nums);
+  } else if (modeSnapshot == GameMode.digits3) {
+    _lastReservedGameId3 = gid;
+    _lastReservedNumbers3 = List<int>.from(nums);
+  } else if (modeSnapshot == GameMode.digits4) {
+    _lastReservedGameId4 = gid;
+    _lastReservedNumbers4 = List<int>.from(nums);
+  } else if (modeSnapshot == GameMode.quinta) {
+    _lastReservedGameId5 = gid;
+    _lastReservedNumbers5 = List<int>.from(nums);
+  }
+
+
+  final uidUsed = (data['user_id_used'] as num?)?.toInt();
+  _lastReservedUserId = uidUsed ?? _lastReservedUserId;
+
+  _setNumbers(List<int>.from(nums));
+  _displayedBalls
+    ..clear()
+    ..addAll(nums);
+
+  _setHasAdded(true);
+  _setHasAddedFinal(true);
+  _setShowActionIcons(true);
+  _setShowFinalButtons(true);
+  _setHasPlayedOnce(true);
+  notifyListeners();
+}
 
   Future<void> logout() async {
     try {
@@ -370,6 +539,25 @@ String _fmtNums(List<int> xs) =>
     _lastReservedNumbers = null;
     _lastReservedUserId = null;
     _lastClosedGameId = null;
+    // limpiar también reservas por modo
+    _gameIdByMode[GameMode.digits2] = null;
+    _numbersByMode[GameMode.digits2] = List.filled(5, 0);
+
+    _gameIdByMode[GameMode.digits3] = null;
+    _numbersByMode[GameMode.digits3] = List.filled(5, 0);
+
+    _gameIdByMode[GameMode.digits4] = null;
+    _numbersByMode[GameMode.digits4] = List.filled(5, 0);
+
+    _gameIdByMode[GameMode.quinta] = null;
+    _numbersByMode[GameMode.quinta] = List.filled(5, 0);
+
+    _lastReservedGameId2 = null;
+    _lastReservedNumbers2 = null;
+    _lastReservedGameId3 = null;
+    _lastReservedNumbers3 = null;
+    _lastReservedGameId4 = null;
+    _lastReservedNumbers4 = null;
 
     _notifications = [];
     _unreadCount = 0;
@@ -382,175 +570,282 @@ String _fmtNums(List<int> xs) =>
     notifyListeners();
   }
 
-  Future<GenerateState> generateAnimatedNumbers({
-    int? avoidGameId, // <- NUEVO: evita generar con este id
-    int attempts = 3, // <- NUEVO: reintentos para conseguir id distinto
-  }) async {
-    if (_animating || _saving || _reserving) return GenerateState.error;
+Future<GenerateState> generateAnimatedNumbers({
+  int? avoidGameId,
+  int attempts = 3,
+  bool ignoreExistingSelection = false, // 👈 NUEVO
+}) async {
+  if (_animating || _saving || _reserving) return GenerateState.error;
 
-    // 👇 PRE-CHEQUEO: si ya hay selección actual en el juego abierto, muéstrala y no animes
-    final String? tokenToUse =
-        (_authToken != null && !_isJwtExpired(_authToken!)) ? _authToken : null;
-    final int? xUserIdToUse = (tokenToUse == null) ? _devUserId : null;
+  final String? tokenToUse =
+      (_authToken != null && !_isJwtExpired(_authToken!))
+          ? _authToken
+          : null;
+  final int? xUserIdToUse = (tokenToUse == null) ? _devUserId : null;
 
-    if (tokenToUse != null) {
-      try {
-                final pre = await _gamesApi.getMySelection(
-          token: tokenToUse,
-          digits: _digitsPerBall,
-        );
-
-        if (pre['ok'] == true) {
-          final data = (pre['data'] as Map<String, dynamic>? ?? {});
-          final gid = (data['game_id'] as num?)?.toInt();
-          final nums = ((data['numbers'] as List?) ?? const [])
-              .map((e) => int.parse(e.toString()))
-              .toList();
-
-          if (gid != null && nums.length == 5) {
-            _gameId = gid;
-            _lastReservedGameId = gid;
-            _lastReservedNumbers = List<int>.from(nums);
-            _setNumbers(List<int>.from(nums));
-            _displayedBalls
-              ..clear()
-              ..addAll(nums);
-
-            _setAnimating(false);
-            _setShowFinalButtons(true);
-            _setHasPlayedOnce(true);
-            _setHasAdded(true);
-            _setHasAddedFinal(true);
-            _setShowActionIcons(true);
-            return GenerateState.ok; // ← ya está “bloqueado” por tener 5
-          }
-        }
-      } catch (_) {
-        // ignora errores de red aquí; seguimos con la generación normal
-      }
-    }
-
-    _setAnimating(true);
-    _setShowFinalButtons(false);
-    _setHasPlayedOnce(true);
-
-    Map<String, dynamic>? data;
-
-    for (var i = 0; i < attempts; i++) {
-      final res = await _gamesApi.generate(
-        token: tokenToUse,
-        xUserId: xUserIdToUse,
-        digits: _digitsPerBall, // 👈 3 ó 4
-      );
-
-      if (res['ok'] == true) {
-        final d = (res['data'] as Map<String, dynamic>? ?? {});
-        final gid = (d['game_id'] as num?)?.toInt();
-        if (gid != null && (avoidGameId == null || gid != avoidGameId)) {
-          data = d;
-          break;
-        }
-      } else {
-        _setAnimating(false);
-        _setShowFinalButtons(false);
-        _setHasPlayedOnce(false);
-        return GenerateState.error;
-      }
-      await Future.delayed(const Duration(milliseconds: 200));
-    }
-
-    if (data == null) {
-      _setAnimating(false);
-      _setShowFinalButtons(false);
-      _setHasPlayedOnce(false);
-      return GenerateState.error;
-    }
-
+  // -------------------------
+  // 1. SI YA HABÍA SELECCIÓN (solo si NO venimos de retry)
+  // -------------------------
+  if (!ignoreExistingSelection && tokenToUse != null) {
     try {
-      _gameId = (data['game_id'] as num).toInt();
-      final List<dynamic> nums = data['numbers'] as List<dynamic>;
-      _generated = nums.map((e) => int.parse(e.toString())).toList();
-
-      final result = <int>[];
-      for (final n in _generated) {
-        result.add(n);
-        _setNumbers(
-          List<int>.from(result)..addAll(List.filled(5 - result.length, 0)),
-        );
-        await Future.delayed(const Duration(seconds: 1));
-      }
-
-      await Future.delayed(const Duration(milliseconds: 300));
-      _setAnimating(false);
-      _setShowFinalButtons(true);
-      return GenerateState.ok;
-    } catch (_) {
-      _setAnimating(false);
-      _setShowFinalButtons(false);
-      _setHasPlayedOnce(false);
-      return GenerateState.error;
-    }
-  }
-
-  Future<GenerateState> openFreshGame({int attempts = 3}) async {
-    // Antes: final avoid = _lastClosedGameId ?? _lastReservedGameId;
-    // Ahora: no evites nada; el backend ya no te devolverá juegos cerrados
-    return generateAnimatedNumbers(avoidGameId: null, attempts: attempts);
-  }
-
-  // ======= REINTENTAR =======
-  Future<void> retry() async {
-    _setReserving(false);
-    _displayedBalls.clear();
-    _setNumbers(List.filled(5, 0));
-    _setShowFinalButtons(false);
-    _setHasAddedFinal(false);
-    _setHasAdded(false);
-    _setShowActionIcons(false);
-    _setCurrentBigBall(null);
-
-    await generateAnimatedNumbers();
-  }
-
-  Future<GenerateState> generateLocalPreview() async {
-    if (_animating || _saving || _reserving) return GenerateState.error;
-
-    // Modo demo (FREE): no tocar backend ni asignar gameId
-    _gameId = null;
-    _setAnimating(true);
-    _setShowFinalButtons(false);
-    _setHasPlayedOnce(true);
-
-    final rnd = Random();
-    final maxValue = pow(10, _digitsPerBall).toInt(); // 1000 o 10000
-    _generated = List<int>.generate(5, (_) => rnd.nextInt(maxValue));
-
-
-    final result = <int>[];
-    for (final n in _generated) {
-      result.add(n);
-      _setNumbers(
-        List<int>.from(result)..addAll(List.filled(5 - result.length, 0)),
+      final pre = await _gamesApi.getMySelection(
+        token: tokenToUse,
+        digits: digitsPerBall,
       );
-      await Future.delayed(const Duration(seconds: 1));
+
+      if (pre['ok'] == true) {
+        final data = (pre['data'] as Map<String, dynamic>? ?? {});
+        final gid = (data['game_id'] as num?)?.toInt();
+        final nums = ((data['numbers'] as List?) ?? const [])
+            .map((e) => int.parse(e.toString()))
+            .toList();
+
+        if (gid != null && nums.length == 5) {
+          _gameId = gid;
+          _lastReservedGameId = gid;
+          _lastReservedNumbers = List<int>.from(nums);
+
+          _setNumbers(List<int>.from(nums));
+          _displayedBalls
+            ..clear()
+            ..addAll(nums);
+
+          _setAnimating(false);
+          _setShowFinalButtons(true);
+          _setHasPlayedOnce(true);
+          _setHasAdded(true);
+          _setHasAddedFinal(true);
+          _setShowActionIcons(true);
+
+_gameIdByMode[_mode] = gid;
+_numbersByMode[_mode] = List<int>.from(nums);
+
+
+
+
+          return GenerateState.ok;
+        }
+      }
+    } catch (_) {
+      // ignora errores de red
+    }
+  }
+
+  // -------------------------
+  // 2. PREPARAR ESTADO LÓGICO
+  // -------------------------
+  _setHasPlayedOnce(true);
+
+  Map<String, dynamic>? data;
+
+  // -------------------------
+  // 3. PEDIR NÚMEROS AL BACKEND
+  // -------------------------
+for (var i = 0; i < attempts; i++) {
+  final res = await _gamesApi.generate(
+    token: tokenToUse,
+    xUserId: xUserIdToUse,
+    digits: digitsPerBall,
+  );
+
+  if (res['ok'] == true) {
+    final d = (res['data'] as Map<String, dynamic>? ?? {});
+    final gidDynamic = d['game_id'];
+    final int? gid = (gidDynamic is num) ? gidDynamic.toInt() : null;
+
+    debugPrint('[generate] OK digits=$digitsPerBall gameId=$gid');
+
+    // 👇 Solo saltamos si ESPECÍFICAMENTE queremos evitar un game_id concreto
+    if (avoidGameId != null && gid != null && gid == avoidGameId) {
+      debugPrint(
+        '[generate] evitando gameId=$gid porque coincide con avoidGameId=$avoidGameId',
+      );
+      // probamos otra vez
+      await Future.delayed(const Duration(milliseconds: 200));
+      continue;
     }
 
+    // ✅ Aceptamos la respuesta AUNQUE game_id sea null (NO_GAME)
+    data = d;
+    break;
+  } else {
+    debugPrint(
+      '[generate] ERROR digits=$digitsPerBall '
+      'status=${res['status']} code=${res['code']} msg=${res['message']}',
+    );
+    return GenerateState.error;
+  }
+
+  await Future.delayed(const Duration(milliseconds: 200));
+}
+
+  if (data == null) {
+    debugPrint(
+      'generateAnimatedNumbers: data null tras $attempts intentos (digits=$digitsPerBall)',
+    );
+    return GenerateState.error;
+  }
+
+  // -------------------------
+  // 4. YA TENGO LOS NÚMEROS → ANIMO
+  // -------------------------
+  try {
+    final gidDynamic2 = data['game_id'];
+_gameId = (gidDynamic2 is num) ? gidDynamic2.toInt() : null;
+
+    final List<dynamic> nums = data['numbers'] as List<dynamic>;
+    _generated = nums.map((e) => int.parse(e.toString())).toList();
+debugPrint('[generate] numbers=$_generated digits=$digitsPerBall mode=$_mode');
+
+    // Pasamos los 5 DEFINITIVOS a la UI
+    _setNumbers(List<int>.from(_generated));
+
+    // cache por tipo de juego
+_gameIdByMode[_mode] = _gameId;
+_numbersByMode[_mode] = List<int>.from(_generated);
+
+
+    // Ocultamos botones mientras anima
+    _setShowFinalButtons(false);
+
+    _setAnimating(true);
+
+    // Duración total: última balota 1 + (n-1) segundos
+    final lastDurationSeconds = 1 + (_generated.length - 1);
+    await Future.delayed(Duration(seconds: lastDurationSeconds));
     await Future.delayed(const Duration(milliseconds: 300));
+
     _setAnimating(false);
     _setShowFinalButtons(true);
     return GenerateState.ok;
+  } catch (e, st) {
+    debugPrint('generateAnimatedNumbers exception: $e\n$st');
+    _setAnimating(false);
+    return GenerateState.error;
+  }
+}
+
+
+Future<GenerateState> openFreshGame({int attempts = 3}) async {
+  // El backend ya no devuelve juegos cerrados,
+  // solo pedimos un juego nuevo respetando selección previa (si existe).
+  return generateAnimatedNumbers(
+    avoidGameId: null,
+    attempts: attempts,
+    ignoreExistingSelection: false,
+  );
+}
+
+
+Future<void> retry() async {
+
+debugPrint('[RETRY] mode=$_mode digitsPerBall=$digitsPerBall');
+
+  // Log para ver si realmente entra
+  debugPrint(
+    '[RETRY] tap digits=$digitsPerBall '
+    'anim=$_animating saving=$_saving reserving=$_reserving',
+  );
+
+  // Evita taps dobles mientras está ocupada
+  if (_animating || _saving || _reserving) {
+    debugPrint('[RETRY] abortado: aún ocupado.');
+    return;
   }
 
-  // ======= RESERVAR/CONFIRMAR =======
-  Future<ReserveOutcome> add() async {
-    debugPrint('[ADD] isPremium=$_isPremium, gameId=$_gameId');
-    if (_authToken == null || _authToken!.isEmpty) {
-      return const ReserveOutcome(
-        ok: false,
-        code: 'UNAUTHENTICATED',
-        message: 'Sesión no válida.',
-      );
-    }
+  // Cancelar cualquier animación de reserva/overlay
+  _setReserving(false);
+  _displayedBalls.clear();
+  _setShowActionIcons(false);
+  _setCurrentBigBall(null);
+
+  // 👉 Guardamos el estado actual por si algo sale mal
+  final prevNumbers = List<int>.from(_numbers);
+  final prevShowFinalButtons = _showFinalButtons;
+  final prevHasAdded = _hasAdded;
+  final prevHasAddedFinal = _hasAddedFinal;
+
+  // NO tocamos _showFinalButtons ni _hasAdded / _hasAddedFinal todavía
+
+  final result = await generateAnimatedNumbers(
+    ignoreExistingSelection: true,
+  );
+
+  debugPrint('[RETRY] result=$result digits=$digitsPerBall');
+
+  // Si el backend falla, hacemos fallback a preview local
+  if (result == GenerateState.error) {
+    debugPrint(
+      '[RETRY] generateAnimatedNumbers ERROR → usando preview local.',
+    );
+
+    // Restauramos el estado previo ANTES del preview
+    _setNumbers(prevNumbers);
+    _setShowFinalButtons(prevShowFinalButtons);
+    _setHasAdded(prevHasAdded);
+    _setHasAddedFinal(prevHasAddedFinal);
+
+    // 👇 Animación local solo visual (no cambia _gameId)
+    final previewResult = await generateLocalPreview();
+    debugPrint('[RETRY] preview local result=$previewResult');
+    return;
+  }
+
+  // Si fue OK, ahora sí dejamos listo para el nuevo ciclo
+  _setHasAdded(false);
+  _setHasAddedFinal(false);
+}
+
+
+
+Future<GenerateState> generateLocalPreview() async {
+  
+  if (_animating || _saving || _reserving) return GenerateState.error;
+
+  _gameId = null;
+  _setShowFinalButtons(false);
+  _setHasPlayedOnce(true);
+
+  final rnd = Random();
+
+  // ✅ dígitos reales por modo (quinta=5)
+  final int digits = (_mode == GameMode.quinta) ? 5 : _mode.baseDigits;
+  final int maxValue = pow(10, digits).toInt();
+
+  debugPrint('[PREVIEW] mode=$_mode digits=$digits maxValue=$maxValue');
+
+  final used = <int>{};
+  while (used.length < 5) {
+    used.add(rnd.nextInt(maxValue));
+  }
+  _generated = used.toList();
+debugPrint('[PREVIEW] generated=$_generated');
+  _setNumbers(List<int>.from(_generated));
+  _setAnimating(true);
+
+  final lastDurationSeconds = 1 + (_generated.length - 1);
+  await Future.delayed(Duration(seconds: lastDurationSeconds));
+  await Future.delayed(const Duration(milliseconds: 300));
+
+  _setAnimating(false);
+  _setShowFinalButtons(true);
+  return GenerateState.ok;
+}
+
+// ======= RESERVAR/CONFIRMAR =======
+Future<ReserveOutcome> add() async {
+  debugPrint('[ADD] isPremium=$_isPremium, gameId=$_gameId');
+
+  if (_authToken == null || _authToken!.isEmpty) {
+    return const ReserveOutcome(
+      ok: false,
+      code: 'UNAUTHENTICATED',
+      message: 'Sesión no válida.',
+    );
+  }
+
+  // 2 cifras es gratis: no requiere premium ni upgrade
+  if (!_mode.isFreeMode) {
     if (!_isPremium) {
       return const ReserveOutcome(
         ok: false,
@@ -559,233 +854,297 @@ String _fmtNums(List<int> xs) =>
         status: 403,
       );
     }
-    final stillRevealing = _animating || !_showFinalButtons;
-    if (_gameId == null) {
+    if (digitsPerBall > _maxDigitsAllowed) {
       return const ReserveOutcome(
         ok: false,
-        code: 'PREVIEW_ONLY',
-        message: 'Primero presiona JUGAR para generar una selección.',
-        status: 400,
+        code: 'NEED_UPGRADE',
+        message: 'Tu plan no permite este modo. Actualiza tu suscripción.',
+        status: 403,
       );
-    }
-
-    if (stillRevealing) {
-      return const ReserveOutcome(
-        ok: false,
-        code: 'INVALID_STATE',
-        message: 'Aún no hay selección lista.',
-      );
-    }
-
-    final maxValue = pow(10, _digitsPerBall).toInt() - 1; // 999 o 9999
-    final isValid =
-        _numbers.length == 5 && _numbers.every((n) => n >= 0 && n <= maxValue);
-
-    if (!isValid) {
-      return const ReserveOutcome(
-        ok: false,
-        code: 'OUT_OF_RANGE',
-        message: 'Selección fuera de rango.',
-      );
-    }
-
-    // 1) Guarda copia de los números de la reserva anterior (si los hay)
-    final prevNumbers = (_lastReservedNumbers == null)
-        ? null
-        : List<int>.from(_lastReservedNumbers!);
-
-    // 2) Libera la reserva previa si existe
-    final releaseOutcome = await _releasePreviousIfNeeded();
-    if (releaseOutcome != null && !releaseOutcome.ok) {
-      return releaseOutcome; // si falló liberar, cortamos aquí
-    }
-
-    // Activa modo reservando: oculta botones y resetea tiras
-    _setReserving(true);
-    _displayedBalls.clear();
-    _setShowActionIcons(false);
-    _setHasAdded(true);
-
-    // Efecto de "balota grande" (la Vista puede decidir si usa sonido/animación)
-    for (final number in _numbers) {
-      _setCurrentBigBall(number);
-
-      // 🔊 reproducir pop aquí
-      await SoundHelper.playPopSound();
-
-      await Future.delayed(const Duration(seconds: 1));
-      _setCurrentBigBall(null);
-      _displayedBalls.add(number);
-      notifyListeners();
-      await Future.delayed(const Duration(milliseconds: 300));
-    }
-
-    _setShowActionIcons(true);
-
-    // Si el token está vencido, no intentes commit
-    if (_isJwtExpired(_authToken!)) {
-      _setReserving(false);
-      return const ReserveOutcome(
-        ok: false,
-        code: 'TOKEN_EXPIRED',
-        message: 'Tu sesión venció.',
-      );
-    }
-
-    // Guardando en backend
-    _setSaving(true);
-    final res = await _gamesApi.commit(
-      gameId: _gameId!,
-      numbers: _numbers,
-      token: _authToken, // ✅ usar Authorization
-      xUserId: null, // ❌ no enviar X-USER-ID
-    );
-
-    _setSaving(false);
-    _setReserving(false);
-
-    if (res['ok'] == true) {
-      final data = (res['data'] as Map<String, dynamic>? ?? {});
-      _setHasAddedFinal(true);
-
-      _lastReservedGameId = _gameId;
-      _lastReservedNumbers = List<int>.from(_numbers);
-      final userIdUsed = (data['user_id_used'] as num?)?.toInt();
-      _lastReservedUserId = userIdUsed ?? _lastReservedUserId;
-
-      // lo que reporta el backend
-      final completed =
-          data['game_completed'] == true || res['game_completed'] == true;
-
-      // refresca historial y calcula cierre local ANTES de tocar _gameId
-      final gid = _gameId; // 👈 guardar referencia
-      await loadHistory();
-      final closedNow = (gid != null) && _isGameClosedLocal(gid);
-
-      final finalCompleted = completed || closedNow;
-      if (finalCompleted) {
-        _lastClosedGameId = gid; // <- NUEVO: recuerda cuál se cerró
-        _gameId = null;
-        _lastReservedGameId = null;
-        _lastReservedNumbers = null;
-      } else {
-        _lastClosedGameId = null; // por si venía seteado de antes
-      }
-
-      if (_releasedPrevious && prevNumbers != null) {
-        _releasedPrevious = false;
-        return ReserveOutcome(
-          ok: true,
-          gameCompleted: finalCompleted,
-          code: 'REPLACED',
-          message:
-              'Se reemplazaron ${_fmtNums(prevNumbers)} por ${_fmtNums(_numbers)}.',
-        );
-      }
-      _releasedPrevious = false;
-      return ReserveOutcome(ok: true, gameCompleted: finalCompleted);
-    }
-
-    final code = (res['code'] ?? '').toString();
-    final msg = (res['message'] ?? 'No se pudo guardar la selección.')
-        .toString();
-    final status = res['status'] as int?;
-
-if (code == 'GAME_SWITCHED') {
-  // Reset mínimo para permitir volver a jugar
-  _setHasAdded(false);
-  _setHasAddedFinal(false);
-  _displayedBalls.clear();
-  _setShowActionIcons(false);
-  _setNumbers(List.filled(5, 0));
-  _setShowFinalButtons(false);
-  _setHasPlayedOnce(false);
-
-  _gameId = null;
-  _lastReservedGameId = null;
-  _lastReservedNumbers = null;
-
-  return ReserveOutcome(
-    ok: false,
-    code: 'GAME_SWITCHED',
-    message: 'El juego cambió porque se completó. Vuelve a jugar.',
-    status: status,
-  );
-
-} else if (code == 'CONFLICT' || status == 409) {
-  _setHasAdded(false);
-  _setHasAddedFinal(false);
-  _displayedBalls.clear();
-  _setShowActionIcons(false);
-  _setNumbers(List.filled(5, 0));
-  _setShowFinalButtons(false);
-  _setHasPlayedOnce(false);
-
-  return ReserveOutcome(
-    ok: false,
-    code: 'CONFLICT',
-    message: 'Algunos números ya no están disponibles. Vuelve a jugar.',
-    status: status,
-  );
-
-} else if (code == 'LIMIT_REACHED' || code == 'PARTIAL_EXISTS') {
-  // El backend indica que ya tienes reserva en este juego (completa o parcial)
-  final data = (res['data'] as Map<String, dynamic>? ?? {});
-  final gid = (data['game_id'] as num?)?.toInt();
-  final nums = ((data['numbers'] as List?) ?? const [])
-      .map((e) => int.parse(e.toString()))
-      .toList();
-
-  if (gid != null && nums.isNotEmpty) {
-    _gameId = gid;
-    _lastReservedGameId = gid;
-    _lastReservedNumbers = List<int>.from(nums);
-
-    _setNumbers(List<int>.from(nums));
-    _displayedBalls
-      ..clear()
-      ..addAll(nums);
-
-    // Muestra como “selección existente”
-    _setHasAdded(true);
-    _setShowActionIcons(true);
-    _setShowFinalButtons(true);
-    _setHasPlayedOnce(true);
-
-    // Si eran 5, marcamos como final para que UI oculte JUGAR/RESERVAR
-    if (nums.length >= 5) {
-      _setHasAddedFinal(true);
     }
   }
 
-  return ReserveOutcome(
-    ok: false,
-    code: code,
-    message: msg.isNotEmpty
-        ? msg
-        : (code == 'LIMIT_REACHED'
-            ? 'Ya tienes 5 números reservados para este juego.'
-            : 'Tienes una reserva parcial en este juego. Libérala antes de reemplazar.'),
-    status: status,
+  final stillRevealing = _animating || !_showFinalButtons;
+  if (stillRevealing) {
+    return const ReserveOutcome(
+      ok: false,
+      code: 'INVALID_STATE',
+      message: 'Aún no hay selección lista.',
+    );
+  }
+
+final bool isValid = (() {
+if (_mode == GameMode.quinta) {
+  if (_numbers.length != 5) return false;
+  return _numbers.every((n) => n >= 0 && n <= 99999);
+}
+
+
+  final maxValue = pow(10, digitsPerBall).toInt() - 1;
+  return _numbers.length == 5 && _numbers.every((n) => n >= 0 && n <= maxValue);
+})();
+
+
+  if (!isValid) {
+    return const ReserveOutcome(
+      ok: false,
+      code: 'OUT_OF_RANGE',
+      message: 'Selección fuera de rango.',
+    );
+  }
+
+final List<int>? prevRaw = (_mode == GameMode.digits2)
+    ? _lastReservedNumbers2
+    : (_mode == GameMode.digits3)
+        ? _lastReservedNumbers3
+        : (_mode == GameMode.digits4)
+            ? _lastReservedNumbers4
+            : (_mode == GameMode.quinta)
+                ? _lastReservedNumbers5
+                : null;
+
+  final prevNumbers = (prevRaw == null) ? null : List<int>.from(prevRaw);
+
+
+  // Liberar reserva previa
+  final releaseOutcome = await _releasePreviousIfNeeded();
+  if (releaseOutcome != null && !releaseOutcome.ok) {
+    return releaseOutcome;
+  }
+
+  // Animación de reserva
+  _setReserving(true);
+  _displayedBalls.clear();
+  _setShowActionIcons(false);
+  _setHasAdded(true);
+
+  for (final number in _numbers) {
+    _setCurrentBigBall(number);
+    await SoundHelper.playPopSound();
+    await Future.delayed(const Duration(seconds: 1));
+    _setCurrentBigBall(null);
+    _displayedBalls.add(number);
+    notifyListeners();
+    await Future.delayed(const Duration(milliseconds: 300));
+  }
+
+  _setShowActionIcons(true);
+
+  if (_isJwtExpired(_authToken!)) {
+    _setReserving(false);
+    return const ReserveOutcome(
+      ok: false,
+      code: 'TOKEN_EXPIRED',
+      message: 'Tu sesión venció.',
+    );
+  }
+
+  // ============================
+  // ⚠️ COMMIT SIN BLOQUEO (NO_GAME)
+  // ============================
+  _setSaving(true);
+
+  final res = await _gamesApi.commit(
+    gameId: _gameId,          // 👈 se permite null
+    numbers: _numbers,
+    token: _authToken,
+    xUserId: null,
+    digits: digitsPerBall,   // 👈 importante
   );
 
-} else if (code == 'NETWORK_ERROR') {
-  return const ReserveOutcome(
-    ok: false,
-    code: 'NETWORK_ERROR',
-    message: 'No hay conexión con el servidor.',
-  );
+  _setSaving(false);
+  _setReserving(false);
 
-} else if (status == 401 || status == 403) {
-  await initSession(); // re-lee token por si cambió
-  return ReserveOutcome(
-    ok: false,
-    code: 'UNAUTHORIZED',
-    message: 'No autorizado con la sesión actual.',
-    status: status,
-  );
+  // -------------------- OK --------------------
+  if (res['ok'] == true) {
+    final data = (res['data'] as Map<String, dynamic>? ?? {});
+    _setHasAddedFinal(true);
 
-} else {
+    _lastReservedGameId = _gameId;
+    _lastReservedNumbers = List<int>.from(_numbers);
+    // 👇 guardar reserva por modo
+if (_mode == GameMode.digits2) {
+  _lastReservedGameId2 = _gameId;
+  _lastReservedNumbers2 = List<int>.from(_numbers);
+} else if (_mode == GameMode.digits3) {
+  _lastReservedGameId3 = _gameId;
+  _lastReservedNumbers3 = List<int>.from(_numbers);
+} else if (_mode == GameMode.digits4) {
+  _lastReservedGameId4 = _gameId;
+  _lastReservedNumbers4 = List<int>.from(_numbers);
+} else if (_mode == GameMode.quinta) {
+  _lastReservedGameId5 = _gameId;
+  _lastReservedNumbers5 = List<int>.from(_numbers);
+}
+
+
+
+    final userIdUsed = (data['user_id_used'] as num?)?.toInt();
+    _lastReservedUserId = userIdUsed ?? _lastReservedUserId;
+
+    final completed =
+        data['game_completed'] == true || res['game_completed'] == true;
+
+    final gid = _gameId;
+    await loadHistory();
+    final closedNow = (gid != null) && _isGameClosedLocal(gid);
+
+    final finalCompleted = completed || closedNow;
+    if (finalCompleted) {
+      _lastClosedGameId = gid;
+
+      if (_mode == GameMode.digits2) {
+        _lastReservedGameId2 = null;
+        _lastReservedNumbers2 = null;
+      } else if (_mode == GameMode.digits3) {
+        _lastReservedGameId3 = null;
+        _lastReservedNumbers3 = null;
+      } else if (_mode == GameMode.digits4) {
+        _lastReservedGameId4 = null;
+        _lastReservedNumbers4 = null;
+      } else if (_mode == GameMode.quinta) {
+        _lastReservedGameId5 = null;
+        _lastReservedNumbers5 = null;
+      }
+
+      _gameId = null;
+      _lastReservedGameId = null;
+      _lastReservedNumbers = null;
+    } else {
+      _lastClosedGameId = null;
+    }
+
+
+    if (_releasedPrevious && prevNumbers != null) {
+      _releasedPrevious = false;
+      return ReserveOutcome(
+        ok: true,
+        gameCompleted: finalCompleted,
+        code: 'REPLACED',
+        message:
+            'Se reemplazaron ${_fmtNums(prevNumbers)} por ${_fmtNums(_numbers)}.',
+      );
+    }
+    _releasedPrevious = false;
+
+    return ReserveOutcome(
+      ok: true,
+      gameCompleted: finalCompleted,
+    );
+  }
+
+  // -------------------- ERRORES --------------------
+  final code = (res['code'] ?? '').toString();
+  final msg = (res['message'] ?? 'No se pudo guardar la selección.').toString();
+  final status = res['status'] as int?;
+
+  if (code == 'GAME_SWITCHED') {
+    _setHasAdded(false);
+    _setHasAddedFinal(false);
+    _displayedBalls.clear();
+    _setShowActionIcons(false);
+
+    _setNumbers(List.filled(5, 0));
+    _setShowFinalButtons(false);
+    _setHasPlayedOnce(false);
+
+    _gameId = null;
+    _lastReservedGameId = null;
+    _lastReservedNumbers = null;
+
+    return ReserveOutcome(
+      ok: false,
+      code: 'GAME_SWITCHED',
+      message: 'El juego cambió porque se completó. Vuelve a jugar.',
+      status: status,
+    );
+  }
+
+  if (code == 'CONFLICT' || status == 409) {
+    _setHasAdded(false);
+    _setHasAddedFinal(false);
+    _displayedBalls.clear();
+    _setShowActionIcons(false);
+
+    _setNumbers(List.filled(5, 0));
+    _setShowFinalButtons(false);
+    _setHasPlayedOnce(false);
+
+    return ReserveOutcome(
+      ok: false,
+      code: 'CONFLICT',
+      message: 'Algunos números ya no están disponibles. Vuelve a jugar.',
+      status: status,
+    );
+  }
+
+  if (code == 'LIMIT_REACHED' || code == 'PARTIAL_EXISTS') {
+    final data = (res['data'] as Map<String, dynamic>? ?? {});
+    final gid = (data['game_id'] as num?)?.toInt();
+    final nums = ((data['numbers'] as List?) ?? const [])
+        .map((e) => int.parse(e.toString()))
+        .toList();
+
+    if (gid != null && nums.isNotEmpty) {
+      _gameId = gid;
+      _lastReservedGameId = gid;
+      _lastReservedNumbers = List<int>.from(nums);
+      // guardar esa reserva parcial por modo
+      if (digitsPerBall == 2) {
+        _lastReservedGameId2 = gid;
+        _lastReservedNumbers2 = List<int>.from(nums);
+      } else if (digitsPerBall == 3) {
+        _lastReservedGameId3 = gid;
+        _lastReservedNumbers3 = List<int>.from(nums);
+      } else if (digitsPerBall == 4) {
+        _lastReservedGameId4 = gid;
+        _lastReservedNumbers4 = List<int>.from(nums);
+      } else {
+        _lastReservedGameId5 = gid;
+        _lastReservedNumbers5 = List<int>.from(nums);
+      }
+
+      _setNumbers(List<int>.from(nums));
+      _displayedBalls
+        ..clear()
+        ..addAll(nums);
+
+      _setHasAdded(true);
+      _setShowActionIcons(true);
+      _setShowFinalButtons(true);
+      _setHasPlayedOnce(true);
+
+      if (nums.length >= 5) {
+        _setHasAddedFinal(true);
+      }
+    }
+
+    return ReserveOutcome(
+      ok: false,
+      code: code,
+      message: msg,
+      status: status,
+    );
+  }
+
+  if (code == 'NETWORK_ERROR') {
+    return const ReserveOutcome(
+      ok: false,
+      code: 'NETWORK_ERROR',
+      message: 'No hay conexión con el servidor.',
+    );
+  }
+
+  if (status == 401 || status == 403) {
+    await initSession();
+    return ReserveOutcome(
+      ok: false,
+      code: 'UNAUTHORIZED',
+      message: 'No autorizado con la sesión actual.',
+      status: status,
+    );
+  }
+
   return ReserveOutcome(
     ok: false,
     code: code.isEmpty ? null : code,
@@ -793,41 +1152,79 @@ if (code == 'GAME_SWITCHED') {
     status: status,
   );
 }
-  }
-  Future<ReserveOutcome?> _releasePreviousIfNeeded() async {
-    _releasedPrevious = false; // reset por si venimos de otro ciclo
+Future<ReserveOutcome?> _releasePreviousIfNeeded() async {
+  _releasedPrevious = false; // reset por si venimos de otro ciclo
 
-    if (_lastReservedGameId == null) return null;
+final int? toRelease = (_mode == GameMode.digits2)
+    ? _lastReservedGameId2
+    : (_mode == GameMode.digits3)
+        ? _lastReservedGameId3
+        : (_mode == GameMode.digits4)
+            ? _lastReservedGameId4
+            : (_mode == GameMode.quinta)
+                ? _lastReservedGameId5
+                : null;
 
-    final res = await _gamesApi.release(
-      gameId: _lastReservedGameId!,
-      token: _authToken, // ✅ Authorization requerido por backend
-      xUserId: null, // ❌ no mezclar override
-    );
+  if (toRelease == null) return null;
 
-    final status = res['status'] as int?;
-    final code = (res['code'] ?? '').toString();
+  final res = await _gamesApi.release(
+    gameId: toRelease,
+    token: _authToken, // ✅ Authorization requerido por backend
+    xUserId: null,     // ❌ no mezclar override
+  );
 
-    if (res['ok'] == true) {
-      _releasedPrevious = true; // 👈 hubo borrado real en DB
-      _lastReservedGameId = null;
-      return null;
+  final status = res['status'] as int?;
+  final code = (res['code'] ?? '').toString();
+
+  if (res['ok'] == true) {
+    _releasedPrevious = true;
+
+    if (_mode == GameMode.digits2) {
+      _lastReservedGameId2 = null;
+      _lastReservedNumbers2 = null;
+    } else if (_mode == GameMode.digits3) {
+      _lastReservedGameId3 = null;
+      _lastReservedNumbers3 = null;
+    } else if (_mode == GameMode.digits4) {
+      _lastReservedGameId4 = null;
+      _lastReservedNumbers4 = null;
+    } else if (_mode == GameMode.quinta) {
+      _lastReservedGameId5 = null;
+      _lastReservedNumbers5 = null;
     }
-    if (status == 404 || code == 'NOT_FOUND') {
-      _releasedPrevious = false; // 👈 no había nada que borrar
-      _lastReservedGameId = null;
-      return null;
-    }
 
-    final msg = (res['message'] ?? 'No se pudo liberar la reserva anterior.')
-        .toString();
-    return ReserveOutcome(
-      ok: false,
-      code: code.isEmpty ? 'RELEASE_ERROR' : code,
-      message: msg,
-      status: status,
-    );
+
+
+    // alias genérico del modo actual
+    _lastReservedGameId = null;
+    _lastReservedNumbers = null;
+    return null;
   }
+if (status == 404 || code == 'NOT_FOUND') {
+  if (_mode == GameMode.digits2) {
+    _lastReservedGameId2 = null;
+  } else if (_mode == GameMode.digits3) {
+    _lastReservedGameId3 = null;
+  } else if (_mode == GameMode.digits4) {
+    _lastReservedGameId4 = null;
+  } else if (_mode == GameMode.quinta) {
+    _lastReservedGameId5 = null;
+  }
+  _lastReservedGameId = null;
+  return null;
+}
+
+
+  final msg = (res['message'] ?? 'No se pudo liberar la reserva anterior.')
+      .toString();
+  return ReserveOutcome(
+    ok: false,
+    code: code.isEmpty ? 'RELEASE_ERROR' : code,
+    message: msg,
+    status: status,
+  );
+}
+
 
   // ======= Utilidades de edición local =======
   void clearSelection() {
@@ -837,31 +1234,74 @@ if (code == 'GAME_SWITCHED') {
     notifyListeners();
   }
 
-  // Deja la UI en estado inicial (como recién abierta): sin selección y con botón JUGAR visible.
-  void resetToInitial() {
-    _setReserving(false);
-    _displayedBalls.clear();
-    _setNumbers(List.filled(5, 0));
-    _setShowFinalButtons(false);
-    _setHasAddedFinal(false);
-    _setHasAdded(false);
-    _setShowActionIcons(false);
-    _setCurrentBigBall(null);
-    _setHasPlayedOnce(false);
-
-    // 👇 IMPORTANTE: “despegar” del juego viejo
-    _gameId = null;
-    _generated = const [];
-    _lastReservedGameId = null;
-    _lastReservedNumbers = null;
-
-    notifyListeners();
+void resetToInitial() {
+  bool hasRealReservation;
+  if (_mode == GameMode.digits2) {
+    hasRealReservation =
+        _lastReservedGameId2 != null &&
+        _lastReservedNumbers2 != null &&
+        _lastReservedNumbers2!.length == 5;
+  } else if (_mode == GameMode.digits3) {
+    hasRealReservation =
+        _lastReservedGameId3 != null &&
+        _lastReservedNumbers3 != null &&
+        _lastReservedNumbers3!.length == 5;
+  } else if (_mode == GameMode.digits4) {
+    hasRealReservation =
+        _lastReservedGameId4 != null &&
+        _lastReservedNumbers4 != null &&
+        _lastReservedNumbers4!.length == 5;
+  } else if (_mode == GameMode.quinta) {
+    hasRealReservation =
+        _lastReservedGameId5 != null &&
+        _lastReservedNumbers5 != null &&
+        _lastReservedNumbers5!.length == 5;
+  } else {
+    hasRealReservation = false;
   }
+
+
+  if (hasRealReservation) {
+    // Dejamos todo como está, porque ya hay números reservados
+    // en este tipo de juego.
+    return;
+  }
+
+
+  _setReserving(false);
+  _displayedBalls.clear();
+
+  // Estado vacío: 000 / 0000
+ _setNumbers(List.filled(5, 0));
+
+
+
+  _setShowFinalButtons(false);
+  _setHasAddedFinal(false);
+  _setHasAdded(false);
+  _setShowActionIcons(false);
+  _setCurrentBigBall(null);
+  _setHasPlayedOnce(false);
+
+  _gameId = null;
+  _generated = const [];
+  _lastReservedGameId = null;
+  _lastReservedNumbers = null;
+
+  // 👇 SOLO limpiamos el cache del modo actual
+_gameIdByMode[_mode] = null;
+_numbersByMode[_mode] = List.filled(5, 0);
+
+
+
+
+  notifyListeners();
+}
 
   // Permite a la Vista setear números manuales si hicieras un editor
   void setNumbersDirect(List<int> fiveNumbers) {
     if (fiveNumbers.length != 5) return;
-    final maxValue = pow(10, _digitsPerBall).toInt() - 1;
+    final maxValue = pow(10, digitsPerBall).toInt() - 1;
     if (!fiveNumbers.every((n) => n >= 0 && n <= maxValue)) return;
 
     _setNumbers(List<int>.from(fiveNumbers));
@@ -927,6 +1367,67 @@ if (code == 'GAME_SWITCHED') {
           : const <String, dynamic>{}),
       ...data,
     };
+// 👇 Número ganador crudo (como viene del backend)
+final rawWinning = (payload['winning_number'] ?? '').toString();
+
+// 👇 Intentamos identificar el game_id por si necesitamos mirar el historial
+final int? gameId = _toInt(
+  payload['game_id'] ?? m['game_id'] ?? data['game_id'],
+);
+
+// ---------- Cálculo robusto de dígitos ----------
+int digits = 0;
+
+// 1) Intentamos obtener digits directo del payload o data
+final dynamic rawDigits =
+    payload['digits'] ??
+    m['digits'] ??
+    data['digits'] ??
+    payload['numbers_digits'] ??
+    data['numbers_digits'];
+
+if (rawDigits is int) {
+  digits = rawDigits;
+} else if (rawDigits != null) {
+  digits = int.tryParse('$rawDigits') ?? 0;
+}
+
+// 2) Si sigue en 0, intentamos deducirlo desde el historial (gamers previos)
+if (digits == 0 && gameId != null) {
+  final hist = _history.firstWhere(
+    (h) => _toInt(h['game_id']) == gameId,
+    orElse: () => const <String, dynamic>{},
+  );
+  if (hist.isNotEmpty) {
+    final hd = hist['digits'] ?? hist['numbers_digits'];
+    if (hd is int) {
+      digits = hd;
+    } else if (hd != null) {
+      digits = int.tryParse('$hd') ?? 0;
+    }
+  }
+}
+
+// 3) Fallback inteligente si aún no se pudo definir digits
+if (digits <= 0) {
+  // a) Usamos el modo actual del tablero (3 o 4 dígitos)
+  digits = digitsPerBall;
+
+  // b) Si sigue en 0, usamos la longitud del número crudo recibido
+  if (digits <= 0) {
+    if (rawWinning.isNotEmpty && rawWinning.length > 3) {
+      // ejemplo: "0001" o "5144" → longitud = 4
+      digits = rawWinning.length;
+    } else {
+      // c) Último fallback seguro
+      digits = 3;
+    }
+  }
+}
+
+// 👇 Aplicamos el formato final
+final String winningFormatted =
+    rawWinning.isNotEmpty ? rawWinning.padLeft(digits, '0') : rawWinning;
 
     return {
       'id': id ?? -1, // evita nulls
@@ -936,7 +1437,13 @@ if (code == 'GAME_SWITCHED') {
       'read': read,
       'created_at': createdAt,
       'payload': payload,
+
+      // 👇 Campos extra para que la UI pueda formatear
+      'winning_raw': rawWinning,
+      'digits': digits,
+      'winning_formatted': winningFormatted,
     };
+
   }
 
   // ======= Cargar notificaciones =======
@@ -1024,12 +1531,25 @@ if (code == 'GAME_SWITCHED') {
 
       final gameId = (data['game_id'] as num?)?.toInt();
       if (gameId == null) continue;
+      // 👇 número crudo que llega del backend
+      final rawWinning = (data['winning_number'] ?? '').toString();
+
+      // 👇 intentamos leer los dígitos desde el payload (por ejemplo data['digits'])
+      //    si no viene, usamos 3 por defecto
+      final int digits = (data['digits'] is int)
+          ? data['digits'] as int
+          : int.tryParse('${data['digits'] ?? ''}') ?? 3;
+
+      // 👇 número ganador ya rellenado con ceros a la izquierda
+      final formattedWinning = rawWinning.padLeft(digits, '0');
 
       final cand = {
         'id': id,
         'kind': kind,
         'game_id': gameId,
-        'winning_number': data['winning_number'],
+        'winning_number': rawWinning,           // valor crudo
+        'digits': digits,                       // cuántas cifras tiene el juego
+        'winning_formatted': formattedWinning,  // valor ya 000 / 0000
         'message': n['body'] ?? n['message'] ?? '',
         'created_at': n['created_at'] ?? '',
       };
@@ -1051,7 +1571,48 @@ if (code == 'GAME_SWITCHED') {
     _shownNotifIds.addAll(ids);
     unawaited(markReadIds(ids));
 
+        // 👇 NUEVO: si hay ganador para el tipo de juego actual,
+    // reseteamos el tablero para que vuelva a salir el botón JUGAR.
+for (final m in result) {
+  final int? nd = m['digits'] as int?;
+  final int? gid = m['game_id'] as int?;
+  if (nd == null || gid == null) continue;
+
+  // ✅ Limpia la reserva SOLO del modo que cerró
+  if (nd == 2) {
+    _lastReservedGameId2 = null;
+    _lastReservedNumbers2 = null;
+    _gameIdByMode[GameMode.digits2] = null;
+    _numbersByMode[GameMode.digits2] = List.filled(5, 0);
+  } else if (nd == 3) {
+    _lastReservedGameId3 = null;
+    _lastReservedNumbers3 = null;
+    _gameIdByMode[GameMode.digits3] = null;
+    _numbersByMode[GameMode.digits3] = List.filled(5, 0);
+  } else if (nd == 4) {
+    _lastReservedGameId4 = null;
+    _lastReservedNumbers4 = null;
+    _gameIdByMode[GameMode.digits4] = null;
+    _numbersByMode[GameMode.digits4] = List.filled(5, 0);
+  } else if (nd == 5) {
+    _lastReservedGameId5 = null;
+    _lastReservedNumbers5 = null;
+    _gameIdByMode[GameMode.quinta] = null;
+    _numbersByMode[GameMode.quinta] = List.filled(5, 0);
+  }
+
+  // Si el modo actual es el que cerró, libera el tablero para volver a jugar
+  if (nd == digitsPerBall) {
+    _lastClosedGameId = gid;
+    resetToInitial(); // ✅ ahora sí va a limpiar porque ya no hay "reserva real"
+  }
+
+  break;
+}
+
+
     return result;
+
   }
 
   Future<Map<String, String>?> peekScheduleOnce() async {
@@ -1210,14 +1771,31 @@ if (code == 'GAME_SWITCHED') {
       'game_id': gameId,
     };
   }
-Future<void> applyPremiumFromStore(bool premium) async {
+// planDigits: 3 (cml), 4 (cm), 5 (cmu)
+Future<void> applyPremiumFromStore({
+  required bool premium,
+  required int planDigits,
+}) async {
   _isPremium = premium;
 
-  // Persiste también en sesión, para que al reabrir la app no se pierda
-  await _session.setIsPremium(premium);
+  // ✅ setea el máximo permitido por plan
+  _maxDigitsAllowed = planDigits.clamp(3, 5);
 
-  // 👇 Ya no reseteamos la UI aquí para NO perder las balotas reservadas
+  // Persiste en sesión
+  await _session.setIsPremium(premium);
+  await _session.setMaxDigitsAllowed(_maxDigitsAllowed); // 👈 necesitas este método
+
+  // Si el usuario estaba en un modo no permitido, bájalo
+  if (digitsPerBall > _maxDigitsAllowed && !_mode.isFreeMode) {
+    if (_maxDigitsAllowed == 4) {
+      setGameMode(GameMode.digits4);
+    } else {
+      setGameMode(GameMode.digits3);
+    }
+  }
+
   notifyListeners();
 }
+
 
 }

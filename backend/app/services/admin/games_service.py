@@ -361,13 +361,14 @@ def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: i
         # ---------- NUEVO BLOQUE DE NORMALIZACIÓN DE DIGITS ----------
         # Si digits viene NULL en la BD, tratamos de inferirlo por el número ganador.
         if digits is None:
-            # Largo del número ganador, por ejemplo 9805 -> 4
+            # Largo del número ganador, por ejemplo 9805 -> 4, 31407 -> 5
             inferred = len(str(winning_number))
-            # Solo aceptamos 3 o 4; si no, cae a 3 por seguridad
-            if inferred in (3, 4):
+            # Aceptamos 3, 4 o 5 (Quinta)
+            if inferred in (3, 4, 5):
                 digits = inferred
             else:
                 digits = 3
+
         else:
             try:
                 digits = int(digits)
@@ -438,15 +439,24 @@ def set_winning_number(conn, game_id: int, winning_number: int, admin_user_id: i
                    gn.taken_by AS user_id,
                    CONCAT('Resultado del juego #', g.id) AS title,
                    CONCAT(
-                       'El número ganador es ',
-                       LPAD(%(num)s::text, COALESCE(g.digits, 3), '0')
-                   ) AS body,
+                        'El número ganador es ',
+                        CASE
+                        WHEN COALESCE(g.digits, 3) = 5 THEN
+                            -- 1234-5
+                            LEFT(LPAD(%(num)s::text, 5, '0'), 4) || '-' || RIGHT(LPAD(%(num)s::text, 5, '0'), 1)
+                        ELSE
+                            -- 3 o 4 normal
+                            LPAD(%(num)s::text, COALESCE(g.digits, 3), '0')
+                        END
+                    ) AS body,
+
                    jsonb_build_object(
                        'type', 'winner_announced',
                        'game_id', g.id,
                        -- número ganador ya con ceros a la izquierda
-                       'winning_number',
-                           LPAD(%(num)s::text, COALESCE(g.digits, 3), '0'),
+'winning_number', %(num)s,
+
+
                        -- mandamos también los dígitos del juego
                        'digits', COALESCE(g.digits, 3),
                        'played_at', to_char(

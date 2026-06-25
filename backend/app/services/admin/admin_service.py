@@ -3,35 +3,26 @@ from sqlalchemy import text
 from app.db.database import db
 
 
-from sqlalchemy import text
-from app.db.database import db
-
-
 def get_lottery_dashboard_summary():
+    total_users = db.session.execute(text("SELECT COUNT(*) FROM users")).scalar() or 0
 
-    # 👤 Total usuarios
-    total_users = db.session.execute(
-        text("SELECT COUNT(*) FROM users")
-    ).scalar() or 0
-
-    # 🎮 Juegos activos
+    # Juegos activos (state_id=1)
     try:
         active_games = db.session.execute(text("""
-            SELECT COUNT(*)
-            FROM games
-            WHERE COALESCE(state_id, 1) = 1
+            SELECT COUNT(*) FROM games WHERE state_id = 1
         """)).scalar() or 0
     except Exception:
         db.session.rollback()
         active_games = 0
 
-    # 👥 Jugadores únicos (por juego)
+    # 👇 jugadores = COUNT DISTINCT (game_id, taken_by) en game_numbers
     try:
         players_count = db.session.execute(text("""
             SELECT COUNT(*) FROM (
                 SELECT gn.game_id, gn.taken_by
                 FROM game_numbers gn
-                WHERE gn.taken_by IS NOT NULL
+                -- Si quisieras contar SOLO juegos activos, descomenta la línea de abajo:
+                -- JOIN games g ON g.id = gn.game_id AND g.state_id = 1
                 GROUP BY gn.game_id, gn.taken_by
             ) t
         """)).scalar() or 0
@@ -39,76 +30,68 @@ def get_lottery_dashboard_summary():
         db.session.rollback()
         players_count = 0
 
-    # 🎟 Ventas hoy (números tomados hoy)
     try:
-        numbers_today = db.session.execute(text("""
-            SELECT COUNT(*)
-            FROM game_numbers
-            WHERE taken_by IS NOT NULL
-              AND DATE(taken_at) = CURRENT_DATE
+        tickets_today = db.session.execute(text("""
+            SELECT COALESCE(SUM(quantity),0)
+            FROM tickets
+            WHERE sale_date = CURRENT_DATE
         """)).scalar() or 0
     except Exception:
         db.session.rollback()
-        numbers_today = 0
+        tickets_today = 0
 
-    # 📅 Ventas año actual
     try:
-        numbers_ytd = db.session.execute(text("""
-            SELECT COUNT(*)
-            FROM game_numbers
-            WHERE taken_by IS NOT NULL
-              AND EXTRACT(YEAR FROM taken_at) = EXTRACT(YEAR FROM CURRENT_DATE)
-        """)).scalar() or 0
+        revenue_ytd = db.session.execute(text("""
+            SELECT COALESCE(SUM(total_amount),0)
+            FROM tickets
+            WHERE EXTRACT(YEAR FROM sale_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+        """)).scalar() or 0.0
     except Exception:
         db.session.rollback()
-        numbers_ytd = 0
+        revenue_ytd = 0.0
 
-    # 📊 Ventas por mes
     try:
         sales_by_month = db.session.execute(text("""
-            SELECT 
-                TO_CHAR(date_trunc('month', taken_at), 'YYYY-MM') AS month,
-                COUNT(*) AS qty
-            FROM game_numbers
-            WHERE taken_by IS NOT NULL
-            GROUP BY 1
-            ORDER BY 1
+            SELECT TO_CHAR(date_trunc('month', sale_date), 'YYYY-MM') AS month,
+                   SUM(quantity) AS qty
+            FROM tickets
+            WHERE EXTRACT(YEAR FROM sale_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+            GROUP BY 1 ORDER BY 1
         """)).mappings().all()
-
         sales_by_month = [dict(r) for r in sales_by_month]
-
     except Exception:
         db.session.rollback()
         sales_by_month = []
 
-    # 👤 Últimos usuarios
+    try:
+        revenue_by_month = db.session.execute(text("""
+            SELECT TO_CHAR(date_trunc('month', sale_date), 'YYYY-MM') AS month,
+                   SUM(total_amount) AS revenue
+            FROM tickets
+            WHERE EXTRACT(YEAR FROM sale_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+            GROUP BY 1 ORDER BY 1
+        """)).mappings().all()
+        revenue_by_month = [dict(r) for r in revenue_by_month]
+    except Exception:
+        db.session.rollback()
+        revenue_by_month = []
+
     latest_users = db.session.execute(text("""
         SELECT id, name, phone, public_code, role_id
         FROM users
         ORDER BY id DESC
         LIMIT 5
     """)).mappings().all()
-
     latest_users = [dict(r) for r in latest_users]
 
-    # 🎟 Últimas ventas (últimos números tomados)
     try:
         latest_sales = db.session.execute(text("""
-            SELECT 
-                gn.id AS sale_id,
-                gn.game_id,
-                gn.number,
-                gn.taken_at,
-                u.name AS user_name
-            FROM game_numbers gn
-            JOIN users u ON u.id = gn.taken_by
-            WHERE gn.taken_by IS NOT NULL
-            ORDER BY gn.taken_at DESC
+            SELECT id AS sale_id, total_amount, sale_date
+            FROM tickets
+            ORDER BY sale_date DESC, id DESC
             LIMIT 5
         """)).mappings().all()
-
         latest_sales = [dict(r) for r in latest_sales]
-
     except Exception:
         db.session.rollback()
         latest_sales = []
@@ -124,14 +107,14 @@ def get_lottery_dashboard_summary():
             "players": int(players_count),
             "total_players": int(players_count),
 
-            "numbers_today": int(numbers_today),
-            "numbers_ytd": int(numbers_ytd),
+            "tickets_today": int(tickets_today),
+            "revenue_ytd": float(revenue_ytd),
         },
         "sales_by_month": sales_by_month,
+        "revenue_by_month": revenue_by_month,
         "latest_users": latest_users,
         "latest_sales": latest_sales,
     }
-
 
 def get_active_games_export_rows():
     """

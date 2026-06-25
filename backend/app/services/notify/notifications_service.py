@@ -22,7 +22,8 @@ def list_notifications(conn, user_id: int, unread_only: bool, page: int, per_pag
                 data,
                 data->>'type'                  AS type,
                 (data->>'game_id')::int        AS game_id,
-                (data->>'winning_number')::int AS winning_number,
+                NULLIF(REPLACE(data->>'winning_number','-',''),'')::int AS winning_number,
+
                 to_char(created_at,'YYYY-MM-DD HH24:MI:SS') AS created_at,
                 read_at IS NOT NULL            AS read
             FROM public.notifications
@@ -87,7 +88,8 @@ def create_notifications_for_game_winner(conn, game_id: int, winning_number: int
             SELECT DISTINCT taken_by AS user_id
             FROM public.game_numbers
             WHERE game_id = %(gid)s
-                AND LPAD(CAST(number AS TEXT), 3, '0') = LPAD(CAST(%(num)s AS TEXT), 3, '0')
+                AND LPAD(CAST(number AS TEXT), g.digits, '0') = LPAD(CAST(%(num)s AS TEXT), g.digits, '0')
+
                 AND taken_by IS NOT NULL
             )
 
@@ -95,17 +97,18 @@ def create_notifications_for_game_winner(conn, game_id: int, winning_number: int
             SELECT DISTINCT
                 gn.taken_by AS user_id,
                 CONCAT('¡Ganaste el juego #', g.id, '!') AS title,
-                CONCAT('Ganaste con el número ', LPAD(CAST(%(num)s AS TEXT), 3, '0')) AS body,
+                CONCAT('Ganaste con el número ', LPAD(CAST(%(num)s AS TEXT), g.digits, '0')) AS body,
                 jsonb_build_object(
                     'type', 'you_won',
                     'game_id', g.id,
-                    'winning_number', %(num)s
+                    'winning_number', %(num)s,
+                    'digits', g.digits
                 ) AS data
             FROM public.game_numbers gn
             JOIN public.games g ON g.id = gn.game_id
             WHERE gn.game_id = %(gid)s
             AND gn.taken_by IS NOT NULL
-            AND LPAD(CAST(gn.number AS TEXT), 3, '0') = LPAD(CAST(%(num)s AS TEXT), 3, '0')
+            AND LPAD(CAST(gn.number AS TEXT), g.digits, '0') = LPAD(CAST(%(num)s AS TEXT), g.digits, '0')
 
         """, {"gid": game_id, "num": winning_number})
         out["general"] = cur.rowcount
@@ -116,11 +119,12 @@ def create_notifications_for_game_winner(conn, game_id: int, winning_number: int
             SELECT DISTINCT
                    gn.taken_by AS user_id,
                    CONCAT('¡Ganaste el juego #', g.id, '!') AS title,
-                   CONCAT('Ganaste con el número ', LPAD(CAST(%(num)s AS TEXT), 3, '0')) AS body,
+                   CONCAT('Ganaste con el número ', LPAD(CAST(%(num)s AS TEXT), g.digits, '0')) AS body,
                    jsonb_build_object(
                        'type', 'you_won',
                        'game_id', g.id,
-                       'winning_number', %(num)s
+                       'winning_number', %(num)s,
+                       'digits', g.digits
                    ) AS data
             FROM public.game_numbers gn
             JOIN public.games g ON g.id = gn.game_id

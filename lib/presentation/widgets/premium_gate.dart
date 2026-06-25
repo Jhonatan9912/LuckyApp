@@ -6,12 +6,15 @@ class PremiumGate extends StatefulWidget {
   final Widget child;
   final Widget? fallback;
   final VoidCallback? onGoPro;
+  /// Si true, muestra el child sin importar si es PRO o no (ej: modo gratis)
+  final bool bypass;
 
   const PremiumGate({
     super.key,
     required this.child,
     this.fallback,
     this.onGoPro,
+    this.bypass = false,
   });
 
   @override
@@ -23,15 +26,15 @@ class _PremiumGateState extends State<PremiumGate> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.bypass) return widget.child;
+
     final subs = context.watch<SubscriptionProvider>();
 
-    // Guarda el último valor estable
     _lastIsPremium ??= subs.isPremium;
     if (!subs.loading) {
       _lastIsPremium = subs.isPremium;
     }
 
-    // Mientras loading=true, renderiza con el último valor conocido (no cambies la UI)
     final showPremium = _lastIsPremium == true;
 
     if (showPremium) return widget.child;

@@ -561,9 +561,13 @@ class _GamesBottomSheetState extends State<GamesBottomSheet> {
                                                       FontWeight.w600),
                                             ),
                                             TextSpan(
-                                              text: g.digits == 4
-                                                  ? '4 cifras'
-                                                  : '3 cifras',
+                                              text: g.digits == 5
+                                                  ? 'Quinta (5 cifras)'
+                                                  : g.digits == 4
+                                                      ? '4 cifras'
+                                                      : g.digits == 2
+                                                          ? '2 cifras'
+                                                          : '${g.digits} cifras',
                                             ),
                                           ],
                                         ),
@@ -678,7 +682,7 @@ class _GamesBottomSheetState extends State<GamesBottomSheet> {
                                                   : Icons.edit),
                                           color: locked
                                               ? Colors.grey
-                                              : Colors.deepPurple,
+                                              : const Color(0xFFD4AF37),
                                           onPressed: (_savingId == g.id ||
                                                   locked)
                                               ? null

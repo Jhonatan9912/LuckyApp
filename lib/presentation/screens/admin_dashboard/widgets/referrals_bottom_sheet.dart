@@ -89,7 +89,7 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Row(
                     children: [
-                      Icon(Icons.groups_2_outlined, color: Colors.deepPurple),
+                      Icon(Icons.groups_2_outlined, color: const Color(0xFFD4AF37)),
                       const SizedBox(width: 8),
                       Text(
                         'Referidos & Comisiones',
@@ -506,8 +506,21 @@ class _PayoutsChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return FilterChip(
-      label: Text(label),
+      label: Text(
+        label,
+        style: TextStyle(
+          color: selected ? const Color(0xFF4A3800) : const Color(0xFF5A4A20),
+          fontWeight: FontWeight.w600,
+          fontSize: 13,
+        ),
+      ),
       selected: selected,
+      selectedColor: const Color(0xFFD4AF37),
+      backgroundColor: const Color(0xFFFFF9E0),
+      checkmarkColor: const Color(0xFF4A3800),
+      side: BorderSide(
+        color: selected ? const Color(0xFFD4AF37) : const Color(0xFFEAD88A),
+      ),
       onSelected: (_) => onTap(),
     );
   }
@@ -517,9 +530,13 @@ class _Tabs extends StatelessWidget {
   const _Tabs();
   @override
   Widget build(BuildContext context) {
-    return const TabBar(
+    return TabBar(
       isScrollable: true,
-      tabs: [
+      labelColor: const Color(0xFF4A3800),
+      unselectedLabelColor: const Color(0xFF8B7030),
+      indicatorColor: const Color(0xFFD4AF37),
+      dividerColor: const Color(0xFFEAD88A),
+      tabs: const [
         Tab(text: 'Resumen'),
         Tab(text: 'Comisiones'),
         Tab(text: 'Pagos'),
@@ -1005,7 +1022,7 @@ class _PayoutDetailsSheetState extends State<_PayoutDetailsSheet> {
                   children: [
                     const Icon(
                       Icons.receipt_long_outlined,
-                      color: Colors.deepPurple,
+                      color: const Color(0xFFD4AF37),
                     ),
                     const SizedBox(width: 8),
                     Text(
@@ -1243,7 +1260,7 @@ class _SummaryHeader extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Icon(Icons.group_outlined, color: Colors.deepPurple),
+                const Icon(Icons.group_outlined, color: const Color(0xFFD4AF37)),
                 const SizedBox(width: 8),
                 Text('Resumen de referidos', style: txt.titleMedium),
               ],
@@ -1353,8 +1370,8 @@ class _ReferralCard extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: Colors.deepPurple.shade50,
-          child: const Icon(Icons.person_outline, color: Colors.deepPurple),
+          backgroundColor: const Color(0xFFFFF9E0),
+          child: const Icon(Icons.person_outline, color: const Color(0xFFD4AF37)),
         ),
         title: Text(name),
         subtitle: Text(phone),
@@ -1571,7 +1588,7 @@ class _Badge extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         decoration: BoxDecoration(
-          color: Colors.orange.shade50,
+          color: const Color(0xFFFFF9E0),
           borderRadius: BorderRadius.circular(999),
         ),
         child: Text(
@@ -1741,7 +1758,7 @@ class _PaySelectedSheetState extends State<_PaySelectedSheet> {
                   children: [
                     const Icon(
                       Icons.payments_outlined,
-                      color: Colors.deepPurple,
+                      color: const Color(0xFFD4AF37),
                     ),
                     const SizedBox(width: 8),
                     Text(

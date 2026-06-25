@@ -7,7 +7,11 @@ class AnimatedBall extends StatefulWidget {
   final Duration duration;
   final double size;
   final bool enableAnimation;
-  final int digits; // 👈 NUEVO: 3 o 4
+  final int digits;
+
+  // ✅ Personalización visual (se respeta para texto base)
+  final Color? textColor;
+  final double? textSize;
 
   const AnimatedBall({
     super.key,
@@ -16,6 +20,8 @@ class AnimatedBall extends StatefulWidget {
     required this.size,
     this.enableAnimation = true,
     this.digits = 3,
+    this.textColor,
+    this.textSize,
   });
 
   @override
@@ -27,13 +33,14 @@ class _AnimatedBallState extends State<AnimatedBall>
   Timer? _timer;
   late int _currentNumber;
   late AnimationController _scaleController;
+  bool _finished = false;
+
+  int get _maxValue => pow(10, widget.digits).toInt();
 
   @override
   void initState() {
     super.initState();
-
-    _currentNumber =
-        widget.enableAnimation ? _randomNumber() : widget.finalNumber;
+    _currentNumber = widget.finalNumber;
 
     _scaleController = AnimationController(
       vsync: this,
@@ -43,31 +50,57 @@ class _AnimatedBallState extends State<AnimatedBall>
       value: 1.0,
     );
 
-    if (widget.enableAnimation) {
-      _startAnimation();
+    _startIfNeeded();
+  }
+
+  @override
+  void didUpdateWidget(covariant AnimatedBall oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final needsRestart =
+        oldWidget.finalNumber != widget.finalNumber ||
+        oldWidget.enableAnimation != widget.enableAnimation ||
+        oldWidget.digits != widget.digits;
+
+    if (needsRestart) {
+      _timer?.cancel();
+      _finished = false;
+      _currentNumber = widget.finalNumber;
+      _scaleController.value = 1.0;
+      _startIfNeeded();
     }
   }
 
-  void _startAnimation() {
-    _timer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
-      if (!mounted) return;
-      setState(() => _currentNumber = _randomNumber());
+  void _startIfNeeded() {
+    if (!widget.enableAnimation) {
+      setState(() {
+        _currentNumber = widget.finalNumber;
+        _finished = true;
+      });
+      return;
+    }
+
+    final rnd = Random();
+
+    _timer = Timer.periodic(const Duration(milliseconds: 70), (_) {
+      if (!mounted || _finished) return;
+      setState(() {
+        _currentNumber = rnd.nextInt(_maxValue);
+      });
     });
 
     Future.delayed(widget.duration, () {
-      _timer?.cancel();
       if (!mounted) return;
-      setState(() => _currentNumber = widget.finalNumber);
+      _finished = true;
+      _timer?.cancel();
+      setState(() {
+        _currentNumber = widget.finalNumber;
+      });
 
       _scaleController.forward().then((_) {
         if (mounted) _scaleController.reverse();
       });
     });
-  }
-
-  int _randomNumber() {
-    final max = pow(10, widget.digits).toInt(); // 1000 ó 10000
-    return Random().nextInt(max);
   }
 
   @override
@@ -79,7 +112,39 @@ class _AnimatedBallState extends State<AnimatedBall>
 
   @override
   Widget build(BuildContext context) {
-    final isFourDigits = widget.digits == 4;
+    final bool isQuinta =
+    widget.digits == 5 || widget.finalNumber.toString().length >= 5;
+
+
+    // ✅ Quinta: fuente más grande por defecto
+    final double computedFontSize =
+        widget.textSize ?? (isQuinta ? 22 : (widget.digits == 4 ? 18 : 18));
+
+    // Color base (para todo menos el último dígito en Quinta)
+    final Color baseColor = widget.textColor ?? Colors.black;
+
+    // Texto base con padding (000 / 0000 / 00000)
+    final int effectiveDigits = isQuinta ? 5 : widget.digits;
+final raw = _currentNumber.toString().padLeft(effectiveDigits, '0');
+
+
+    // ✅ Widget del número (Text normal o RichText en Quinta)
+    final Widget numberWidget = isQuinta
+        ? _buildQuintaRichText(
+            raw: raw,
+            fontSize: computedFontSize,
+            baseColor: baseColor,
+          )
+        : Text(
+            raw,
+            style: TextStyle(
+              fontSize: computedFontSize,
+              fontWeight: FontWeight.w900,
+              color: baseColor,
+              letterSpacing: effectiveDigits == 4 ? 0.4 : 0.4,
+
+            ),
+          );
 
     return ScaleTransition(
       scale: _scaleController,
@@ -105,16 +170,50 @@ class _AnimatedBallState extends State<AnimatedBall>
                 fit: BoxFit.contain,
               ),
             ),
-            Text(
-              _currentNumber.toString().padLeft(widget.digits, '0'),
-              style: TextStyle(
-                fontSize: isFourDigits ? 16 : 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
+
+            // ✅ Para que nunca quede microscópico, usamos FittedBox
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: numberWidget,
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ✅ Quinta: "0000-0" y último dígito en rojo
+  Widget _buildQuintaRichText({
+    required String raw, // "00000"
+    required double fontSize,
+    required Color baseColor,
+  }) {
+    // raw tiene 5 chars, ej: "01234"
+    final left = raw.substring(0, 4); // "0123"
+    final last = raw.substring(4); // "4"
+
+    return RichText(
+      textAlign: TextAlign.center,
+      text: TextSpan(
+        style: TextStyle(
+          fontSize: fontSize,
+          fontWeight: FontWeight.w900,
+          color: baseColor,
+          letterSpacing: 0.6,
+        ),
+        children: [
+          TextSpan(text: '$left-'), // "0123-"
+          const TextSpan(
+            text: '', // placeholder (no afecta)
+          ),
+          TextSpan(
+            text: last, // "4"
+            style: const TextStyle(color: Colors.red),
+          ),
+        ],
       ),
     );
   }

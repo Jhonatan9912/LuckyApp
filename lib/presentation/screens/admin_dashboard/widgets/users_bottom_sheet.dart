@@ -553,7 +553,7 @@ trailing: FittedBox(
             IconButton(
               tooltip: 'Guardar',
               icon: const Icon(Icons.check),
-              color: Colors.deepPurple,
+              color: const Color(0xFFD4AF37),
               onPressed:
                   _saving || _tempRoleId == u.roleId ? null : () => _saveEdit(u),
             ),
@@ -576,7 +576,7 @@ trailing: FittedBox(
             IconButton(
               tooltip: 'Editar rol',
               icon: const Icon(Icons.edit),
-              color: Colors.deepPurple,
+              color: const Color(0xFFD4AF37),
               onPressed: () => _startEdit(u),
             ),
             IconButton(

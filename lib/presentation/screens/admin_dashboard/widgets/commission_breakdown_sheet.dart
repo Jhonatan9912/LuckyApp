@@ -64,7 +64,7 @@ class _CommissionBreakdownSheetState extends State<CommissionBreakdownSheet> {
                   ),
                   Row(
                     children: [
-                      const Icon(Icons.receipt_long_outlined, color: Colors.deepPurple),
+                      const Icon(Icons.receipt_long_outlined, color: const Color(0xFFD4AF37)),
                       const SizedBox(width: 8),
                       Text('Desglose de la solicitud', style: Theme.of(context).textTheme.titleMedium),
                       const Spacer(),
@@ -123,7 +123,7 @@ class _HeaderSummary extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         child: Row(
           children: [
-            const Icon(Icons.summarize_outlined, color: Colors.deepPurple),
+            const Icon(Icons.summarize_outlined, color: const Color(0xFFD4AF37)),
             const SizedBox(width: 8),
             Expanded(
               child: Column(

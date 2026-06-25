@@ -1,44 +1,40 @@
 import 'package:flutter/material.dart';
 import 'animated_ball.dart';
+import 'package:base_app/core/utils/lottery_number_format.dart';
 
 class SelectionRow extends StatelessWidget {
   final List<int> balls;
-  final bool showActions;
-  final VoidCallback onClear;
-  final int digits; // 👈 3 o 4
+  final int digits;
 
   const SelectionRow({
     super.key,
     required this.balls,
-    required this.showActions,
-    required this.onClear,
     this.digits = 3,
   });
 
   @override
   Widget build(BuildContext context) {
+    final bool isTwoDigits = digits == 2;
     final bool isFourDigits = digits == 4;
+    final bool isQuinta = digits == 5;
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxWidth = constraints.maxWidth;
 
-        // Cuántas balotas mostramos (máx 5 por si acaso)
         final count = balls.length.clamp(0, 5);
 
-        // Espaciado entre balotas
         const spacing = 12.0;
 
-        // Tamaños mínimos / máximos
-        final double minBallSize = isFourDigits ? 52.0 : 48.0;
-        final double maxBallSize = isFourDigits ? 72.0 : 65.0;
+        final double minBallSize = isQuinta
+            ? 56.0
+            : (isFourDigits ? 52.0 : (isTwoDigits ? 44.0 : 48.0));
 
-        // Si hay icono de borrar, reservamos algo de ancho para él
-        final double actionsWidth = showActions ? 56.0 : 0.0;
+        final double maxBallSize = isQuinta
+            ? 78.0
+            : (isFourDigits ? 72.0 : (isTwoDigits ? 60.0 : 65.0));
 
-        // Ancho restante disponible para las balotas
-        final double availableForBalls =
-            (maxWidth - actionsWidth).clamp(80.0, maxWidth);
+        final double availableForBalls = maxWidth.clamp(80.0, maxWidth);
 
         // Ancho total ocupado solo por los espacios
         final double totalSpacing = spacing * (count - 1);
@@ -48,8 +44,7 @@ class SelectionRow extends StatelessWidget {
             (availableForBalls - totalSpacing) / count.clamp(1, 5);
 
         // Lo limitamos a un rango razonable
-        final double ballSize =
-            rawSize.clamp(minBallSize, maxBallSize);
+        final double ballSize = rawSize.clamp(minBallSize, maxBallSize);
 
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -64,6 +59,7 @@ class SelectionRow extends StatelessWidget {
                   children: balls.asMap().entries.map((entry) {
                     final index = entry.key;
                     final number = entry.value;
+
                     return TweenAnimationBuilder<double>(
                       tween: Tween(begin: 0.0, end: 1.0),
                       duration: Duration(milliseconds: 300 + index * 100),
@@ -72,13 +68,14 @@ class SelectionRow extends StatelessWidget {
                           opacity: value,
                           child: Transform.scale(
                             scale: value,
-                            child: AnimatedBall(
-                              finalNumber: number,
-                              duration: const Duration(milliseconds: 300),
-                              size: ballSize,
-                              enableAnimation: false,
-                              digits: digits, // 👈 respeta 3/4 cifras
-                            ),
+child: AnimatedBall(
+  finalNumber: number,
+  duration: const Duration(milliseconds: 300),
+  size: ballSize,
+  enableAnimation: false,
+  digits: digits, // 3 / 4 / 5
+),
+
                           ),
                         );
                       },
@@ -87,17 +84,45 @@ class SelectionRow extends StatelessWidget {
                 ),
               ),
             ),
-
-            if (showActions) ...[
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.delete, size: 28, color: Colors.red),
-                onPressed: onClear,
-              ),
-            ],
           ],
         );
       },
+    );
+  }
+}
+
+class _QuintaMiniBall extends StatelessWidget {
+  final String txt;
+  final double size;
+
+  const _QuintaMiniBall({
+    required this.txt,
+    required this.size,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            txt,
+            style: const TextStyle(
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
