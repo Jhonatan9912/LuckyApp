@@ -29,14 +29,24 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
                 -- datos crudos de suscripción (última fila por usuario)
                 sub.entitlement                     AS subscription_entitlement,
                 UPPER(COALESCE(sub.status,'NONE'))  AS subscription_status,
-                COALESCE(sub.is_premium, FALSE)     AS subscription_is_active,
+                -- is_active se recalcula en tiempo real para no depender de la columna desactualizada
+                CASE
+                    WHEN sub.is_premium IS TRUE
+                     AND sub.expires_at IS NOT NULL
+                     AND sub.expires_at > NOW()
+                    THEN TRUE ELSE FALSE
+                END AS subscription_is_active,
                 sub.expires_at                      AS subscription_expires_at,
 
                 -- etiqueta amigable que espera el front (campo "subscription")
                 CASE
-                    WHEN sub.entitlement IS NULL THEN 'Sin suscripción'  -- o 'Sin suscripción'
-                    WHEN sub.is_premium THEN
-                    'PRO (vence ' || TO_CHAR(sub.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') || ')'
+                    WHEN sub.entitlement IS NULL THEN 'Sin suscripción'
+                    WHEN sub.is_premium IS TRUE
+                     AND sub.expires_at IS NOT NULL
+                     AND sub.expires_at > NOW()
+                    THEN 'PRO (vence ' || TO_CHAR(sub.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') || ')'
+                    WHEN sub.expires_at IS NOT NULL AND sub.expires_at <= NOW()
+                    THEN 'VENCIDA (' || TO_CHAR(sub.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') || ')'
                     ELSE
                     UPPER(COALESCE(sub.status,'NONE'))
                     || COALESCE(' (vence ' || TO_CHAR(sub.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') || ')','')

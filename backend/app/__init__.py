@@ -133,4 +133,13 @@ def create_app():
     # Registrar comandos CLI (mature-commissions)
     register_cli(app)
 
+    # Limpiar suscripciones vencidas al arrancar: cada deploy Railway las expira automáticamente
+    with app.app_context():
+        try:
+            from app.subscriptions.service import expire_all_stale
+            count = expire_all_stale()
+            app.logger.info("startup_expire_stale: %d suscripciones expiradas al arrancar", count)
+        except Exception as e:
+            app.logger.error("startup_expire_stale falló (no bloquea arranque): %s", e)
+
     return app

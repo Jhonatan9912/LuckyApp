@@ -11,6 +11,7 @@ from app.services.admin.users_service import (
     delete_user,
     UserHasActiveGames,
 )
+from app.subscriptions.service import expire_all_stale
 
 # ---------------------------------------------------------------------
 # GET /api/admin/users  -> lista paginada + búsqueda
@@ -115,3 +116,28 @@ def admin_users_delete(user_id: int):
 
     except Exception:
         return jsonify({"ok": False, "error": "Error interno al eliminar"}), 500
+
+
+# ---------------------------------------------------------------------
+# POST /api/admin/subscriptions/expire-stale
+# Expira en lote todas las suscripciones cuya expires_at ya pasó.
+# Llamar manualmente desde el admin cuando se detecten activas vencidas.
+# ---------------------------------------------------------------------
+@bp.post("/subscriptions/expire-stale")
+@jwt_required()
+def admin_expire_stale():
+    claims = get_jwt() or {}
+    role_id = claims.get("role_id") or claims.get("rid") or claims.get("role")
+    if role_id is None:
+        uid = get_jwt_identity()
+        role_id = db.session.execute(
+            text("SELECT role_id FROM users WHERE id=:uid"), {"uid": uid}
+        ).scalar()
+    if int(role_id) != 1:
+        return jsonify({"ok": False, "error": "Solo administradores"}), 403
+
+    try:
+        updated = expire_all_stale()
+        return jsonify({"ok": True, "expired": updated})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500

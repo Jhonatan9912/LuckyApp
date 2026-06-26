@@ -270,11 +270,13 @@ def _price_from_catalog(product_id: str, default_currency: str = "COP") -> tuple
     (COP en micros: 1 COP = 1_000_000 micros)
     """
     CATALOG = {
-        # 60.000 COP → 60_000_000_000 micros
-        "cm_suscripcion":  (60_000_000_000, "COP"),
+        # 10.000 COP → 10_000_000_000 micros  ✅ STARTER 2 cifras
+        "cms_suscripcion": (10_000_000_000, "COP"),
         # 20.000 COP → 20_000_000_000 micros
         "cml_suscripcion": (20_000_000_000, "COP"),
-        # 100.000 COP → 100_000_000_000 micros  ✅ NUEVO ULTRA
+        # 60.000 COP → 60_000_000_000 micros
+        "cm_suscripcion":  (60_000_000_000, "COP"),
+        # 100.000 COP → 100_000_000_000 micros
         "cmu_suscripcion": (100_000_000_000, "COP"),
     }
 
@@ -298,7 +300,7 @@ def _infer_plan_from_product_id(product_id: str) -> tuple[str, Optional[int]]:
     """
     pid = (product_id or "").strip()
 
-    # ✅ NUEVO: Ultra 100k → hasta 5 cifras
+    # Ultra 100k → hasta 5 cifras
     if pid.startswith("cmu_suscripcion"):
         return "ultra", 5
 
@@ -310,7 +312,32 @@ def _infer_plan_from_product_id(product_id: str) -> tuple[str, Optional[int]]:
     if pid.startswith("cml_suscripcion"):
         return "basic", 3
 
+    # 10.000: solo juego de 2 cifras (starter)
+    if pid.startswith("cms_suscripcion"):
+        return "starter", 2
+
     return "none", None
+
+def expire_all_stale() -> int:
+    """
+    Marca como expired TODAS las suscripciones cuya expires_at < NOW() pero
+    que aún tienen is_premium=true o status <> 'expired'.
+    Seguro llamar en cualquier momento; es idempotente.
+    Devuelve el número de filas actualizadas.
+    """
+    result = db.session.execute(text("""
+        UPDATE user_subscriptions
+           SET status     = 'expired',
+               is_premium = false
+         WHERE expires_at IS NOT NULL
+           AND expires_at < NOW()
+           AND (status <> 'expired' OR is_premium = true)
+    """))
+    db.session.commit()
+    updated = result.rowcount
+    _log_event("expire_stale_batch", updated=updated)
+    return updated
+
 
 def get_status(user_id: Optional[int]) -> SubscriptionStatus:
     if not user_id:
@@ -452,15 +479,16 @@ def manual_grant_pro(
         LIMIT 1
     """), {"uid": user_id}).fetchone()
 
-    if cur and cur.is_premium and cur.expires_at and cur.expires_at > datetime.utcnow():
-        raise ValueError("El usuario ya cuenta con una suscripción PRO activa.")
+    if cur and cur.is_premium and cur.expires_at:
+        exp = _to_aware_utc(cur.expires_at)
+        if exp and exp > _now_utc():
+            raise ValueError("El usuario ya cuenta con una suscripción PRO activa.")
 
     now = _now_utc()
     uid = int(user_id)
     pid = (product_id or "").strip()
 
-    # Por ahora solo permitimos estos 2 productos manuales
-    allowed_products = {"cm_suscripcion", "cml_suscripcion", "cmu_suscripcion"}
+    allowed_products = {"cms_suscripcion", "cml_suscripcion", "cm_suscripcion", "cmu_suscripcion"}
 
     if pid not in allowed_products:
         raise ValueError(f"Producto no permitido para activación manual: {pid}")
@@ -756,8 +784,13 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
     Recorre suscripciones cercanas a expirar o en estados inestables y las revalida contra Google.
     - Selecciona: status en ('on_hold','grace','active') o expirando en <= days_ahead días.
     - Usa purchase_token para reconsultar SubscriptionsV2 y actualiza la DB.
+    - Omite tokens manuales (manual-*); esos se gestionan con expire_all_stale.
     Devuelve un pequeño resumen.
     """
+    # 1) Primero expirar en lote todas las suscripciones (manuales + GP) que ya vencieron
+    expired_stale = expire_all_stale()
+    _log_event("reconcile_expired_stale", count=expired_stale)
+
     now = _now_utc()
     pkg = os.environ.get('GOOGLE_PLAY_PACKAGE_NAME', '')
     service = build_android_publisher()
@@ -784,7 +817,9 @@ def reconcile_subscriptions(batch_size: int = 100, days_ahead: int = 2) -> Dict[
         checked += 1
 
         token = getattr(sub, "purchase_token", None)
-        if not token:
+        if not token or token.startswith("manual-"):
+            # Suscripciones manuales no tienen token real de Google Play.
+            # Ya fueron expiradas por expire_all_stale() si correspondía.
             skipped += 1
             continue
 
@@ -908,9 +943,10 @@ def backfill_commissions(limit: int = 1000) -> Dict[str, Any]:
     DEFAULT_PRICE_MICROS = 20_000_000_000  # fallback mínimo
 
     PRICE_BY_PRODUCT = {
-        "cm_suscripcion":  60_000_000_000,
+        "cms_suscripcion": 10_000_000_000,
         "cml_suscripcion": 20_000_000_000,
-        "cmu_suscripcion": 100_000_000_000,  # ✅ ULTRA
+        "cm_suscripcion":  60_000_000_000,
+        "cmu_suscripcion": 100_000_000_000,
     }
 
 
