@@ -7,6 +7,7 @@ from .db.database import init_db
 from dotenv import load_dotenv
 import os
 from .cli import register_cli
+from apscheduler.schedulers.background import BackgroundScheduler
 
 def _as_bool(v, default=False):
     if v is None:
@@ -133,7 +134,7 @@ def create_app():
     # Registrar comandos CLI (mature-commissions)
     register_cli(app)
 
-    # Limpiar suscripciones vencidas al arrancar: cada deploy Railway las expira automáticamente
+    # Limpiar suscripciones vencidas al arrancar
     with app.app_context():
         try:
             from app.subscriptions.service import expire_all_stale
@@ -141,5 +142,21 @@ def create_app():
             app.logger.info("startup_expire_stale: %d suscripciones expiradas al arrancar", count)
         except Exception as e:
             app.logger.error("startup_expire_stale falló (no bloquea arranque): %s", e)
+
+    # Cron interno: expira suscripciones vencidas cada hora automáticamente
+    def _cron_expire():
+        with app.app_context():
+            try:
+                from app.subscriptions.service import expire_all_stale
+                count = expire_all_stale()
+                if count:
+                    app.logger.info("cron_expire_stale: %d suscripciones expiradas", count)
+            except Exception as e:
+                app.logger.error("cron_expire_stale falló: %s", e)
+
+    scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(_cron_expire, "interval", hours=1)
+    scheduler.start()
+    app.logger.info("cron_expire_stale: scheduler iniciado (cada hora)")
 
     return app
