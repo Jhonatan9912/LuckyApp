@@ -1,8 +1,11 @@
 // lib/core/config/env.dart
+import 'package:flutter/foundation.dart';
 
 class Env {
-  /// Cambia esto a true cuando quieras usar Railway / Producción.
-  static const bool useProd = false;
+  /// En debug (flutter run / pruebas locales) → false → usa localhost.
+  /// En release (flutter build appbundle --release) → true → usa Railway.
+  /// No hace falta cambiar este archivo nunca más.
+  static bool get useProd => !kDebugMode;
 
   /// Localhost para Flutter: 10.0.2.2 = PC desde el emulador Android
   static const String _localBaseUrl = 'http://10.0.2.2:8000';

@@ -64,6 +64,9 @@ def admin_update_game(game_id: int):
     except (TypeError, ValueError):
         lottery_id = None
 
+    # nombre personalizado (anula lottery_id cuando viene relleno)
+    lottery_name = (body.get("lottery_name") or "").strip() or None
+
     # fecha/hora opcionales
     scheduled_date = (body.get("played_date") or "").strip() or None
     scheduled_time = (body.get("played_time") or "").strip() or None
@@ -78,7 +81,7 @@ def admin_update_game(game_id: int):
     conn = None
     try:
         conn = db.engine.raw_connection()
-        item = update_game(conn, game_id, lottery_id, scheduled_date, scheduled_time, winning_number)
+        item = update_game(conn, game_id, lottery_id, scheduled_date, scheduled_time, winning_number, lottery_name=lottery_name)
         if not item:
             return jsonify({"error": "Game not found"}), 404
         return jsonify({"ok": True, "item": item}), 200

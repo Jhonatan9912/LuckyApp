@@ -123,11 +123,11 @@ final formatted = rawNumbers
 void _onDigitsChanged(int value) async {
   if (uiDigits == value) return;
 
-  // 2 cifras siempre está permitido (gratis)
-  if (value != 2) {
+  // Para 4+ dígitos, verificar el plan antes de cambiar el modo
+  // Para 2 y 3 siempre se puede seleccionar (se bloquea en reserve si no tiene plan)
+  if (value >= 4) {
     final subs = context.read<SubscriptionProvider>();
-    final int maxDigits = subs.maxDigits ?? 3;
-
+    final int maxDigits = subs.maxDigits ?? 0;
     if (value > maxDigits) {
       await _openSubscriptionSheet();
       return;
@@ -177,7 +177,7 @@ void _onDigitsChanged(int value) async {
 _subsListener = () {
   _ctrl.applyPremiumFromStore(
     premium: subs.isPremium,
-    planDigits: subs.maxDigits ?? 3,
+    planDigits: subs.maxDigits ?? 3,  // 3 como mínimo de UI (libre preview hasta 3 cifras)
   );
 };
 subs.addListener(_subsListener!);
@@ -263,8 +263,8 @@ return AnimatedBuilder(
       final subs = context.watch<SubscriptionProvider>();
       final isPro = subs.isPremium;
 
-      // 👇 Nuevo: cuántas cifras tiene permitido el usuario según su plan
-      final int maxDigits = subs.maxDigits ?? 3; // 20k => 3, 60k => 4
+      // Cifras máximas del plan (null = sin plan, 2 = starter, 3 = lite, etc.)
+      final int maxDigits = subs.maxDigits ?? 0;
 
       return Scaffold(
         appBar: DashboardAppBar(
@@ -323,7 +323,7 @@ return AnimatedBuilder(
           child: Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
-                colors: [Color(0xFFFFF9F0), Color(0xFFFFF3D8)],
+                colors: [Colors.white, Color(0xFFF5F5F5)],
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
               ),
@@ -404,8 +404,7 @@ Transform.translate(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: tabs.SelectionTabs(
           index: _tabIndex,
-          historyUnlocked: _ctrl.mode.isFreeMode ||
-              (isPro && (subs.maxDigits ?? 0) >= uiDigits),
+          historyUnlocked: isPro && (subs.maxDigits ?? 0) >= uiDigits,
           onHistoryLocked: _openSubscriptionSheet,
           onChanged: (i) async {
             setState(() => _tabIndex = i);
@@ -433,7 +432,7 @@ Transform.translate(
                             return SingleChildScrollView(
                               padding: EdgeInsets.fromLTRB(16, 0, 16, _contentBottomSafe),
                               child: PremiumGate(
-                                bypass: _ctrl.mode.isFreeMode,
+                                bypass: isPro && (subs.maxDigits ?? 0) >= uiDigits,
                                 onGoPro: () => Navigator.pushNamed(context, '/pro'),
                                 child: Align(
                                   alignment: Alignment.topCenter,
@@ -531,18 +530,15 @@ Transform.translate(
 
                    
   Widget _buildBottomButtons() {
-    // si NO está en Juego Actual, no mostramos botones de juego
-    if (_tabIndex != 0) {
-      return const SizedBox.shrink();
-    }
-  if (_hydrating) return const SizedBox.shrink();
-    // Lee el provider UNA vez aquí
+    if (_tabIndex != 0) return const SizedBox.shrink();
+    if (_hydrating) return const SizedBox.shrink();
+
     final subs = context.watch<SubscriptionProvider>();
     final isPremium = subs.isPremium;
-    final isFreeMode = _ctrl.mode.isFreeMode; // 2 cifras = gratis
+    // El usuario puede reservar si tiene plan activo con suficientes dígitos
+    final canReserve = isPremium && (subs.maxDigits ?? 0) >= uiDigits;
 
-    // Mientras carga suscripción, mostrar JUGAR si aún no ha jugado
-    // (generateLocalPreview es 100% local, no necesita backend)
+    // Mientras carga la suscripción: mostrar JUGAR (preview local)
     if (subs.loading || subs.activating) {
       if (!_ctrl.hasPlayedOnce) {
         return PlayButton(
@@ -557,24 +553,21 @@ Transform.translate(
       return const SizedBox.shrink();
     }
 
-    // 1) FREE y NO en modo gratis: botón JUGAR local (sin backend)
-    if (!isPremium && !isFreeMode) {
+    // Sin plan suficiente: solo preview local, sin reservar
+    if (!canReserve) {
       return PlayButton(
         onPressed: () async {
           if (!_ctrl.animating && !_ctrl.saving) {
             await _ctrl.generateLocalPreview();
           }
         },
-        key: const ValueKey('play_free'),
+        key: ValueKey('play_locked_$uiDigits'),
       );
     }
 
-    // 2) PRO o modo gratis (2 cifras): lógica completa
+    // Con plan: flujo completo (JUGAR → ver números → RESERVAR)
     if (_ctrl.showFinalButtons) {
-      // Oculta mientras se está reservando (animación + commit)
       if (_ctrl.reserving) return const SizedBox.shrink();
-
-      // Reserva completada: no mostramos botones
       if (_ctrl.hasAddedFinal) return const SizedBox.shrink();
 
       return ActionButtons(
@@ -600,14 +593,10 @@ Transform.translate(
               await _ctrl.openFreshGame();
               return;
             } else if (code == 'UNAUTHORIZED' || code == 'UNAUTHENTICATED' || code == 'TOKEN_EXPIRED') {
-              if (isFreeMode) {
-                await _showWarn('Tu sesión expiró. Inicia sesión de nuevo para reservar.');
-              } else {
-                final nav = Navigator.of(context, rootNavigator: true);
-                await _showError(msg);
-                if (!mounted) return;
-                nav.pushNamedAndRemoveUntil('/login', (_) => false);
-              }
+              final nav = Navigator.of(context, rootNavigator: true);
+              await _showError(msg);
+              if (!mounted) return;
+              nav.pushNamedAndRemoveUntil('/login', (_) => false);
             } else {
               await _showError(msg);
             }
@@ -615,25 +604,21 @@ Transform.translate(
         },
         onRetry: () async => _ctrl.retry(),
         isSaving: _ctrl.saving,
-        isPremium: isPremium || isFreeMode,
+        isPremium: true,
         onGoPro: () => Navigator.pushNamed(context, '/pro'),
       );
     }
 
-
-// Estado inicial: solo "JUGAR" (para PRO)
-if (!_ctrl.hasPlayedOnce) {
-  return PlayButton(
-    onPressed: () async {
-      if (!_ctrl.animating && !_ctrl.saving) {
-        // ✅ Solo preview local, SIN tocar backend
-        await _ctrl.generateLocalPreview();
-      }
-    },
-    key: const ValueKey('play_pro'),
-  );
-}
-
+    if (!_ctrl.hasPlayedOnce) {
+      return PlayButton(
+        onPressed: () async {
+          if (!_ctrl.animating && !_ctrl.saving) {
+            await _ctrl.generateLocalPreview();
+          }
+        },
+        key: const ValueKey('play_pro'),
+      );
+    }
 
     return const SizedBox.shrink();
   }

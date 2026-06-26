@@ -184,15 +184,23 @@ class _GamesBottomSheetState extends State<GamesBottomSheet> {
 
     int? selWinning = g.winningNumber;
 
-    // Preseleccionar lotería por nombre
+    // Preseleccionar lotería por nombre; -99 = nombre personalizado
+    const int kCustomLottery = -99;
     int? selLotteryId;
+    String customInitialName = '';
     if (lots.isNotEmpty) {
       final match = lots.firstWhere(
         (it) => it.name.toLowerCase() == g.lotteryName.toLowerCase(),
         orElse: () => const LotteryItem(id: -1, name: ''),
       );
-      selLotteryId = (match.id == -1) ? null : match.id;
+      if (match.id == -1) {
+        selLotteryId = kCustomLottery;
+        customInitialName = g.lotteryName;
+      } else {
+        selLotteryId = match.id;
+      }
     }
+    final customNameCtrl = TextEditingController(text: customInitialName);
     if (!mounted) return;
 
     // === CONTROL DE GANADOR (3 o 4 dígitos según el juego) ==================
@@ -222,16 +230,33 @@ class _GamesBottomSheetState extends State<GamesBottomSheet> {
                     isDense: true,
                     border: OutlineInputBorder(),
                   ),
-                  items: lots
-                      .map(
-                        (it) => DropdownMenuItem<int>(
-                          value: it.id,
-                          child: Text(it.name),
-                        ),
-                      )
-                      .toList(),
+                  items: [
+                    const DropdownMenuItem<int>(
+                      value: kCustomLottery,
+                      child: Text('✏ Escribir nombre personalizado...'),
+                    ),
+                    ...lots.map(
+                      (it) => DropdownMenuItem<int>(
+                        value: it.id,
+                        child: Text(it.name),
+                      ),
+                    ),
+                  ],
                   onChanged: (val) => setLocal(() => selLotteryId = val),
                 ),
+                if (selLotteryId == kCustomLottery) ...[
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: customNameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Nombre personalizado del juego',
+                      hintText: 'Ej: Lotería del Valle',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    textCapitalization: TextCapitalization.words,
+                  ),
+                ],
                 const SizedBox(height: 12),
                 Row(
                   children: [
@@ -353,8 +378,14 @@ class _GamesBottomSheetState extends State<GamesBottomSheet> {
         ? null
         : '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
+    final bool isCustomName = (selLotteryId == kCustomLottery);
     final payload = GameEdit(
-      lotteryId: selLotteryId,
+      lotteryId: isCustomName ? null : selLotteryId,
+      customLotteryName: isCustomName
+          ? (customNameCtrl.text.trim().isNotEmpty
+              ? customNameCtrl.text.trim()
+              : null)
+          : null,
       playedDate: newDate ?? (g.playedDate.isEmpty ? null : g.playedDate),
       playedTime: newTime ?? (g.playedTime.isEmpty ? null : g.playedTime),
       // si usas onSetWinner, aquí NO mandamos el ganador
@@ -368,14 +399,18 @@ class _GamesBottomSheetState extends State<GamesBottomSheet> {
       setState(() => _savingId = g.id);
 
       GameRow updated = g.copyWith(
-        lotteryName: (selLotteryId == null)
-            ? g.lotteryName
-            : (lots
+        lotteryName: isCustomName
+            ? (customNameCtrl.text.trim().isNotEmpty
+                ? customNameCtrl.text.trim()
+                : g.lotteryName)
+            : (selLotteryId == null)
+                ? g.lotteryName
+                : lots
                     .firstWhere(
                       (it) => it.id == selLotteryId,
                       orElse: () => const LotteryItem(id: -1, name: ''),
                     )
-                    .name),
+                    .name,
         playedDate: payload.playedDate ?? g.playedDate,
         playedTime: payload.playedTime ?? g.playedTime,
       );
@@ -778,12 +813,14 @@ class LotteryItem {
 
 class GameEdit {
   final int? lotteryId;
+  final String? customLotteryName;
   final String? playedDate;
   final String? playedTime;
   final int? winningNumber;
 
   GameEdit({
     this.lotteryId,
+    this.customLotteryName,
     this.playedDate,
     this.playedTime,
     this.winningNumber,
@@ -791,6 +828,7 @@ class GameEdit {
 
   Map<String, dynamic> toJson() => {
         "lottery_id": lotteryId,
+        "lottery_name": customLotteryName,
         "played_date": playedDate,
         "played_time": playedTime,
         "winning_number": winningNumber,

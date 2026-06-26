@@ -55,18 +55,20 @@ class SubscriptionProvider extends ChangeNotifier {
   Set<GameMode> _allowedModes = <GameMode>{};
   Set<GameMode> get allowedModes => Set.unmodifiable(_allowedModes);
 
-  bool canUse(GameMode mode) => mode.isFreeMode || _allowedModes.contains(mode);
+  bool canUse(GameMode mode) => _allowedModes.contains(mode);
 
-  /// ✅ Compatibilidad con tu app actual:
-  /// - si allowedModes contiene solo 3 → maxDigits = 3
-  /// - si contiene 4 → maxDigits = 4
-  /// - si contiene quinta → maxDigits = 5 (interpretación: "3 opciones")
-  /// Nota: digits2 siempre está permitido (gratis), no afecta maxDigits
+  /// Máximo de dígitos desbloqueados por el plan activo.
+  /// null = sin suscripción (solo preview)
+  /// 2 = plan starter (10k) — solo 2 cifras
+  /// 3 = plan lite (20k) — 2 y 3 cifras
+  /// 4 = plan full (60k) — 2, 3 y 4 cifras
+  /// 5 = plan ultra (100k) — 2, 3, 4 y 5 cifras
   int? get maxDigits {
     if (!_isPremium) return null;
     if (_allowedModes.contains(GameMode.quinta)) return 5;
     if (_allowedModes.contains(GameMode.digits4)) return 4;
     if (_allowedModes.contains(GameMode.digits3)) return 3;
+    if (_allowedModes.contains(GameMode.digits2)) return 2;
     return null;
   }
 
@@ -82,10 +84,10 @@ class SubscriptionProvider extends ChangeNotifier {
   bool _billingConfigured = false;
   StreamSubscription<List<PurchaseDetails>>? _purchaseSub;
 
-  // ⚠️ AJUSTA ESTO al productId EXACTO en Play Console (NO base plan)
   static const Set<String> _gpProductIds = {
-    'cm_suscripcion',
+    'cms_suscripcion',
     'cml_suscripcion',
+    'cm_suscripcion',
   };
 
   ProductDetails? _product;
@@ -166,8 +168,7 @@ class SubscriptionProvider extends ChangeNotifier {
   // ✅ Normalizador: backend -> allowedModes
   // ==========================================================
   Set<GameMode> _modesFromBackend(Map<String, dynamic> json, bool isPremium) {
-    // digits2 siempre está permitido (gratis para todos)
-    final base = <GameMode>{GameMode.digits2};
+    final base = <GameMode>{};
 
     if (!isPremium) return base;
 
@@ -194,10 +195,11 @@ class SubscriptionProvider extends ChangeNotifier {
       md = int.tryParse(rawMaxDigits);
     }
 
-    // ✅ Reglas:
-    // md=3 -> 2 + 3 cifras
-    // md=4 -> 2 + 3 y 4 cifras
-    // md=5 -> 2 + 3, 4 y quinta
+    // md=2 → solo 2 cifras (plan starter 10k)
+    // md=3 → 2 + 3 cifras
+    // md=4 → 2, 3 y 4 cifras
+    // md=5 → 2, 3, 4 y quinta
+    if (md == 2) return <GameMode>{GameMode.digits2};
     if (md == 3) return <GameMode>{GameMode.digits2, GameMode.digits3};
     if (md == 4) return <GameMode>{GameMode.digits2, GameMode.digits3, GameMode.digits4};
     if (md == 5) return <GameMode>{GameMode.digits2, GameMode.digits3, GameMode.digits4, GameMode.quinta};

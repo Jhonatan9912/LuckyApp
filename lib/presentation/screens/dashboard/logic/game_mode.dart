@@ -36,6 +36,6 @@ extension GameModeX on GameMode {
 
   bool get hasFifth => this == GameMode.quinta;
 
-  /// True si este modo es completamente gratis (jugar + reservar)
-  bool get isFreeMode => this == GameMode.digits2;
+  /// 2 cifras ya no es gratis — requiere suscripción como cualquier otro modo
+  bool get isFreeMode => false;
 }

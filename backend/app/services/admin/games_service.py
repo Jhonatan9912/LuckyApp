@@ -181,7 +181,8 @@ def update_game(conn, game_id: int,
                 lottery_id: Optional[int],
                 scheduled_date: Optional[str],
                 scheduled_time: Optional[str],
-                winning_number: Optional[int] = None) -> Optional[Dict[str, Any]]:
+                winning_number: Optional[int] = None,
+                lottery_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
     
         # --- variables temporales para push post-commit ---
     tokens_to_push = []
@@ -192,7 +193,7 @@ def update_game(conn, game_id: int,
     with conn.cursor() as cur:
         # 1) Leer y BLOQUEAR solo la fila de games (sin LEFT JOIN)
         cur.execute("""
-            SELECT id, lottery_id, scheduled_date, scheduled_time, winning_number
+            SELECT id, lottery_id, lottery_name, scheduled_date, scheduled_time, winning_number
             FROM public.games
             WHERE id = %(id)s
             FOR UPDATE
@@ -202,10 +203,11 @@ def update_game(conn, game_id: int,
             conn.rollback()
             return None
 
-        old_lottery_id = row[1]
-        old_date       = row[2]
-        old_time       = row[3]
-        old_winner     = row[4]
+        old_lottery_id   = row[1]
+        old_lottery_name = row[2]
+        old_date         = row[3]
+        old_time         = row[4]
+        old_winner       = row[5]
 
         # 2) Chequear bloqueo por (ganador ya fijado) + (fecha/hora pasada)
         cur.execute(_SQL_LOCKED_BY_TIME_AND_WINNER, {"id": game_id})
@@ -215,21 +217,32 @@ def update_game(conn, game_id: int,
             raise ValueError("GAME_LOCKED")
 
         # 3) Nuevos valores efectivos (si no mandan, conservar)
-        new_lottery_id = lottery_id     if lottery_id     is not None else old_lottery_id
-        new_date       = scheduled_date if scheduled_date is not None else old_date
-        new_time       = scheduled_time if scheduled_time is not None else old_time
-        new_winner     = winning_number if winning_number is not None else old_winner
+        # lottery_name personalizado tiene prioridad sobre lottery_id del catálogo
+        if lottery_name:
+            new_lottery_id   = None
+            new_lottery_name = lottery_name
+        elif lottery_id is not None:
+            new_lottery_id   = lottery_id
+            new_lottery_name = None
+        else:
+            new_lottery_id   = old_lottery_id
+            new_lottery_name = old_lottery_name
+        new_date   = scheduled_date if scheduled_date is not None else old_date
+        new_time   = scheduled_time if scheduled_time is not None else old_time
+        new_winner = winning_number if winning_number is not None else old_winner
 
         # 4) Actualizar
         cur.execute("""
             UPDATE public.games
             SET lottery_id     = %(lottery_id)s,
+                lottery_name   = %(lottery_name)s,
                 scheduled_date = %(scheduled_date)s,
                 scheduled_time = %(scheduled_time)s,
                 winning_number = %(winning_number)s
             WHERE id = %(id)s
         """, {
             "lottery_id": new_lottery_id,
+            "lottery_name": new_lottery_name,
             "scheduled_date": new_date,
             "scheduled_time": new_time,
             "winning_number": new_winner,
@@ -239,6 +252,7 @@ def update_game(conn, game_id: int,
         # 5) Si cambió Lotería/Fecha/Hora y hay fecha+hora -> notificar jugadores
         schedule_changed = (
             new_lottery_id != old_lottery_id or
+            new_lottery_name != old_lottery_name or
             new_date != old_date or
             new_time != old_time
         )

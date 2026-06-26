@@ -844,24 +844,22 @@ Future<ReserveOutcome> add() async {
     );
   }
 
-  // 2 cifras es gratis: no requiere premium ni upgrade
-  if (!_mode.isFreeMode) {
-    if (!_isPremium) {
-      return const ReserveOutcome(
-        ok: false,
-        code: 'NEED_PREMIUM',
-        message: 'Necesitas PRO para reservar.',
-        status: 403,
-      );
-    }
-    if (digitsPerBall > _maxDigitsAllowed) {
-      return const ReserveOutcome(
-        ok: false,
-        code: 'NEED_UPGRADE',
-        message: 'Tu plan no permite este modo. Actualiza tu suscripción.',
-        status: 403,
-      );
-    }
+  // Todos los modos requieren suscripción activa con plan suficiente
+  if (!_isPremium) {
+    return const ReserveOutcome(
+      ok: false,
+      code: 'NEED_PREMIUM',
+      message: 'Necesitas una suscripción para reservar.',
+      status: 403,
+    );
+  }
+  if (digitsPerBall > _maxDigitsAllowed) {
+    return const ReserveOutcome(
+      ok: false,
+      code: 'NEED_UPGRADE',
+      message: 'Tu plan no permite este modo. Actualiza tu suscripción.',
+      status: 403,
+    );
   }
 
   final stillRevealing = _animating || !_showFinalButtons;
@@ -1771,27 +1769,25 @@ for (final m in result) {
       'game_id': gameId,
     };
   }
-// planDigits: 3 (cml), 4 (cm), 5 (cmu)
+// planDigits: 2 (cms), 3 (cml), 4 (cm), 5 (cmu)
 Future<void> applyPremiumFromStore({
   required bool premium,
   required int planDigits,
 }) async {
   _isPremium = premium;
 
-  // ✅ setea el máximo permitido por plan
-  _maxDigitsAllowed = planDigits.clamp(3, 5);
+  // Setea el máximo permitido por plan (2..5 o 3 para free como default de UI)
+  _maxDigitsAllowed = planDigits.clamp(2, 5);
 
-  // Persiste en sesión
   await _session.setIsPremium(premium);
-  await _session.setMaxDigitsAllowed(_maxDigitsAllowed); // 👈 necesitas este método
+  await _session.setMaxDigitsAllowed(_maxDigitsAllowed);
 
-  // Si el usuario estaba en un modo no permitido, bájalo
-  if (digitsPerBall > _maxDigitsAllowed && !_mode.isFreeMode) {
-    if (_maxDigitsAllowed == 4) {
-      setGameMode(GameMode.digits4);
-    } else {
-      setGameMode(GameMode.digits3);
-    }
+  // Si el usuario estaba en un modo que su plan ya no permite, bajarlo
+  if (digitsPerBall > _maxDigitsAllowed) {
+    if (_maxDigitsAllowed >= 5) setGameMode(GameMode.quinta);
+    else if (_maxDigitsAllowed >= 4) setGameMode(GameMode.digits4);
+    else if (_maxDigitsAllowed >= 3) setGameMode(GameMode.digits3);
+    else setGameMode(GameMode.digits2);
   }
 
   notifyListeners();

@@ -194,15 +194,15 @@ def generate_five_available(
     avoid_game_id: int | None = None,
 ) -> Tuple[int | None, List[int]]:
     """
-    - PRO: NO crea juego al jugar. Si hay juego abierto, muestra 5 libres de ese juego.
-    - NO PRO: NO crea juegos. Si hay juego abierto, muestra 5 libres de ese juego.
-              Si no hay juego abierto, devuelve un PREVIEW y game_id=None.
+    - PRO con plan suficiente: muestra 5 números libres del juego abierto.
+    - Sin PRO o plan insuficiente: devuelve preview local (game_id=None).
     """
     max_number = _max_number_for_digits(digits)
-    is_free_mode = (digits == 2)
 
-    # ---- Usuario NO PRO y NO modo gratis: no crear juegos ----
-    if not is_free_mode and (not user_id or not _is_user_pro(int(user_id))):
+    is_premium = user_id and _is_user_pro(int(user_id))
+
+    # Usuario sin PRO: solo preview local, nunca crea juegos
+    if not is_premium:
         gid = find_active_unscheduled_game_id(digits=digits)
         if gid is None:
             return None, _generate_preview_numbers(k=5, digits=digits)
@@ -230,10 +230,10 @@ def generate_five_available(
 
         return gid, numbers
 
-    if not is_free_mode:
-        allowed_digits = _user_max_digits(int(user_id))
-        if digits in (4, 5) and allowed_digits < digits:
-            raise PermissionError(f"Tu plan actual no permite jugar {digits} cifras.")
+    # Usuario PRO: verificar que su plan permite esos dígitos
+    allowed_digits = _user_max_digits(int(user_id))
+    if digits > allowed_digits:
+        raise PermissionError(f"Tu plan actual no permite jugar {digits} cifras.")
 
     # 👉 Buscar juego abierto SIN crear uno nuevo
     gid = find_active_unscheduled_game_id(digits=digits)
@@ -273,19 +273,14 @@ def commit_selection_auto(user_id: int, numbers: List[int], digits: int = 3) -> 
     Si NO hay juego abierto → crea uno y reserva ahí.
     Si YA hay juego abierto → reserva ahí.
     """
-
-    is_free_mode = (digits == 2)
-
-    # Blindaje por plan (solo para modos de pago)
-    if not is_free_mode:
-        allowed_digits = _user_max_digits(user_id)
-        if digits in (4, 5) and allowed_digits < digits:
-            return {
-                "ok": False,
-                "code": "DIGITS_NOT_ALLOWED",
-                "error": f"Tu plan actual no permite jugar {digits} cifras."
-            }
-
+    # Verificar plan (todos los modos requieren suscripción, incluyendo 2 cifras)
+    allowed_digits = _user_max_digits(user_id)
+    if digits > allowed_digits:
+        return {
+            "ok": False,
+            "code": "DIGITS_NOT_ALLOWED",
+            "error": f"Tu plan actual no permite jugar {digits} cifras."
+        }
 
     # Buscar si ya hay uno abierto
     gid = find_active_unscheduled_game_id(digits=digits)
@@ -338,23 +333,21 @@ def commit_selection(user_id: int, game_id: int, numbers: List[int]) -> dict:
             "error": f"Cada número debe estar entre 0 y {max_number}."
         }
 
-    is_free_mode = (digits == 2)
+    # Todos los modos requieren suscripción activa con el plan correcto
+    if not _is_user_pro(user_id):
+        return {
+            "ok": False,
+            "code": "NOT_PREMIUM",
+            "error": "Necesitas una suscripción para reservar."
+        }
 
-    if not is_free_mode:
-        user_allowed_digits = _user_max_digits(user_id)
-        if digits in (4, 5) and user_allowed_digits < digits:
-            return {
-                "ok": False,
-                "code": "DIGITS_NOT_ALLOWED",
-                "error": f"Tu plan actual no permite jugar {digits} cifras."
-            }
-
-        if not _is_user_pro(user_id):
-            return {
-                "ok": False,
-                "code": "NOT_PREMIUM",
-                "error": "Necesitas la suscripción PRO para reservar."
-            }
+    user_allowed_digits = _user_max_digits(user_id)
+    if digits > user_allowed_digits:
+        return {
+            "ok": False,
+            "code": "DIGITS_NOT_ALLOWED",
+            "error": f"Tu plan actual no permite jugar {digits} cifras."
+        }
 
     winning_number, state_id, used = row[1], row[2], int(row[3])
     # lottery_id, lottery_name, scheduled_date, scheduled_time = row[4], row[5], row[6], row[7]
