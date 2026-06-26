@@ -335,20 +335,23 @@ return AnimatedBuilder(
                   children: [
                     SizedBox(height: gapTop),
 
-                    Consumer<ReferralProvider>(
-                      builder: (_, p, __) => ReferralPayoutTile(
-                        code: _ctrl.referralCode,
-                        minToWithdraw: 100000,
-                        onWithdraw: () async {
-                          final submitted = await showPayoutRequestSheet(context);
-
-                          if (submitted == true && context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Solicitud de retiro enviada')),
-                            );
-                          }
-                        },
-                      ),
+                    // Código de referido: solo visible con suscripción PAGADA (no trial, no gratis)
+                    Consumer2<SubscriptionProvider, ReferralProvider>(
+                      builder: (_, subs, refs, __) {
+                        if (!subs.isPaidPremium) return const SizedBox.shrink();
+                        return ReferralPayoutTile(
+                          code: _ctrl.referralCode,
+                          minToWithdraw: 100000,
+                          onWithdraw: () async {
+                            final submitted = await showPayoutRequestSheet(context);
+                            if (submitted == true && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Solicitud de retiro enviada')),
+                              );
+                            }
+                          },
+                        );
+                      },
                     ),
 
 if (isPro) ...[

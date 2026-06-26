@@ -29,6 +29,14 @@ class SubscriptionProvider extends ChangeNotifier {
   bool _isPremium = false;
   bool get isPremium => _isPremium;
 
+  bool _isTrial = false;
+  /// True cuando la suscripción activa es prueba gratuita (cm_prueba_*).
+  /// En este caso NO se muestra el código de referido ni se gana comisión.
+  bool get isTrial => _isTrial;
+
+  /// True cuando hay suscripción premium PAGADA (no prueba gratuita).
+  bool get isPaidPremium => _isPremium && !_isTrial;
+
   String _status = 'none'; // active | expired | none | not_authenticated
   String get status => _status;
 
@@ -136,6 +144,7 @@ class SubscriptionProvider extends ChangeNotifier {
   void _reset() {
     _loading = false;
     _isPremium = false;
+    _isTrial = false;
     _status = 'none';
     _since = null;
     _expiresAt = null;
@@ -258,6 +267,7 @@ class SubscriptionProvider extends ChangeNotifier {
 
       _isPremium = backendIsPremium;
       _status = backendIsPremium ? 'active' : backendStatus;
+      _isTrial = (json['isTrial'] == true);
 
       _since = _parseDate(json['since']);
       _expiresAt = _parseDate(json['expiresAt']);

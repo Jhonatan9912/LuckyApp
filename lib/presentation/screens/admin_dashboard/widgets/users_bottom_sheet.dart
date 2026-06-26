@@ -59,8 +59,20 @@ Future<String?> _pickPlanDialog(BuildContext context, UserRow u) async {
         title: Text('Elegir plan para ${u.name}'),
         children: [
           SimpleDialogOption(
-            onPressed: () => Navigator.of(ctx).pop('cm_prueba'),
-            child: const Text('🎁 Prueba gratuita · Todas las cifras · 1 mes · GRATIS'),
+            onPressed: () => Navigator.of(ctx).pop('cm_prueba_2'),
+            child: const Text('🎁 Prueba gratuita · 2 cifras · 1 mes · GRATIS'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop('cm_prueba_3'),
+            child: const Text('🎁 Prueba gratuita · 3 cifras · 1 mes · GRATIS'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop('cm_prueba_4'),
+            child: const Text('🎁 Prueba gratuita · 4 cifras · 1 mes · GRATIS'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop('cm_prueba_5'),
+            child: const Text('🎁 Prueba gratuita · Quinta (5 cifras) · 1 mes · GRATIS'),
           ),
           const Divider(),
           SimpleDialogOption(
@@ -231,9 +243,13 @@ Future<void> _grantPro(UserRow u) async {
   final productId = await _pickPlanDialog(context, u);
   if (!mounted || productId == null) return; // canceló
 
-  final bool isTrial = productId == 'cm_prueba';
+  final bool isTrial = productId.startsWith('cm_prueba');
   final planLabel = switch (productId) {
-    'cm_prueba'       => 'Prueba gratuita (todas las cifras)',
+    'cm_prueba_2'     => 'Prueba gratuita 2 cifras',
+    'cm_prueba_3'     => 'Prueba gratuita 3 cifras',
+    'cm_prueba_4'     => 'Prueba gratuita 4 cifras',
+    'cm_prueba_5'     => 'Prueba gratuita Quinta (5 cifras)',
+    'cm_prueba'       => 'Prueba gratuita',
     'cmu_suscripcion' => 'Quinta 5 cifras (100.000)',
     'cm_suscripcion'  => 'Completa 4 cifras (60.000)',
     'cml_suscripcion' => 'Lite 3 cifras (20.000)',

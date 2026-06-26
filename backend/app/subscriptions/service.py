@@ -128,13 +128,11 @@ class SubscriptionStatus:
     reason: Optional[str] = None              # inicio del periodo vigente
     since: Optional[str] = None
     auto_renewing: Optional[bool] = None
-    # 👇 NUEVOS CAMPOS
-    plan: str = "none"                        # "basic", "full", "none"
-    max_digits: Optional[int] = None          # 3, 4 o None
+    plan: str = "none"
+    max_digits: Optional[int] = None
+    is_trial: bool = False  # True cuando el acceso es prueba gratuita (cm_prueba_*)
 
-    
     def to_json(self) -> Dict[str, Any]:
-        # Mantén camelCase para Flutter
         return {
             "userId": self.user_id,
             "entitlement": self.entitlement,
@@ -145,9 +143,9 @@ class SubscriptionStatus:
             "since": self.since,
             "autoRenewing": self.auto_renewing,
             "statusLabel": _catalog_get(self.status)["label_es"],
-            # 👇 NUEVOS CAMPOS PARA FLUTTER
             "plan": self.plan,
             "maxDigits": self.max_digits,
+            "isTrial": self.is_trial,
         }
 
 
@@ -270,15 +268,16 @@ def _price_from_catalog(product_id: str, default_currency: str = "COP") -> tuple
     (COP en micros: 1 COP = 1_000_000 micros)
     """
     CATALOG = {
-        # Prueba gratuita 1 mes → todas las cifras, sin costo
-        "cm_prueba":       (0, "COP"),
-        # 10.000 COP → 10_000_000_000 micros  ✅ STARTER 2 cifras
-        "cms_suscripcion": (10_000_000_000, "COP"),
-        # 20.000 COP → 20_000_000_000 micros
-        "cml_suscripcion": (20_000_000_000, "COP"),
-        # 60.000 COP → 60_000_000_000 micros
-        "cm_suscripcion":  (60_000_000_000, "COP"),
-        # 100.000 COP → 100_000_000_000 micros
+        # Pruebas gratuitas por cifras (precio 0, sin comisión)
+        "cm_prueba_2":     (0, "COP"),
+        "cm_prueba_3":     (0, "COP"),
+        "cm_prueba_4":     (0, "COP"),
+        "cm_prueba_5":     (0, "COP"),
+        "cm_prueba":       (0, "COP"),  # legacy
+        # Planes de pago
+        "cms_suscripcion": (10_000_000_000,  "COP"),
+        "cml_suscripcion": (20_000_000_000,  "COP"),
+        "cm_suscripcion":  (60_000_000_000,  "COP"),
         "cmu_suscripcion": (100_000_000_000, "COP"),
     }
 
@@ -296,31 +295,25 @@ def _price_from_catalog(product_id: str, default_currency: str = "COP") -> tuple
     return (0, default_currency)
 
 
+def _is_trial_product(product_id: str) -> bool:
+    return (product_id or "").strip().startswith("cm_prueba")
+
 def _infer_plan_from_product_id(product_id: str) -> tuple[str, Optional[int]]:
-    """
-    Devuelve (plan, max_digits) según el product_id.
-    """
+    """Devuelve (plan, max_digits) según el product_id."""
     pid = (product_id or "").strip()
 
-    # Prueba gratuita 1 mes → todas las cifras (igual que ultra)
-    if pid.startswith("cm_prueba"):
-        return "ultra", 5
+    # Pruebas gratuitas por cifra específica
+    if pid.startswith("cm_prueba_5"): return "ultra",   5
+    if pid.startswith("cm_prueba_4"): return "full",    4
+    if pid.startswith("cm_prueba_3"): return "basic",   3
+    if pid.startswith("cm_prueba_2"): return "starter", 2
+    if pid.startswith("cm_prueba"):   return "ultra",   5  # legacy
 
-    # Ultra 100k → hasta 5 cifras
-    if pid.startswith("cmu_suscripcion"):
-        return "ultra", 5
-
-    # 60.000: PRO completa, hasta 4 cifras
-    if pid.startswith("cm_suscripcion"):
-        return "full", 4
-
-    # 20.000: solo juego de 3 cifras
-    if pid.startswith("cml_suscripcion"):
-        return "basic", 3
-
-    # 10.000: solo juego de 2 cifras (starter)
-    if pid.startswith("cms_suscripcion"):
-        return "starter", 2
+    # Planes de pago
+    if pid.startswith("cmu_suscripcion"): return "ultra",   5
+    if pid.startswith("cm_suscripcion"):  return "full",    4
+    if pid.startswith("cml_suscripcion"): return "basic",   3
+    if pid.startswith("cms_suscripcion"): return "starter", 2
 
     return "none", None
 
@@ -413,14 +406,14 @@ def get_status(user_id: Optional[int]) -> SubscriptionStatus:
     grant = _catalog_get(status_str)["grant_access"]
     is_premium = bool(not_expired and grant)
 
-    # 👇 Tomamos el product_id para saber el plan
     product_id = _get_attr(sub, ["product_id", "last_product_id"], "") or ""
     plan, max_digits = _infer_plan_from_product_id(product_id)
+    is_trial = _is_trial_product(product_id)
 
-    # Si no tiene acceso premium (vencida / sin grant_access), no le damos ningún juego especial
     if not is_premium:
         plan = "none"
         max_digits = None
+        is_trial = False
 
     return SubscriptionStatus(
         user_id=uid,
@@ -432,6 +425,7 @@ def get_status(user_id: Optional[int]) -> SubscriptionStatus:
         auto_renewing=auto_renewing,
         plan=plan,
         max_digits=max_digits,
+        is_trial=is_trial,
     )
 
 
@@ -494,7 +488,10 @@ def manual_grant_pro(
     uid = int(user_id)
     pid = (product_id or "").strip()
 
-    allowed_products = {"cm_prueba", "cms_suscripcion", "cml_suscripcion", "cm_suscripcion", "cmu_suscripcion"}
+    allowed_products = {
+        "cm_prueba", "cm_prueba_2", "cm_prueba_3", "cm_prueba_4", "cm_prueba_5",
+        "cms_suscripcion", "cml_suscripcion", "cm_suscripcion", "cmu_suscripcion",
+    }
 
     if pid not in allowed_products:
         raise ValueError(f"Producto no permitido para activación manual: {pid}")
