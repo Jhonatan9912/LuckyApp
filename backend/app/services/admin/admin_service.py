@@ -66,18 +66,8 @@ def get_lottery_dashboard_summary():
 
 def get_active_games_export_rows():
     """
-    Retorna una fila por (juego, jugador, número reservado) con:
-
-    - game_id
-    - lottery_name
-    - played_date (YYYY-MM-DD)
-    - played_time (HH:MM)
-    - user_id
-    - user_name
-    - user_phone
-    - number
-    - reserved_numbers_in_game  -> total de números reservados en ese juego
-    - players_in_game           -> total de jugadores en ese juego
+    Retorna una fila por (juego, jugador, número reservado).
+    Incluye g.digits para formatear el número con ceros a la izquierda.
     """
     try:
         rows = db.session.execute(text("""
@@ -88,14 +78,17 @@ def get_active_games_export_rows():
                     COUNT(DISTINCT gn.taken_by) AS players_in_game
                 FROM game_numbers gn
                 JOIN games g ON g.id = gn.game_id
-                WHERE COALESCE(g.state_id, 1) = 1   -- juegos activos
+                WHERE COALESCE(g.state_id, 1) = 1
                 GROUP BY g.id
             )
             SELECT
-                g.id AS game_id,
+                g.id     AS game_id,
                 COALESCE(l.name, g.lottery_name) AS lottery_name,
-                to_char(g.played_at, 'YYYY-MM-DD') AS played_date,
-                to_char(g.played_at, 'HH24:MI')   AS played_time,
+                COALESCE(to_char(g.scheduled_date, 'YYYY-MM-DD'),
+                         to_char(g.played_at,      'YYYY-MM-DD')) AS played_date,
+                COALESCE(to_char(g.scheduled_time, 'HH24:MI'),
+                         to_char(g.played_at,      'HH24:MI'))    AS played_time,
+                COALESCE(g.digits, 3) AS digits,
                 u.id    AS user_id,
                 u.name  AS user_name,
                 u.phone AS user_phone,
@@ -105,9 +98,9 @@ def get_active_games_export_rows():
             FROM game_numbers gn
             JOIN games g          ON g.id = gn.game_id
             LEFT JOIN lotteries l ON l.id = g.lottery_id
-            JOIN users u          ON u.id = gn.taken_by    -- solo números tomados
-            JOIN stats s          ON s.game_id = g.id      -- une estadísticas por juego
-            WHERE COALESCE(g.state_id, 1) = 1              -- juegos activos
+            JOIN users u          ON u.id = gn.taken_by
+            JOIN stats s          ON s.game_id = g.id
+            WHERE COALESCE(g.state_id, 1) = 1
             ORDER BY g.id, u.id, gn.number
         """)).mappings().all()
 

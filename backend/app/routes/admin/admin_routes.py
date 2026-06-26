@@ -1,9 +1,16 @@
 # app/routes/admin/admin_routes.py
-from flask import jsonify, current_app, Response
+import io
+from datetime import datetime, timezone
+from flask import jsonify, current_app, Response, send_file
 from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
 from sqlalchemy import text
 from app.db.database import db
 from . import bp
+import openpyxl
+from openpyxl.styles import (
+    Font, PatternFill, Alignment, Border, Side, GradientFill
+)
+from openpyxl.utils import get_column_letter
 
 from app.services.admin.admin_service import (
     get_lottery_dashboard_summary,
@@ -70,102 +77,175 @@ def dashboard_summary():
 
 
 # -------------------------------------------------------------------
-#  EXPORTAR JUEGOS ACTIVOS + NÚMEROS RESERVADOS (CSV AGRUPADO)
+#  EXPORTAR JUEGOS ACTIVOS + NÚMEROS RESERVADOS (Excel .xlsx)
 # -------------------------------------------------------------------
 @bp.get("/dashboard/export-active-games")
 @jwt_required()
 def export_active_games():
-    """
-    Devuelve un CSV descargable con este formato:
-
-    Juego 40
-    Jugadores:,3
-    Numeros reservados:,15
-    user_id,user_name,user_phone,number
-    83,Juan,3001234567,231
-    ...
-
-    (línea en blanco)
-
-    Juego 41
-    ...
-    """
-    # 1) Validar admin
     resp = _require_admin()
     if resp is not None:
         return resp
 
-    # 2) Obtener datos desde el service
     try:
         rows = get_active_games_export_rows()
     except Exception:
         current_app.logger.exception("export_active_games: service error")
-        return (
-            jsonify(
-                {"ok": False, "error": "No se pudo obtener la información"},
-            ),
-            500,
-        )
+        return jsonify({"ok": False, "error": "No se pudo obtener la información"}), 500
 
-    # 3) Si no hay datos, devolver CSV básico
-    if not rows:
-        csv_data = "No hay juegos activos ni numeros reservados."
-        return Response(
-            csv_data,
-            mimetype="text/csv",
-            headers={
-                "Content-Disposition": "attachment; filename=juegos_activos.csv"
-            },
-        )
+    # ── Estilos ─────────────────────────────────────────────────────
+    GOLD      = "FFD700"
+    DARK      = "1A1A2E"
+    BLUE_HDR  = "16213E"
+    BLUE_ROW  = "0F3460"
+    WHITE     = "FFFFFF"
+    GRAY_ALT  = "F2F2F2"
+    GRAY_DARK = "D9D9D9"
 
-    # 4) Construir CSV agrupado por juego
-    lines: list[str] = []
+    def _fill(hex_color):
+        return PatternFill("solid", fgColor=hex_color)
+
+    def _font(bold=False, color=WHITE, size=11):
+        return Font(bold=bold, color=color, size=size, name="Calibri")
+
+    thin = Side(style="thin", color="CCCCCC")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left   = Alignment(horizontal="left",   vertical="center")
+
+    # ── Libro ───────────────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Juegos Activos"
+
+    # Fila 1: título general del reporte
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ws.merge_cells("A1:E1")
+    title_cell = ws["A1"]
+    title_cell.value = f"Reporte de Juegos Activos  —  {generated}"
+    title_cell.font      = Font(bold=True, color=GOLD, size=14, name="Calibri")
+    title_cell.fill      = _fill(DARK)
+    title_cell.alignment = center
+    ws.row_dimensions[1].height = 32
+
+    ws.append([])  # fila 2 vacía como separador
+
     current_game_id = None
+    row_idx = 3   # empezamos en fila 3
 
-    for r in rows:
-        game_id = r.get("game_id")
-        lottery_name = r.get("lottery_name") or ""
-        played_date = r.get("played_date") or ""
-        played_time = r.get("played_time") or ""
-        players_in_game = r.get("players_in_game") or 0
-        reserved_numbers = r.get("reserved_numbers_in_game") or 0
+    if not rows:
+        ws.merge_cells(f"A{row_idx}:E{row_idx}")
+        ws[f"A{row_idx}"].value     = "No hay juegos activos ni números reservados."
+        ws[f"A{row_idx}"].font      = _font(color="666666")
+        ws[f"A{row_idx}"].alignment = center
+    else:
+        alt = False  # alternancia de color en filas de datos
 
-        # Cuando cambia de juego, escribimos cabecera de sección
-        if game_id != current_game_id:
-            if current_game_id is not None:
-                # línea en blanco entre juegos
-                lines.append("")
+        for r in rows:
+            game_id   = r.get("game_id")
+            lot_name  = r.get("lottery_name") or "—"
+            p_date    = r.get("played_date")  or "—"
+            p_time    = r.get("played_time")  or "—"
+            players   = r.get("players_in_game") or 0
+            reserved  = r.get("reserved_numbers_in_game") or 0
+            digits    = int(r.get("digits") or 3)
 
-            # Cabecera del juego
-            title = f"Juego {game_id}"
-            if lottery_name:
-                title += f" - {lottery_name}"
-            if played_date or played_time:
-                title += f" ({played_date} {played_time})"
+            # ── Cabecera del juego ───────────────────────────────
+            if game_id != current_game_id:
+                if current_game_id is not None:
+                    row_idx += 1  # línea en blanco entre juegos
 
-            lines.append(title)
-            lines.append(f"Jugadores:,{players_in_game}")
-            lines.append(f"Numeros reservados:,{reserved_numbers}")
-            # Encabezado de la tabla de jugadores
-            lines.append("user_id,user_name,user_phone,number")
+                # Título del juego (fila fusionada)
+                ws.merge_cells(f"A{row_idx}:E{row_idx}")
+                c = ws[f"A{row_idx}"]
+                c.value     = f"Juego #{game_id}  ·  {lot_name}  ·  {p_date}  {p_time}"
+                c.font      = Font(bold=True, color=WHITE, size=12, name="Calibri")
+                c.fill      = _fill(BLUE_HDR)
+                c.alignment = left
+                ws.row_dimensions[row_idx].height = 24
+                row_idx += 1
 
-            current_game_id = game_id
+                # Estadísticas (2 celdas)
+                for col, label, val in [
+                    (1, "Jugadores", players),
+                    (3, "Números reservados", reserved),
+                ]:
+                    lc = ws.cell(row=row_idx, column=col)
+                    lc.value     = label
+                    lc.font      = Font(bold=True, color=GOLD, size=10, name="Calibri")
+                    lc.fill      = _fill(BLUE_ROW)
+                    lc.alignment = center
+                    lc.border    = border
 
-        # Fila de detalle (jugador + numero)
-        line = [
-            str(r.get("user_id", "")),
-            str(r.get("user_name", "")),
-            str(r.get("user_phone", "")),
-            str(r.get("number", "")),
-        ]
-        lines.append(",".join(line))
+                    vc = ws.cell(row=row_idx, column=col + 1)
+                    vc.value     = val
+                    vc.font      = Font(bold=True, color=WHITE, size=10, name="Calibri")
+                    vc.fill      = _fill(BLUE_ROW)
+                    vc.alignment = center
+                    vc.border    = border
 
-    csv_raw = "\n".join(lines)
+                ws.row_dimensions[row_idx].height = 20
+                row_idx += 1
 
-    return Response(
-        csv_raw,
-        mimetype="text/csv",
-        headers={
-            "Content-Disposition": "attachment; filename=juegos_activos.csv"
-        },
+                # Encabezados de columnas
+                headers = ["ID Usuario", "Nombre", "Teléfono", f"Número ({digits} dígitos)", "Suscripción"]
+                for col, h in enumerate(headers, 1):
+                    hc = ws.cell(row=row_idx, column=col)
+                    hc.value     = h
+                    hc.font      = Font(bold=True, color=DARK, size=10, name="Calibri")
+                    hc.fill      = _fill(GOLD)
+                    hc.alignment = center
+                    hc.border    = border
+                ws.row_dimensions[row_idx].height = 20
+                row_idx += 1
+
+                current_game_id = game_id
+                alt = False
+
+            # ── Fila de datos ────────────────────────────────────
+            raw_num = r.get("number")
+            if raw_num is not None:
+                num_str = str(int(raw_num)).zfill(digits)
+            else:
+                num_str = "—"
+
+            row_fill = _fill(GRAY_ALT) if alt else _fill(WHITE)
+            font_data = Font(color="222222", size=10, name="Calibri")
+
+            data = [
+                r.get("user_id", ""),
+                r.get("user_name", "") or "—",
+                r.get("user_phone", "") or "—",
+                num_str,
+                "",  # columna suscripción (vacía, para uso futuro)
+            ]
+            for col, val in enumerate(data, 1):
+                dc = ws.cell(row=row_idx, column=col)
+                dc.value     = val
+                dc.font      = font_data
+                dc.fill      = row_fill
+                dc.alignment = left
+                dc.border    = border
+            ws.row_dimensions[row_idx].height = 18
+            row_idx += 1
+            alt = not alt
+
+    # ── Anchos de columna ────────────────────────────────────────────
+    col_widths = [12, 30, 18, 20, 16]
+    for i, w in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # Congelar la fila de título
+    ws.freeze_panes = "A3"
+
+    # ── Serializar y devolver ────────────────────────────────────────
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"juegos_activos_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.xlsx"
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=filename,
     )
