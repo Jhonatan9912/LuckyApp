@@ -143,20 +143,22 @@ def create_app():
         except Exception as e:
             app.logger.error("startup_expire_stale falló (no bloquea arranque): %s", e)
 
-    # Cron interno: expira suscripciones vencidas cada hora automáticamente
-    def _cron_expire():
-        with app.app_context():
-            try:
-                from app.subscriptions.service import expire_all_stale
-                count = expire_all_stale()
-                if count:
-                    app.logger.info("cron_expire_stale: %d suscripciones expiradas", count)
-            except Exception as e:
-                app.logger.error("cron_expire_stale falló: %s", e)
+    # APScheduler: solo en el servidor web (gunicorn), no en el CLI del cron de Railway
+    # El cron de Railway llama expire_all_stale() directamente en cli.py cada 5 min
+    if not os.environ.get("FLASK_RUN_FROM_CLI"):
+        def _cron_expire():
+            with app.app_context():
+                try:
+                    from app.subscriptions.service import expire_all_stale
+                    count = expire_all_stale()
+                    if count:
+                        app.logger.info("cron_expire_stale: %d suscripciones expiradas", count)
+                except Exception as e:
+                    app.logger.error("cron_expire_stale falló: %s", e)
 
-    scheduler = BackgroundScheduler(daemon=True)
-    scheduler.add_job(_cron_expire, "interval", hours=1)
-    scheduler.start()
-    app.logger.info("cron_expire_stale: scheduler iniciado (cada hora)")
+        scheduler = BackgroundScheduler(daemon=True)
+        scheduler.add_job(_cron_expire, "interval", hours=1)
+        scheduler.start()
+        app.logger.info("cron_expire_stale: scheduler iniciado (cada hora)")
 
     return app
