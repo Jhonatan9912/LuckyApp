@@ -459,7 +459,7 @@ IconButton(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color(0xFFFFF9F0), Color(0xFFFFF3D8)],
+                colors: [Colors.white, Color(0xFFF5F5F5)],
               ),
             ),
           ),

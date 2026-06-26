@@ -170,16 +170,16 @@ class BaseApp extends StatelessWidget {
           onSecondaryContainer: Color(0xFF2A1C00),
           surface: Colors.white,
           onSurface: Color(0xFF1A1A1A),
-          surfaceContainerHighest: Color(0xFFFFF9E8),
+          surfaceContainerHighest: Color(0xFFF5F5F5),
           onSurfaceVariant: Color(0xFF5A4A20),
-          background: Color(0xFFFDF9F0),
+          background: Colors.white,
           onBackground: Color(0xFF1A1A1A),
           error: Color(0xFFB00020),
           onError: Colors.white,
           outline: Color(0xFFD4AF37),
           outlineVariant: Color(0xFFEAD88A),
         ),
-        scaffoldBackgroundColor: const Color(0xFFFDF9F0),
+        scaffoldBackgroundColor: Colors.white,
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF0A0A0A),
           foregroundColor: Color(0xFFD4AF37),
@@ -226,7 +226,7 @@ class BaseApp extends StatelessWidget {
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFFFFFCF5),
+          fillColor: Colors.white,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: Color(0xFFEAD88A)),
