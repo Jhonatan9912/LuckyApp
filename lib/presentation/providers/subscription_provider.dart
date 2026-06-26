@@ -88,6 +88,7 @@ class SubscriptionProvider extends ChangeNotifier {
     'cms_suscripcion',
     'cml_suscripcion',
     'cm_suscripcion',
+    'cmu_suscripcion',
   };
 
   ProductDetails? _product;
