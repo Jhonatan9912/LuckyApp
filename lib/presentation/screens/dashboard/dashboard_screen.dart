@@ -338,7 +338,7 @@ return AnimatedBuilder(
                     Consumer2<SubscriptionProvider, ReferralProvider>(
                       builder: (_, subs, refs, __) {
                         if (subs.isTrial) return const _TrialInfoBanner();
-                        if (!subs.isPaidPremium) return const SizedBox.shrink();
+                        if (!subs.isPaidPremium) return _ReferralCTABanner(onTap: _openSubscriptionSheet);
                         return ReferralPayoutTile(
                           code: _ctrl.referralCode,
                           minToWithdraw: 100000,
@@ -897,6 +897,88 @@ if (digits == 5) {
   Future<void> _setLastScheduleKey(String key) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('last_schedule_key', key);
+  }
+}
+
+// Banner CTA que ve el usuario sin suscripción en lugar del tile de referidos
+class _ReferralCTABanner extends StatelessWidget {
+  final VoidCallback? onTap;
+  const _ReferralCTABanner({this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1A1A1A), Color(0xFF2C2200)],
+          ),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFD4AF37), width: 1.2),
+          boxShadow: const [
+            BoxShadow(color: Color(0x44D4AF37), blurRadius: 10, offset: Offset(0, 3)),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: const BoxDecoration(
+                color: Color(0xFFD4AF37),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.workspace_premium, color: Color(0xFF1A1A1A), size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  Text(
+                    '¡Gana dinero refiriendo amigos!',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                      color: Color(0xFFD4AF37),
+                    ),
+                  ),
+                  SizedBox(height: 3),
+                  Text(
+                    'Suscríbete y obtén tu código para ganar comisiones por cada persona que invites.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFFBBB),
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFD4AF37),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'Ver planes',
+                style: TextStyle(
+                  color: Color(0xFF1A1A1A),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
