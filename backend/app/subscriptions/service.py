@@ -270,6 +270,8 @@ def _price_from_catalog(product_id: str, default_currency: str = "COP") -> tuple
     (COP en micros: 1 COP = 1_000_000 micros)
     """
     CATALOG = {
+        # Prueba gratuita 1 mes → todas las cifras, sin costo
+        "cm_prueba":       (0, "COP"),
         # 10.000 COP → 10_000_000_000 micros  ✅ STARTER 2 cifras
         "cms_suscripcion": (10_000_000_000, "COP"),
         # 20.000 COP → 20_000_000_000 micros
@@ -299,6 +301,10 @@ def _infer_plan_from_product_id(product_id: str) -> tuple[str, Optional[int]]:
     Devuelve (plan, max_digits) según el product_id.
     """
     pid = (product_id or "").strip()
+
+    # Prueba gratuita 1 mes → todas las cifras (igual que ultra)
+    if pid.startswith("cm_prueba"):
+        return "ultra", 5
 
     # Ultra 100k → hasta 5 cifras
     if pid.startswith("cmu_suscripcion"):
@@ -488,7 +494,7 @@ def manual_grant_pro(
     uid = int(user_id)
     pid = (product_id or "").strip()
 
-    allowed_products = {"cms_suscripcion", "cml_suscripcion", "cm_suscripcion", "cmu_suscripcion"}
+    allowed_products = {"cm_prueba", "cms_suscripcion", "cml_suscripcion", "cm_suscripcion", "cmu_suscripcion"}
 
     if pid not in allowed_products:
         raise ValueError(f"Producto no permitido para activación manual: {pid}")
@@ -943,6 +949,7 @@ def backfill_commissions(limit: int = 1000) -> Dict[str, Any]:
     DEFAULT_PRICE_MICROS = 20_000_000_000  # fallback mínimo
 
     PRICE_BY_PRODUCT = {
+        "cm_prueba":       0,                # gratis, sin comisión
         "cms_suscripcion": 10_000_000_000,
         "cml_suscripcion": 20_000_000_000,
         "cm_suscripcion":  60_000_000_000,

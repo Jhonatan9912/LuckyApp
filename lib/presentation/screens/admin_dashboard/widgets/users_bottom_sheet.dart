@@ -52,7 +52,6 @@ class _UsersBottomSheetState extends State<UsersBottomSheet> {
     return cleaned.replaceAll(r'\n', '\n').replaceAll(r'\"', '"');
   }
 Future<String?> _pickPlanDialog(BuildContext context, UserRow u) async {
-  // Devuelve "cm_suscripcion", "cml_suscripcion" o null si cancela
   return showDialog<String>(
     context: context,
     builder: (ctx) {
@@ -60,12 +59,21 @@ Future<String?> _pickPlanDialog(BuildContext context, UserRow u) async {
         title: Text('Elegir plan para ${u.name}'),
         children: [
           SimpleDialogOption(
-            onPressed: () => Navigator.of(ctx).pop('cm_suscripcion'),
-            child: const Text('PRO Completa · 60.000 COP'),
+            onPressed: () => Navigator.of(ctx).pop('cm_prueba'),
+            child: const Text('🎁 Prueba gratuita · Todas las cifras · 1 mes · GRATIS'),
+          ),
+          const Divider(),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop('cms_suscripcion'),
+            child: const Text('Starter · 2 cifras · 10.000 COP'),
           ),
           SimpleDialogOption(
             onPressed: () => Navigator.of(ctx).pop('cml_suscripcion'),
-            child: const Text('PRO Lite · 20.000 COP'),
+            child: const Text('Lite · 3 cifras · 20.000 COP'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop('cm_suscripcion'),
+            child: const Text('Completa · 4 cifras · 60.000 COP'),
           ),
           const Divider(),
           SimpleDialogOption(
@@ -219,21 +227,28 @@ Future<void> _grantPro(UserRow u) async {
   final productId = await _pickPlanDialog(context, u);
   if (!mounted || productId == null) return; // canceló
 
-  final planLabel = productId == 'cm_suscripcion'
-      ? 'PRO Completa (60.000)'
-      : 'PRO Lite (20.000)';
+  final bool isTrial = productId == 'cm_prueba';
+  final planLabel = switch (productId) {
+    'cm_prueba'       => 'Prueba gratuita (todas las cifras)',
+    'cm_suscripcion'  => 'PRO Completa (60.000)',
+    'cml_suscripcion' => 'PRO Lite (20.000)',
+    'cms_suscripcion' => 'PRO Starter (10.000)',
+    _                 => 'PRO',
+  };
 
   // 2) Confirmar
   final ok = await custom.AppDialogs.confirm(
     context: context,
-    title: 'Activar PRO',
-    message:
-        '¿Quieres activar o renovar $planLabel por 30 días para "${u.name}"?\n\n'
-        'Solo debe usarse cuando el usuario pagó por fuera de Play Store.',
+    title: isTrial ? 'Activar prueba gratuita' : 'Activar PRO',
+    message: isTrial
+        ? '¿Quieres activar 30 días GRATIS (todas las cifras) para "${u.name}"?\n\n'
+          'Al vencer el mes la suscripción se cancela automáticamente.'
+        : '¿Quieres activar o renovar $planLabel por 30 días para "${u.name}"?\n\n'
+          'Solo debe usarse cuando el usuario pagó por fuera de Play Store.',
     okText: 'Sí, activar',
     cancelText: 'Cancelar',
     destructive: false,
-    icon: Icons.star,
+    icon: isTrial ? Icons.card_giftcard : Icons.star,
   );
 
   if (ok != true || !mounted) return;
@@ -247,7 +262,7 @@ Future<void> _grantPro(UserRow u) async {
 
     await custom.AppDialogs.success(
       context: context,
-      title: 'PRO activado',
+      title: isTrial ? 'Prueba gratuita activada' : 'PRO activado',
       message: expiresAt.isEmpty
           ? 'La suscripción $planLabel se activó/renovó correctamente.'
           : 'La suscripción $planLabel de "${u.name}" está activa hasta:\n$expiresAt',
