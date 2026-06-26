@@ -30,51 +30,11 @@ def get_lottery_dashboard_summary():
         db.session.rollback()
         players_count = 0
 
-    try:
-        tickets_today = db.session.execute(text("""
-            SELECT COALESCE(SUM(quantity),0)
-            FROM tickets
-            WHERE sale_date = CURRENT_DATE
-        """)).scalar() or 0
-    except Exception:
-        db.session.rollback()
-        tickets_today = 0
-
-    try:
-        revenue_ytd = db.session.execute(text("""
-            SELECT COALESCE(SUM(total_amount),0)
-            FROM tickets
-            WHERE EXTRACT(YEAR FROM sale_date) = EXTRACT(YEAR FROM CURRENT_DATE)
-        """)).scalar() or 0.0
-    except Exception:
-        db.session.rollback()
-        revenue_ytd = 0.0
-
-    try:
-        sales_by_month = db.session.execute(text("""
-            SELECT TO_CHAR(date_trunc('month', sale_date), 'YYYY-MM') AS month,
-                   SUM(quantity) AS qty
-            FROM tickets
-            WHERE EXTRACT(YEAR FROM sale_date) = EXTRACT(YEAR FROM CURRENT_DATE)
-            GROUP BY 1 ORDER BY 1
-        """)).mappings().all()
-        sales_by_month = [dict(r) for r in sales_by_month]
-    except Exception:
-        db.session.rollback()
-        sales_by_month = []
-
-    try:
-        revenue_by_month = db.session.execute(text("""
-            SELECT TO_CHAR(date_trunc('month', sale_date), 'YYYY-MM') AS month,
-                   SUM(total_amount) AS revenue
-            FROM tickets
-            WHERE EXTRACT(YEAR FROM sale_date) = EXTRACT(YEAR FROM CURRENT_DATE)
-            GROUP BY 1 ORDER BY 1
-        """)).mappings().all()
-        revenue_by_month = [dict(r) for r in revenue_by_month]
-    except Exception:
-        db.session.rollback()
-        revenue_by_month = []
+    tickets_today = 0
+    revenue_ytd = 0.0
+    sales_by_month = []
+    revenue_by_month = []
+    latest_sales = []
 
     latest_users = db.session.execute(text("""
         SELECT id, name, phone, public_code, role_id
@@ -83,18 +43,6 @@ def get_lottery_dashboard_summary():
         LIMIT 5
     """)).mappings().all()
     latest_users = [dict(r) for r in latest_users]
-
-    try:
-        latest_sales = db.session.execute(text("""
-            SELECT id AS sale_id, total_amount, sale_date
-            FROM tickets
-            ORDER BY sale_date DESC, id DESC
-            LIMIT 5
-        """)).mappings().all()
-        latest_sales = [dict(r) for r in latest_sales]
-    except Exception:
-        db.session.rollback()
-        latest_sales = []
 
     return {
         "kpis": {
