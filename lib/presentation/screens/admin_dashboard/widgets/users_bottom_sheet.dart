@@ -65,15 +65,19 @@ Future<String?> _pickPlanDialog(BuildContext context, UserRow u) async {
           const Divider(),
           SimpleDialogOption(
             onPressed: () => Navigator.of(ctx).pop('cms_suscripcion'),
-            child: const Text('Starter · 2 cifras · 10.000 COP'),
+            child: const Text('Starter · 2 cifras · \$10.000 COP'),
           ),
           SimpleDialogOption(
             onPressed: () => Navigator.of(ctx).pop('cml_suscripcion'),
-            child: const Text('Lite · 3 cifras · 20.000 COP'),
+            child: const Text('Lite · 3 cifras · \$20.000 COP'),
           ),
           SimpleDialogOption(
             onPressed: () => Navigator.of(ctx).pop('cm_suscripcion'),
-            child: const Text('Completa · 4 cifras · 60.000 COP'),
+            child: const Text('Completa · 4 cifras · \$60.000 COP'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop('cmu_suscripcion'),
+            child: const Text('Quinta · 5 cifras · \$100.000 COP'),
           ),
           const Divider(),
           SimpleDialogOption(
@@ -230,9 +234,10 @@ Future<void> _grantPro(UserRow u) async {
   final bool isTrial = productId == 'cm_prueba';
   final planLabel = switch (productId) {
     'cm_prueba'       => 'Prueba gratuita (todas las cifras)',
-    'cm_suscripcion'  => 'PRO Completa (60.000)',
-    'cml_suscripcion' => 'PRO Lite (20.000)',
-    'cms_suscripcion' => 'PRO Starter (10.000)',
+    'cmu_suscripcion' => 'Quinta 5 cifras (100.000)',
+    'cm_suscripcion'  => 'Completa 4 cifras (60.000)',
+    'cml_suscripcion' => 'Lite 3 cifras (20.000)',
+    'cms_suscripcion' => 'Starter 2 cifras (10.000)',
     _                 => 'PRO',
   };
 
