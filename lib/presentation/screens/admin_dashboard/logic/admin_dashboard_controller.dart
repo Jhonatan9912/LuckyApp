@@ -118,7 +118,7 @@ Future<List<Map<String, dynamic>>> loadAllUsers({
     queryParameters: {
       if (q.isNotEmpty) 'q': q,
       'page': '$page',
-      'per_page': '50',
+      'per_page': '500',
     },
   );
 
@@ -293,7 +293,7 @@ Future<List<Map<String, dynamic>>> loadAllGames({
     queryParameters: {
       if (q.isNotEmpty) 'q': q,
       'page': '$page',
-      'per_page': '50',
+      'per_page': '500',
     },
   );
 
@@ -542,7 +542,7 @@ return GameRow(
       if (q.isNotEmpty) 'q': q,
       'state': state,       // 👈 nuevo
       'page': '$page',
-      'per_page': '50',
+      'per_page': '500',
     },
   );
 

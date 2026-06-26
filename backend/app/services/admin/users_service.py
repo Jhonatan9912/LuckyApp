@@ -12,7 +12,7 @@ class UserHasActiveGames(Exception):
 
 def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Dict[str, Any]:
     page = max(1, int(page or 1))
-    per_page = max(1, min(100, int(per_page or 50)))
+    per_page = max(1, min(500, int(per_page or 50)))
     offset = (page - 1) * per_page
     q_norm = q.strip() if q and q.strip() else None
 
