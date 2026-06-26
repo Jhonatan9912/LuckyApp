@@ -335,9 +335,9 @@ return AnimatedBuilder(
                   children: [
                     SizedBox(height: gapTop),
 
-                    // Código de referido: solo visible con suscripción PAGADA (no trial, no gratis)
                     Consumer2<SubscriptionProvider, ReferralProvider>(
                       builder: (_, subs, refs, __) {
+                        if (subs.isTrial) return const _TrialInfoBanner();
                         if (!subs.isPaidPremium) return const SizedBox.shrink();
                         return ReferralPayoutTile(
                           code: _ctrl.referralCode,
@@ -357,9 +357,11 @@ return AnimatedBuilder(
 if (isPro) ...[
   Padding(
     padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-    child: _ProBadge(onTap: _openSubscriptionSheet),
+    child: subs.isTrial
+        ? _TrialBadge(onTap: _openSubscriptionSheet)
+        : _ProBadge(onTap: _openSubscriptionSheet),
   ),
-  const SizedBox(height: 10), // ✅ separación PRO ↔ Tipo de juego
+  const SizedBox(height: 10),
 ],
 
 
@@ -895,6 +897,115 @@ if (digits == 5) {
   Future<void> _setLastScheduleKey(String key) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('last_schedule_key', key);
+  }
+}
+
+// Badge que aparece debajo de la AppBar cuando el usuario está en modo prueba
+class _TrialBadge extends StatelessWidget {
+  final VoidCallback? onTap;
+  const _TrialBadge({this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF26C6DA), Color(0xFF0097A7)],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x5526C6DA),
+              blurRadius: 12,
+              offset: Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.card_giftcard_rounded, size: 18, color: Colors.white),
+            SizedBox(width: 6),
+            Text(
+              'PRUEBA ACTIVA',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 12,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Banner informativo que reemplaza el tile de referidos en modo prueba
+class _TrialInfoBanner extends StatelessWidget {
+  const _TrialInfoBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFE0F7FA), Color(0xFFB2EBF2)],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF26C6DA), width: 1.2),
+        boxShadow: const [
+          BoxShadow(color: Color(0x2226C6DA), blurRadius: 8, offset: Offset(0, 2)),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: const BoxDecoration(
+              color: Color(0xFF0097A7),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.card_giftcard_rounded, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text(
+                  'Estás en modo prueba',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                    color: Color(0xFF006064),
+                  ),
+                ),
+                SizedBox(height: 3),
+                Text(
+                  'El programa de referidos está disponible para usuarios con suscripción activa pagada.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF00838F),
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
