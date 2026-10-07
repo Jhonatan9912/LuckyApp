@@ -13,7 +13,9 @@ from app.subscriptions.service import (
     cancel,
     sync_purchase,
     rtdn_handle,   # ← para procesar RTDN en el service
+    PurchaseOwnedByOtherUser,
 )
+from app.security.guards import current_user_id, is_admin
 
 subscriptions_bp = Blueprint(
     "subscriptions",
@@ -86,14 +88,15 @@ def subscription_sync():
         "event": "sync_req",
         "user_id": user_id,
         "product_id": product_id,
-        "purchase_id": purchase_id,
         "package_name": package_name or "ENV",
         "token_len": len(verification_data),
-        "token_prefix": verification_data[:12] if verification_data else None,
     })
 
     if not product_id or not verification_data:
         return jsonify({"ok": False, "code": "MISSING_FIELDS"}), 400
+
+    if len(verification_data) > 4096 or len(product_id) > 200 or len(purchase_id) > 200:
+        return jsonify({"ok": False, "code": "BAD_REQUEST"}), 400
 
     try:
         result = sync_purchase(
@@ -101,10 +104,15 @@ def subscription_sync():
             package_name=package_name or None,
         )
         return jsonify(result), 200
-    except Exception as e:
-        # Devuelve el error en JSON para depurar rápido desde el móvil/Postman
+    except PurchaseOwnedByOtherUser:
+        return jsonify({
+            "ok": False,
+            "code": "PURCHASE_LINKED_TO_OTHER_ACCOUNT",
+            "msg": "Esta compra ya está vinculada a otra cuenta.",
+        }), 409
+    except Exception:
         current_app.logger.exception("sync_purchase_failed")
-        return jsonify({"ok": False, "code": "SYNC_FAILED", "msg": str(e)}), 500
+        return jsonify({"ok": False, "code": "SYNC_FAILED", "msg": "No se pudo validar la compra"}), 500
 
 @subscriptions_bp.post("/cancel")
 @jwt_required()
@@ -122,24 +130,8 @@ def subscription_manual_grant():
     """
     Activación/renovación manual de PRO por un administrador (ej: pago por WhatsApp).
     """
-    from flask_jwt_extended import get_jwt
-    claims = get_jwt() or {}
-
-    # Lee rid / role_id del JWT
-    raw_role = claims.get("rid") or claims.get("role_id")
-
-    # 🔎 DEBUG opcional (puedes dejarlo un tiempo):
-    print("JWT claims en /manual-grant:", claims)
-    print("raw_role =", raw_role, "type =", type(raw_role))
-
-    # Normaliza a int (por si viene como string "1")
-    try:
-        role_id = int(raw_role) if raw_role is not None else None
-    except (TypeError, ValueError):
-        role_id = None
-
-    # En TU app, el admin es role_id == 1
-    if role_id != 1:
+    # Rol validado contra la BD (no contra el token)
+    if not is_admin(current_user_id()):
         return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
 
     # Body JSON: { user_id / userId, product_id / productId, days? }
@@ -161,6 +153,7 @@ def subscription_manual_grant():
             days_int = 30
     except Exception:
         days_int = 30
+    days_int = min(days_int, 3660)
 
     try:
         from app.subscriptions.service import manual_grant_pro
@@ -169,9 +162,9 @@ def subscription_manual_grant():
     except ValueError as ve:
         # Por ejemplo: producto no permitido
         return jsonify({"ok": False, "code": "BAD_PRODUCT", "msg": str(ve)}), 400
-    except Exception as e:
+    except Exception:
         current_app.logger.exception("manual_grant_pro_failed")
-        return jsonify({"ok": False, "code": "MANUAL_GRANT_FAILED", "msg": str(e)}), 500
+        return jsonify({"ok": False, "code": "MANUAL_GRANT_FAILED", "msg": "Error interno"}), 500
 
 @subscriptions_bp.post("/reconcile/one")
 @jwt_required()
@@ -181,16 +174,8 @@ def subscription_reconcile_one():
     Requiere JWT admin (rid / role_id == 1).
     """
     from app.observability.metrics import RECONCILE_UPD, RECONCILE_ERR
-    from flask_jwt_extended import get_jwt
 
-    claims = get_jwt() or {}
-    raw_role = claims.get("rid") or claims.get("role_id")
-    try:
-        role_id_int = int(raw_role) if raw_role is not None else None
-    except (TypeError, ValueError):
-        role_id_int = None
-
-    if role_id_int != 1:
+    if not is_admin(current_user_id()):
         return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
 
     try:
@@ -208,9 +193,10 @@ def subscription_reconcile_one():
         # Ej: out = reconcile_one(purchase_token, sub_id)
         RECONCILE_UPD.inc()
         return jsonify({"ok": True}), 200
-    except Exception as e:
+    except Exception:
         RECONCILE_ERR.inc()
-        return jsonify({"ok": False, "code": "RECONCILE_ERR", "detail": str(e)}), 500
+        current_app.logger.exception("reconcile_one failed")
+        return jsonify({"ok": False, "code": "RECONCILE_ERR"}), 500
 
 
 # ===== RTDN (Real-Time Developer Notifications) - Push endpoint =====
@@ -223,7 +209,12 @@ def rtdn_push():
     # 1) Verificación OIDC del push (si configuraste autenticación en la suscripción)
     expected_aud = current_app.config.get("PUBSUB_PUSH_AUDIENCE")  # p.ej. https://tuapp/api/subscriptions/rtdn
     auth_hdr = request.headers.get("Authorization", "")
-    if expected_aud and auth_hdr.startswith("Bearer "):
+    verified = False
+    if expected_aud:
+        # Con audiencia configurada el token OIDC es OBLIGATORIO
+        # (antes bastaba con no enviar la cabecera para saltarse la verificación).
+        if not auth_hdr.startswith("Bearer "):
+            return jsonify({"ok": False, "code": "MISSING_OIDC"}), 401
         _token = auth_hdr.split(" ", 1)[1]
         try:
             claims = id_token.verify_oauth2_token(
@@ -233,9 +224,13 @@ def rtdn_push():
             )
             if claims.get("iss") not in ("https://accounts.google.com", "accounts.google.com"):
                 return jsonify({"ok": False, "code": "BAD_ISSUER"}), 401
-        except Exception as e:
-            return jsonify({"ok": False, "code": "OIDC_VERIFY_FAILED", "msg": str(e)}), 401
-    # Si no configuraste OIDC, continúa, pero no es recomendado en producción.
+            verified = True
+        except Exception:
+            return jsonify({"ok": False, "code": "OIDC_VERIFY_FAILED"}), 401
+    # Sin OIDC solo se acepta lo que Google confirme al reconsultar la compra
+    # (rtdn_handle ignora los "reembolsos" no verificados).
+    if not verified:
+        current_app.logger.warning("RTDN sin verificación OIDC (configura PUBSUB_PUSH_AUDIENCE)")
 
     # 2) Decodifica el mensaje Pub/Sub
     body = request.get_json(silent=True) or {}
@@ -270,8 +265,14 @@ def rtdn_push():
 
     # 4) Reconsultar a Google y actualizar DB
     try:
-        out = rtdn_handle(purchase_token=purchase_token, package_name=package_name, notification_type=notif_type)
-        return jsonify({"ok": True, "result": out}), 200
-    except Exception as e:
-        # Si quieres que Pub/Sub reintente, devuelve 5xx; si no, 200 con error
-        return jsonify({"ok": False, "code": "RTDN_HANDLE_ERROR", "msg": str(e)}), 200
+        out = rtdn_handle(
+            purchase_token=purchase_token,
+            package_name=package_name,
+            notification_type=notif_type,
+            trusted=verified,
+        )
+        return jsonify({"ok": bool(out.get("ok", True))}), 200
+    except Exception:
+        current_app.logger.exception("rtdn_handle failed")
+        # 200 para que Pub/Sub no reintente infinito
+        return jsonify({"ok": False, "code": "RTDN_HANDLE_ERROR"}), 200

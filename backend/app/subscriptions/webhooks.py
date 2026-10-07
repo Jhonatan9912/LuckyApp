@@ -163,14 +163,26 @@ def _maybe_award_referral_bonus(user_id: int, event: dict, event_type: str):
 
 @webhooks_bp.post("/revenuecat")
 def revenuecat_webhook():
+    # Sin secreto configurado el webhook queda DESACTIVADO: antes cualquiera
+    # podía enviar un evento falso y activarse PRO gratis.
+    if not WEBHOOK_SECRET:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+
     raw_bytes = request.get_data(cache=False)
     raw_text  = raw_bytes.decode("utf-8", errors="ignore")
 
-    # (Prod) Verificar firma
-    if VERIFY_SIGNATURE:
-        header_sig = request.headers.get("X-RevenueCat-Signature", "")
-        if not _valid_signature(raw_bytes, header_sig):
-            return jsonify({"ok": False, "error": "invalid_signature"}), 401
+    # RevenueCat envía el valor configurado en "Authorization header";
+    # también aceptamos una firma HMAC-SHA256 del cuerpo.
+    auth_hdr = request.headers.get("Authorization", "").strip()
+    if auth_hdr.lower().startswith("bearer "):
+        auth_hdr = auth_hdr[7:].strip()
+    header_sig = request.headers.get("X-RevenueCat-Signature", "")
+    authorized = (
+        (auth_hdr and hmac.compare_digest(auth_hdr, WEBHOOK_SECRET))
+        or _valid_signature(raw_bytes, header_sig)
+    )
+    if not authorized:
+        return jsonify({"ok": False, "error": "invalid_signature"}), 401
 
     # Parse tolerante
     try:
@@ -202,16 +214,7 @@ def revenuecat_webhook():
         user_id = None
 
     if not user_id:
-        return jsonify({
-            "ok": False,
-            "error": "user_id_not_found_in_subscriber_id",
-            "debug": {
-                "namespace_env": APP_USER_NS,
-                "subscriber_id_received": subscriber_id_str,
-                "payload_top_level_keys": list(payload.keys()),
-                "event_keys": list(event.keys()),
-            }
-        }), 400
+        return jsonify({"ok": False, "error": "user_id_not_found_in_subscriber_id"}), 400
 
     # Entitlements (puede venir como lista); si no, default 'pro'
     entitlements = event.get("entitlement_ids") or []

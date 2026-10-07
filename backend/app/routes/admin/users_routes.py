@@ -1,5 +1,5 @@
 # app/routes/admin/users_routes.py
-from flask import jsonify, request
+from flask import jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
 from sqlalchemy import text
 from app.db.database import db
@@ -63,11 +63,21 @@ def update_user_role(user_id):
     if int(role_id) != 1:
         return jsonify({"ok": False, "error": "Solo administradores"}), 403
 
-    data = request.get_json()
-    new_role_id = data.get("role_id")
-
-    if not new_role_id:
+    data = request.get_json(silent=True) or {}
+    try:
+        new_role_id = int(data.get("role_id"))
+    except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "role_id es requerido"}), 400
+
+    exists = db.session.execute(
+        text("SELECT 1 FROM roles WHERE id=:rid"), {"rid": new_role_id}
+    ).scalar()
+    if not exists:
+        return jsonify({"ok": False, "error": "role_id inválido"}), 400
+
+    # Un admin no puede quitarse su propio rol (evita quedarse sin administradores)
+    if str(user_id) == str(get_jwt_identity()) and new_role_id != 1:
+        return jsonify({"ok": False, "error": "No puedes quitarte tu propio rol de administrador"}), 400
 
     db.session.execute(
         text("UPDATE users SET role_id=:rid WHERE id=:uid"),
@@ -140,4 +150,5 @@ def admin_expire_stale():
         updated = expire_all_stale()
         return jsonify({"ok": True, "expired": updated})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        current_app.logger.exception("admin route failed")
+        return jsonify({"ok": False, "error": "Error interno del servidor"}), 500

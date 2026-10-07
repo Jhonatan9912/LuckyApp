@@ -51,6 +51,28 @@ def _upload_dir_pair() -> tuple[Path, str]:
     base_abs.mkdir(parents=True, exist_ok=True)
     return base_abs, base_rel
 
+_ALLOWED_UPLOAD_MIME = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".pdf": "application/pdf",
+}
+
+
+def _looks_like(ext: str, head: bytes) -> bool:
+    """Verifica la firma (magic bytes) del archivo."""
+    if ext in (".jpg", ".jpeg"):
+        return head.startswith(bytes.fromhex("ffd8ff"))
+    if ext == ".png":
+        return head.startswith(bytes.fromhex("89504e470d0a1a0a"))
+    if ext == ".webp":
+        return head[:4] == b"RIFF" and head[8:12] == b"WEBP"
+    if ext == ".pdf":
+        return head.startswith(b"%PDF")
+    return False
+
+
 def _save_upload(file: FileStorage) -> tuple[str, int, str]:
     """
     Guarda el archivo en base_abs y devuelve:
@@ -62,13 +84,21 @@ def _save_upload(file: FileStorage) -> tuple[str, int, str]:
 
     safe_name = secure_filename(file.filename or "")
     ext = Path(safe_name).suffix.lower() or ""
+    # Solo imágenes y PDF: evita subir HTML/SVG/ejecutables que luego se sirvan.
+    if ext not in _ALLOWED_UPLOAD_MIME:
+        raise ValueError("Tipo de archivo no permitido (usa JPG, PNG, WEBP o PDF)")
+    head = file.stream.read(16)
+    file.stream.seek(0)
+    if not _looks_like(ext, head):
+        raise ValueError("El contenido del archivo no coincide con su extensión")
     fname = f"{uuid.uuid4().hex}{ext}"
 
     full_path = base_abs / fname
     file.save(str(full_path))
 
     size = full_path.stat().st_size
-    mime = file.mimetype or "application/octet-stream"
+    # El tipo se deduce de la extensión validada, no del que envía el cliente.
+    mime = _ALLOWED_UPLOAD_MIME[ext]
 
     storage_path_rel = f"{base_rel}/{fname}"  # ← lo que irá a la BD (relativo)
     return storage_path_rel, size, mime

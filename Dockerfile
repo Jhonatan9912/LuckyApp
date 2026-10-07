@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
     PORT=8000 \
     FLASK_ENV=production \
-    GUNICORN_CMD_ARGS="--log-level debug --timeout 120 --workers 2"
+    GUNICORN_CMD_ARGS="--log-level info --timeout 120 --workers 2"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc libpq-dev curl && \

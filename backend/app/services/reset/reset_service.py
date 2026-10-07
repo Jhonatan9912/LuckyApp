@@ -10,6 +10,12 @@ from app.services.notify.mailer import send_html
 # Asumimos una tabla reset_tokens (ver SQL más abajo).
 # Campos: id, user_id, code, token, expires_at, used, created_at
 from flask import current_app  # 👈 lo usaremos para leer TTL desde config
+from html import escape
+import hmac
+from app.security.guards import rate_limited, reset_rate_limit, revoke_all_sessions
+
+# Intentos fallidos permitidos para un código antes de anularlo
+MAX_CODE_ATTEMPTS = 5
 
 @dataclass
 class ResetError(Exception):
@@ -57,10 +63,12 @@ def request_password_reset_by_email(email: str) -> None:
         VALUES (:uid, :code, NULL, :exp, FALSE, NOW())
     """), {"uid": user.id, "code": code, "exp": expires_at})
     db.session.commit()
+    # Nuevo código: reinicia el contador de intentos fallidos
+    reset_rate_limit(f"reset:verify:{user.id}")
 
     subject = "Tu código de restablecimiento"
     html = f"""
-    <p>Hola {user.name},</p>
+    <p>Hola {escape(user.name or "")},</p>
     <p>Tu código para restablecer la contraseña es: <b>{code}</b></p>
     <p>Expira en {ttl_code} minutos.</p>
     """
@@ -70,17 +78,26 @@ def request_password_reset_by_email(email: str) -> None:
 def verify_reset_code_by_email(email: str, code: str) -> str:
     user: User | None = db.session.query(User).filter(User.email == email).first()
     if not user:
-        raise ResetError("Correo no encontrado")
+        # Mismo mensaje que un código erróneo: no revela qué correos existen
+        raise ResetError("Código inválido")
 
+    # Solo el código vigente más reciente (no usado y con código pendiente)
     row = db.session.execute(text("""
-        SELECT id, expires_at, used
+        SELECT id, code, expires_at, used
           FROM reset_tokens
-         WHERE user_id = :uid AND code = :code
+         WHERE user_id = :uid AND used = FALSE AND code IS NOT NULL
          ORDER BY id DESC
          LIMIT 1
-    """), {"uid": user.id, "code": code}).mappings().first()
+    """), {"uid": user.id}).mappings().first()
 
-    if not row:
+    if not row or not hmac.compare_digest(str(row["code"]), str(code)):
+        # Cuenta el intento fallido; al superar el máximo se anula el código
+        # (evita adivinar el código de 6 dígitos por fuerza bruta).
+        if row and rate_limited(f"reset:verify:{user.id}", MAX_CODE_ATTEMPTS - 1, 3600):
+            db.session.execute(text("UPDATE reset_tokens SET used = TRUE WHERE id = :rid"),
+                               {"rid": row["id"]})
+            db.session.commit()
+            raise ResetError("Demasiados intentos. Solicita un nuevo código.")
         raise ResetError("Código inválido")
     if row["used"]:
         raise ResetError("Código ya usado")
@@ -130,3 +147,6 @@ def set_new_password_by_token(reset_token: str, new_password: str) -> None:
     """), {"tok": reset_token})
 
     db.session.commit()
+
+    # Cierra todas las sesiones abiertas del usuario (incluida la de un atacante)
+    revoke_all_sessions(int(row["user_id"]))

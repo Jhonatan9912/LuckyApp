@@ -7,6 +7,11 @@ from sqlalchemy import text
 from datetime import datetime
 from sqlalchemy import text, func
 
+import re
+
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
 def register_user(data):
     required = [
         'name', 'identification_type_id', 'identification_number',
@@ -29,12 +34,32 @@ def register_user(data):
 
     # 3) Normalizar datos
     name = str(data['name']).strip()
-    identification_type_id = int(data['identification_type_id'])
+    try:
+        identification_type_id = int(data['identification_type_id'])
+    except (TypeError, ValueError):
+        return {'ok': False, 'error': 'Tipo de identificación inválido'}, 400
     identification_number = str(data['identification_number']).strip()
     phone = ''.join(ch for ch in str(data['phone']) if ch.isdigit())
     email = str(data['email']).strip().lower()
     birthdate = data['birthdate']                # ya parseado en la ruta
-    password_hash = generate_password_hash(str(data['password']))
+    raw_password = str(data['password'])
+
+    # Validaciones del lado del servidor (no confiar solo en la app)
+    if not (2 <= len(name) <= 100):
+        return {'ok': False, 'error': 'El nombre debe tener entre 2 y 100 caracteres'}, 400
+    if not (3 <= len(identification_number) <= 20):
+        return {'ok': False, 'error': 'Número de identificación inválido'}, 400
+    if not (7 <= len(phone) <= 15):
+        return {'ok': False, 'error': 'Número de celular inválido'}, 400
+    if len(email) > 255 or not _EMAIL_RE.match(email):
+        return {'ok': False, 'error': 'Correo inválido'}, 400
+    if not (6 <= len(raw_password) <= 128):
+        return {'ok': False, 'error': 'La contraseña debe tener entre 6 y 128 caracteres'}, 400
+    today = datetime.utcnow().date()
+    if birthdate > today or birthdate.year < 1900:
+        return {'ok': False, 'error': 'Fecha de nacimiento inválida'}, 400
+
+    password_hash = generate_password_hash(raw_password)
 
     # Opcional: código de país
     country_code = (data.get('country_code') or '').strip() or None
@@ -43,7 +68,7 @@ def register_user(data):
     ):
         return {'ok': False, 'error': 'country_code inválido. Formato esperado +<1..4 dígitos>'}, 400
 
-    consent_version = str(data.get('consent_version') or 'v1')
+    consent_version = str(data.get('consent_version') or 'v1')[:20]
 
     # Timestamps solo si aceptó
     accept_terms = bool(data.get('accept_terms'))
@@ -55,7 +80,7 @@ def register_user(data):
     accepted_data_at  = datetime.utcnow() if accept_data else None
 
     # Código de referido (opcional)
-    _rc = (data.get('referral_code') or '').strip()
+    _rc = str(data.get('referral_code') or '').strip()[:20]
     referral_code = _rc.upper() if _rc else None
 
     # 4) Unicidad

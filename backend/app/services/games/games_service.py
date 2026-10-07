@@ -7,6 +7,9 @@ from app.subscriptions.models import UserSubscription
 from sqlalchemy import or_
 from datetime import datetime, timezone
 import random
+
+# Generador criptográfico: los números no se pueden predecir observando sorteos previos
+_rng = random.SystemRandom()
 from app.services.notify.push_sender import send_bulk_push
 from app.subscriptions.service import get_status as get_sub_status  # 👈 NUEVO
 
@@ -79,7 +82,7 @@ def _generate_preview_numbers(k: int = 5, digits: int = 3) -> list[int]:
     if k > len(population):
         k = len(population)
 
-    return random.sample(population, k)
+    return _rng.sample(population, k)
 
 def find_active_unscheduled_game_id(digits: int = 3) -> int | None:
     """

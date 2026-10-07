@@ -1,7 +1,8 @@
 # app/routes/admin/games_routes.py
 from datetime import datetime
-from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
-from flask import Blueprint, request, jsonify, session
+import logging
+from flask import Blueprint, request, jsonify
+from app.security.guards import current_user_id, protect_blueprint_admin
 from app.db.database import db  # <- tu SQLAlchemy()
 from app.services.admin.games_service import (
     list_games,
@@ -14,6 +15,15 @@ from app.services.admin.games_service import (
 )
 
 admin_games_bp = Blueprint("admin_games_bp", __name__, url_prefix="/api/admin/games")
+# Todas las rutas de este blueprint exigen rol administrador.
+protect_blueprint_admin(admin_games_bp)
+
+log = logging.getLogger("admin_games")
+
+
+def _server_error(where: str):
+    log.exception("admin_games %s failed", where)
+    return jsonify({"error": "Error interno del servidor"}), 500
 
 me_notifications_bp = Blueprint(
     "me_notifications_bp",
@@ -25,17 +35,20 @@ me_notifications_bp = Blueprint(
 @admin_games_bp.get("/")
 
 def admin_list_games():
-    q = (request.args.get("q") or "").strip()
-    page = int(request.args.get("page") or 1)
-    per_page = int(request.args.get("per_page") or 50)
+    q = (request.args.get("q") or "").strip()[:100]
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+        per_page = max(1, min(500, int(request.args.get("per_page") or 50)))
+    except ValueError:
+        return jsonify({"error": "Parámetros de paginación inválidos"}), 400
 
     conn = None
     try:
         conn = db.engine.raw_connection()      # ✅ conexión cruda (psycopg2)
         data = list_games(conn, q=q, page=page, per_page=per_page)
         return jsonify(data), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return _server_error(request.endpoint or "")
     finally:
         if conn:
             conn.close()                       # ✅ cerrar
@@ -48,8 +61,8 @@ def admin_list_lotteries():
         conn = db.engine.raw_connection()
         items = list_lotteries(conn)
         return jsonify({"items": items}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return _server_error(request.endpoint or "")
     finally:
         if conn:
             conn.close()
@@ -85,8 +98,12 @@ def admin_update_game(game_id: int):
         if not item:
             return jsonify({"error": "Game not found"}), 404
         return jsonify({"ok": True, "item": item}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except ValueError as e:
+        if str(e) == "GAME_LOCKED":
+            return jsonify({"error": "GAME_LOCKED"}), 409
+        return _server_error(request.endpoint or "")
+    except Exception:
+        return _server_error(request.endpoint or "")
     finally:
         if conn:
             conn.close()
@@ -94,8 +111,7 @@ def admin_update_game(game_id: int):
 # body: { "winning_number": 0..999 }
 @admin_games_bp.post("/<int:game_id>/winner")
 def admin_set_winner(game_id: int):
-    # ✅ Verificación básica de permisos (ajusta según tu sistema):
-    user_id = session.get("user_id") or 0
+    user_id = current_user_id() or 0
 
     body = request.get_json(silent=True) or {}
     if "winning_number" not in body:
@@ -124,8 +140,8 @@ def admin_set_winner(game_id: int):
             # Puede ser porque el número no pertenece al juego
             return jsonify({"error": "Número inválido para este juego o juego inexistente"}), 400
         return jsonify({"ok": True, "item": item}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return _server_error(request.endpoint or "")
     finally:
         if conn:
             conn.close()
@@ -140,31 +156,14 @@ def admin_delete_game(game_id: int):
         if not deleted:
             return jsonify({"error": "Game not found"}), 404
         return ("", 204)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return _server_error(request.endpoint or "")
     finally:
         if conn:
             conn.close()
 @me_notifications_bp.get("/peek-schedule")
 def peek_schedule():
-    uid = None
-
-    xuid = request.headers.get("X-USER-ID")
-    if xuid and xuid.isdigit():
-        uid = int(xuid)
-
-    if uid is None:
-        try:
-            verify_jwt_in_request(optional=True)
-            ident = get_jwt_identity()
-            uid = int(ident) if ident is not None else None
-        except Exception:
-            uid = None
-
-    if uid is None:
-        s_uid = session.get("user_id")
-        uid = int(s_uid) if s_uid else None
-
+    uid = current_user_id(optional=True)
     if uid is None:
         return jsonify({}), 200
 
@@ -173,32 +172,15 @@ def peek_schedule():
         conn = db.engine.raw_connection()
         item = peek_latest_schedule_notice(conn, uid)  # no marca leído
         return jsonify(item or {}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return _server_error(request.endpoint or "")
     finally:
         if conn:
             conn.close()
 
 @me_notifications_bp.post("/mark-read")
 def mark_read():
-    uid = None
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        token = auth.split(" ", 1)[1]
-        try:
-            # payload = decode_token(token)
-            # uid = int(payload.get("user_id") or payload.get("sub"))
-            pass
-        except Exception:
-            uid = None
-    if uid is None:
-        xuid = request.headers.get("X-USER-ID")
-        if xuid and xuid.isdigit():
-            uid = int(xuid)
-    if uid is None:
-        s_uid = session.get("user_id")
-        uid = int(s_uid) if s_uid else None
-
+    uid = current_user_id(optional=True)
     if uid is None:
         return jsonify({"error": "no_user"}), 401
 
@@ -214,8 +196,8 @@ def mark_read():
         conn = db.engine.raw_connection()
         updated = mark_notifications_read(conn, uid, ids)
         return jsonify({"ok": True, "updated": updated}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return _server_error(request.endpoint or "")
     finally:
         if conn:
             conn.close()

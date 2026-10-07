@@ -1,6 +1,7 @@
 # backend/app/routes/games/games_routes.py
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.security.guards import admin_required
 from app.db.database import db
 from app.subscriptions.service import get_status as get_sub_status
 
@@ -82,9 +83,10 @@ def generate():
     except PermissionError as e:
         db.session.rollback()
         return jsonify({"ok": False, "code": "NOT_PREMIUM", "message": str(e)}), 403
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({"ok": False, "message": str(e)}), 500
+        current_app.logger.exception("generate failed")
+        return jsonify({"ok": False, "message": "Error interno del servidor"}), 500
 
 
 @games_bp.post("/commit")
@@ -144,22 +146,16 @@ def commit():
 @games_bp.delete("/<int:game_id>/selection")
 @jwt_required(optional=True)
 def release(game_id: int):
-    # primero intenta con header X-USER-ID (para forzar identidad exacta)
-    uid_hdr = request.headers.get("X-USER-ID")
-    uid_jwt = get_jwt_identity()
-
-    uid = uid_hdr if uid_hdr is not None else uid_jwt
-    try:
-        uid = int(uid) if uid is not None else None
-    except Exception:
-        uid = None
+    # Solo el dueño del token puede liberar su propia reserva.
+    uid = _resolve_user_id()
 
     if uid is None:
         return jsonify({"ok": False, "code": "UNAUTHORIZED", "message": "Sin usuario"}), 401
 
     res = games_service.release_selection(user_id=uid, game_id=game_id)
     if not res.get("ok"):
-        return jsonify({"ok": False, "code": "RELEASE_ERROR", "message": res.get("error", "")}), 500
+        current_app.logger.error("release_selection failed: %s", res.get("error"))
+        return jsonify({"ok": False, "code": "RELEASE_ERROR", "message": "No se pudo liberar la reserva"}), 500
 
     if res.get("released", 0) == 0:
         return jsonify({"ok": False, "code": "NOT_FOUND", "message": "No había reserva previa"}), 404
@@ -246,7 +242,7 @@ def _parse_winning_number(raw) -> int:
     return int(s)
 
 @games_bp.post("/<int:game_id>/announce-winner")
-@jwt_required()
+@admin_required
 def announce_winner(game_id: int):
     body = request.get_json(silent=True) or {}
     try:
@@ -281,8 +277,11 @@ def api_history():
     if not uid:
         return jsonify({"error": "No autorizado"}), 403
 
-    page = int(request.args.get("page") or 1)
-    per_page = int(request.args.get("per_page") or 20)
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+        per_page = max(1, min(200, int(request.args.get("per_page") or 20)))
+    except ValueError:
+        page, per_page = 1, 20
 
     # Filtrar historial según el plan del usuario:
     # free → solo 2 cifras; PRO → hasta max_digits de su plan

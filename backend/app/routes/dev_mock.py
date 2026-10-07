@@ -1,10 +1,12 @@
 from flask import Blueprint, request, jsonify
+from app.security.guards import admin_required
 from datetime import datetime, timezone
 from app.services.referrals.referral_service import register_referral_commission
 
 dev_bp = Blueprint("dev_mock", __name__)
 
 @dev_bp.post("/dev/mock-subscription-payment")
+@admin_required
 def mock_subscription_payment():
     body = request.get_json(force=True)
     ok = register_referral_commission(

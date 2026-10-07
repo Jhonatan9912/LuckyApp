@@ -98,7 +98,8 @@ def admin_list_commission_requests():
         raise BadRequest(str(ve))
     except Exception as e:
         current_app.logger.exception("admin_list_commission_requests failed")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        current_app.logger.exception("admin route failed")
+        return jsonify({"ok": False, "error": "Error interno del servidor"}), 500
 
 @bp.get("/referrals/__ping__")
 @jwt_required()
@@ -124,7 +125,8 @@ def admin_get_user_detail(user_id: int):
         return jsonify({"ok": True, "item": item}), 200
     except Exception as e:
         current_app.logger.exception("admin_get_user_detail failed")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        current_app.logger.exception("admin route failed")
+        return jsonify({"ok": False, "error": "Error interno del servidor"}), 500
 
 
 @bp.get("/referrals/commission-requests/<int:request_id>/breakdown")
@@ -146,7 +148,8 @@ def admin_commission_request_breakdown(request_id: int):
         return jsonify({"ok": True, "item": data}), 200
     except Exception as e:
         current_app.logger.exception("admin_commission_request_breakdown failed")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        current_app.logger.exception("admin route failed")
+        return jsonify({"ok": False, "error": "Error interno del servidor"}), 500
     
     # ---------------------------------------------------------------------
 # POST /api/admin/referrals/payout-requests/:id/reject
@@ -178,7 +181,8 @@ def admin_reject_payout_request(request_id: int):
     except Exception as e:
         db.session.rollback()
         current_app.logger.exception("admin_reject_payout_request failed")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        current_app.logger.exception("admin route failed")
+        return jsonify({"ok": False, "error": "Error interno del servidor"}), 500
 
 @bp.post("/referrals/payout-batches")
 @jwt_required()
@@ -264,10 +268,13 @@ def admin_create_payout_batch():
     except BadRequest as e:
         db.session.rollback()
         return jsonify({"ok": False, "error": str(e)}), 400
-    except Exception as e:
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception:
         db.session.rollback()
         current_app.logger.exception("admin_create_payout_batch failed")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "Error interno del servidor"}), 500
     
 from sqlalchemy import text
 
@@ -345,7 +352,8 @@ def admin_list_payout_batches():
         return jsonify(items), 200   # tu Flutter ya soporta lista “plana”
     except Exception as e:
         current_app.logger.exception("admin_list_payout_batches failed")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        current_app.logger.exception("admin route failed")
+        return jsonify({"ok": False, "error": "Error interno del servidor"}), 500
 
 
 @bp.get("/referrals/payout-batches/<int:batch_id>/details")
@@ -440,7 +448,8 @@ def admin_payout_batch_details(batch_id: int):
 
     except Exception as e:
         current_app.logger.exception("admin_payout_batch_details failed")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        current_app.logger.exception("admin route failed")
+        return jsonify({"ok": False, "error": "Error interno del servidor"}), 500
 
 # app/routes/admin/referrals_routes.py
 from pathlib import Path

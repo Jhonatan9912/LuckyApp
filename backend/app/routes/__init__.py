@@ -1,3 +1,4 @@
+import os
 # backend/app/routes/__init__.py  (o donde tengas register_routes)
 
 from app.routes.identification import identification_bp
@@ -43,7 +44,9 @@ def register_routes(app):
     app.register_blueprint(subscriptions_bp)
     app.register_blueprint(webhooks_bp)
     app.register_blueprint(referrals_bp)
-    app.register_blueprint(dev_bp)
+    # Rutas de simulación (crean comisiones de dinero): SOLO en desarrollo local.
+    if os.getenv("ENABLE_DEV_ROUTES", "").lower() in ("1", "true", "yes"):
+        app.register_blueprint(dev_bp)
     app.register_blueprint(payouts_bp)
     app.register_blueprint(meta_bp)
     app.register_blueprint(referrals_public_bp)

@@ -9,7 +9,28 @@ from app.services.reset.reset_service import (
     ResetError,
 )
 
+from app.security.guards import client_ip, rate_limited, too_many_requests
+
 EMAIL_RE = re_compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _request_blocked(email: str) -> bool:
+    """Límites para pedir códigos: evita spam de correos y abuso del proveedor."""
+    return (
+        rate_limited(f"reset:req:ip:{client_ip()}", 20, 3600)
+        or rate_limited(f"reset:req:email:{email}", 5, 3600)
+    )
+
+
+def _verify_blocked(email: str) -> bool:
+    return (
+        rate_limited(f"reset:ver:ip:{client_ip()}", 60, 3600)
+        or rate_limited(f"reset:ver:email:{email}", 20, 3600)
+    )
+
+
+def _confirm_blocked() -> bool:
+    return rate_limited(f"reset:confirm:ip:{client_ip()}", 30, 3600)
 
 # ========= Blueprint original (/api/reset/...) =========
 password_reset_bp = Blueprint("password_reset_bp", __name__, url_prefix="/api/reset")
@@ -19,14 +40,16 @@ def reset_request():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
 
-    if not email or not EMAIL_RE.match(email):
+    if not email or len(email) > 255 or not EMAIL_RE.match(email):
         return jsonify({"error": "Correo inválido"}), 400
+    if _request_blocked(email):
+        return too_many_requests()
 
     try:
         request_password_reset_by_email(email)
     except ResetError:
         # No revelar si existe o no el correo
-        current_app.logger.info("Solicitud reset para email no encontrado: %s", email)
+        current_app.logger.info("Solicitud reset para email no registrado")
     except Exception:
         current_app.logger.exception("Error en /api/reset/request")
         # Respuesta neutra (evita enumeración de correos)
@@ -43,6 +66,8 @@ def reset_verify():
 
     if not email or not code:
         return jsonify({"error": "Correo y código son requeridos"}), 400
+    if _verify_blocked(email):
+        return too_many_requests()
 
     try:
         reset_token = verify_reset_code_by_email(email, code)
@@ -66,6 +91,10 @@ def reset_confirm():
         return jsonify({"error": "Token y nueva contraseña requeridos"}), 400
     if len(new_password) < 6:
         return jsonify({"error": "La contraseña debe tener mínimo 6 caracteres"}), 400
+    if len(new_password) > 128:
+        return jsonify({"error": "La contraseña es demasiado larga (máx. 128)"}), 400
+    if _confirm_blocked():
+        return too_many_requests()
 
     try:
         set_new_password_by_token(reset_token, new_password)
@@ -86,14 +115,16 @@ def alias_request_reset_by_email():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
 
-    if not email or not EMAIL_RE.match(email):
+    if not email or len(email) > 255 or not EMAIL_RE.match(email):
         return jsonify({"error": "Correo inválido"}), 400
+    if _request_blocked(email):
+        return too_many_requests()
 
     try:
         request_password_reset_by_email(email)
     except ResetError:
         # No revelar si existe o no el correo
-        current_app.logger.info("Solicitud reset (alias) para email no encontrado: %s", email)
+        current_app.logger.info("Solicitud reset (alias) para email no registrado")
     except Exception:
         current_app.logger.exception("Error en alias /api/auth/reset/email")
         return jsonify({"message": "Si el correo está registrado, recibirás un código."}), 200
@@ -111,6 +142,8 @@ def alias_verify_reset_code():
 
     if not email or not code:
         return jsonify({"error": "Correo y código son requeridos"}), 400
+    if _verify_blocked(email):
+        return too_many_requests()
 
     try:
         token = verify_reset_code_by_email(email, code)
@@ -136,6 +169,10 @@ def alias_reset_confirm():
         return jsonify({"error": "Token y nueva contraseña requeridos"}), 400
     if len(new_password) < 6:
         return jsonify({"error": "La contraseña debe tener mínimo 6 caracteres"}), 400
+    if len(new_password) > 128:
+        return jsonify({"error": "La contraseña es demasiado larga (máx. 128)"}), 400
+    if _confirm_blocked():
+        return too_many_requests()
 
     try:
         set_new_password_by_token(reset_token, new_password)

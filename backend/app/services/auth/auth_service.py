@@ -1,7 +1,7 @@
 # backend/app/services/auth/auth_service.py
 import re
 from flask import current_app
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from app.models.user import User
 
 class AuthError(Exception):
@@ -15,15 +15,17 @@ def _created_at_iso(u) -> str | None:
     except Exception:
         return None
 
+# Hash ficticio para igualar el tiempo de respuesta cuando el usuario no existe
+_DUMMY_HASH = generate_password_hash("dummy-password-for-timing")
+
+
 def _password_is_valid(u, raw_password: str) -> bool:
-    # Soporta hash (bcrypt/pbkdf2) y, en último caso, texto plano (legacy)
-    if hasattr(u, "password_hash") and u.password_hash:
+    # Solo contraseñas con hash (nunca texto plano)
+    if getattr(u, "password_hash", None):
         try:
             return check_password_hash(u.password_hash, raw_password)
         except Exception:
             return False
-    if hasattr(u, "password") and u.password:
-        return u.password == raw_password
     return False
 
 def _safe_role_id(u) -> int:
@@ -107,14 +109,12 @@ def login_with_phone(phone: str, password: str) -> dict:
             break
 
     if not user:
+        check_password_hash(_DUMMY_HASH, password or "")
         raise AuthError("Número de celular o contraseña inválidos")
     if not _password_is_valid(user, password):
         raise AuthError("Número de celular o contraseña inválidos")
 
-    current_app.logger.info(
-        "[AUTH] Login match phone=%s (input=%r, candidates=%r)",
-        matched_phone, phone, candidates
-    )
+    current_app.logger.info("[AUTH] Login OK user_id=%s", user.id)
 
     return {
         "id": user.id,

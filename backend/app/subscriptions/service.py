@@ -581,6 +581,22 @@ def manual_grant_pro(
         "source": "manual_offline",
     }
 
+class PurchaseOwnedByOtherUser(Exception):
+    """El purchaseToken ya está vinculado a la suscripción de otro usuario."""
+
+
+def _owner_of_purchase_token(purchase_token: str) -> Optional[int]:
+    if not purchase_token:
+        return None
+    row = (
+        UserSubscription.query
+        .filter(UserSubscription.purchase_token == purchase_token)
+        .order_by(UserSubscription.id.desc())
+        .first()
+    )
+    return int(row.user_id) if row is not None else None
+
+
 def sync_purchase(
     user_id: int,
     product_id: str,
@@ -610,6 +626,13 @@ def sync_purchase(
     purchase_token = (verification_data or '').strip()
     if purchase_token.startswith('gp:'):
         purchase_token = purchase_token[3:]
+
+    # Una compra real de Google Play solo puede activar UNA cuenta.
+    # Sin esto, un mismo pago se podía compartir con cuentas ilimitadas.
+    owner = _owner_of_purchase_token(purchase_token)
+    if owner is not None and owner != int(user_id):
+        _log_event("subs_sync_token_owned", user_id=user_id, owner=owner)
+        raise PurchaseOwnedByOtherUser()
 
 
     _log_event("subs_sync_start", user_id=user_id, product_id=product_id)
@@ -742,10 +765,11 @@ def sync_purchase(
         "autoRenewing": bool(auto_ren) if auto_ren is not None else False,
     }
 
-def rtdn_handle(purchase_token: str, package_name: str | None = None, notification_type: int | str | None = None) -> Dict[str, Any]:
+def rtdn_handle(purchase_token: str, package_name: str | None = None,
+                notification_type: int | str | None = None, trusted: bool = False) -> Dict[str, Any]:
     """Maneja una notificación en tiempo real (RTDN)."""
     RTDN_RCVD.inc()
-    _log_event("rtdn_received", purchase_token=purchase_token, package_name=package_name, notification_type=notification_type)
+    _log_event("rtdn_received", package_name=package_name, notification_type=notification_type, trusted=trusted)
 
     # ✅ Si Google avisa REVOKED (12), rechaza comisiones y termina
     try:
@@ -753,7 +777,7 @@ def rtdn_handle(purchase_token: str, package_name: str | None = None, notificati
     except Exception:
         code = None
 
-    if code == 12:  # REVOKED / Refund
+    if code == 12 and trusted:  # REVOKED / Refund (solo si Pub/Sub viene verificado)
         try:
             from app.services.referrals.payouts_service import reject_commissions_for_token
             rejected = reject_commissions_for_token(purchase_token)
@@ -766,9 +790,15 @@ def rtdn_handle(purchase_token: str, package_name: str | None = None, notificati
             return {"ok": False, "refund": True, "err": str(e)}
 
     # 🔁 Para cualquier otro tipo, seguimos con la reconciliación normal
+    # La notificación se aplica al dueño real del token (antes se usaba user_id=0)
+    owner = _owner_of_purchase_token(purchase_token)
+    if owner is None:
+        _log_event("rtdn_unknown_token")
+        return {"ok": True, "skipped": "unknown_token"}
+
     try:
         result = sync_purchase(
-            user_id=0,  # si luego mapeas token->usuario, aquí lo puedes poner
+            user_id=owner,
             product_id="",
             purchase_id="",
             verification_data=purchase_token,

@@ -25,7 +25,9 @@ def create_request():
     inner = data.get("data") if isinstance(data.get("data"), dict) else {}
 
     account_type   = (flat.get("account_type") or "").strip().lower()
-    account_number = (inner.get("account_number") or flat.get("account_number") or "").strip()
+    account_number = str(inner.get("account_number") or flat.get("account_number") or "").strip()
+    if len(account_number) > 40:
+        return jsonify({"ok": False, "error": "account_number demasiado largo"}), 400
 
     account_kind = inner.get("account_kind") or flat.get("account_kind") or None
     if isinstance(account_kind, str):
@@ -63,7 +65,7 @@ def create_request():
     except ValueError as e:
         db.session.rollback()
         return jsonify({"ok": False, "error": str(e)}), 400
-    except Exception as e:
+    except Exception:
         db.session.rollback()
         current_app.logger.exception("create_payout_request failed")
-        return jsonify({"ok": False, "error": f"server_error: {e}"}), 500
+        return jsonify({"ok": False, "error": "Error interno del servidor"}), 500

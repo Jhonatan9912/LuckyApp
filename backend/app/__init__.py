@@ -1,6 +1,7 @@
 # backend/app/__init__.py
-from flask import Flask
+from flask import Flask, request
 from flask_cors import CORS
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_jwt_extended import JWTManager
 from .routes import register_routes
 from .db.database import init_db
@@ -18,24 +19,58 @@ def create_app():
     load_dotenv()
 
     app = Flask(__name__)
-    CORS(app)
+
+    # Railway pone un proxy delante: tomamos la IP real del cliente del
+    # último salto (X-Forwarded-For) para el limitador de intentos.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+    # CORS: orígenes permitidos para la web (coma-separados).
+    # La app móvil no usa CORS, así que esto solo afecta a navegadores.
+    cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+    if not cors_origins:
+        cors_origins = "*"
+        app.logger.warning("CORS_ORIGINS no definido: se permite cualquier origen.")
+    CORS(
+        app,
+        resources={r"/api/.*": {"origins": cors_origins}},
+        allow_headers=["Authorization", "Content-Type", "Accept"],
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        max_age=600,
+    )
+
+    # Tamaño máximo de petición (adjuntos de pagos incluidos)
+    app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH_MB', '20')) * 1024 * 1024
 
     # =========================
     # Base de Datos
     # =========================
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
-    app.logger.info("DATABASE_URL value: %s", os.getenv("DATABASE_URL"))
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
     # =========================
     # JWT y Secret Keys
     # =========================
-    app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'cambia-esta-clave-en-produccion')
-    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', app.config['JWT_SECRET_KEY'])
-    # JWT sin expiración automática (cierran sólo con logout)
+    jwt_secret = os.getenv('JWT_SECRET_KEY') or ''
+    is_dev = _as_bool(os.getenv('ALLOW_INSECURE_DEV_SECRET'))
+    if not jwt_secret.strip() or jwt_secret.strip() == 'cambia-esta-clave-en-produccion':
+        if not is_dev:
+            raise RuntimeError(
+                "JWT_SECRET_KEY no está configurado (o usa el valor por defecto). "
+                "Defínelo en las variables de entorno antes de arrancar."
+            )
+        app.logger.warning("⚠ Usando JWT_SECRET_KEY de desarrollo (ALLOW_INSECURE_DEV_SECRET).")
+        jwt_secret = 'dev-only-secret-not-for-production-use-0000'
+    elif len(jwt_secret) < 32:
+        app.logger.warning("⚠ JWT_SECRET_KEY es corto (<32 caracteres); se recomienda uno más largo.")
+    app.config['JWT_SECRET_KEY'] = jwt_secret
+    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY') or jwt_secret
+    app.config['JWT_ALGORITHM'] = 'HS256'
+    app.config['JWT_DECODE_ALGORITHMS'] = ['HS256']
+    # Los tiempos reales se fijan al emitir cada token (access 12h, refresh largo)
     app.config['JWT_ACCESS_TOKEN_EXPIRES'] = False
     app.config['JWT_REFRESH_TOKEN_EXPIRES'] = False
     app.config['JWT_COOKIE_CSRF_PROTECT'] = False
+    app.config['JWT_TOKEN_LOCATION'] = ['headers']
         # Config de suscripciones / RTDN / reconciliación
     app.config["RECONCILE_TOKEN"] = os.getenv("RECONCILE_TOKEN")                # usado por /api/subscriptions/reconcile
     app.config["PUBSUB_PUSH_AUDIENCE"] = os.getenv("PUBSUB_PUSH_AUDIENCE", "")  # opcional, para verificar OIDC en /rtdn
@@ -79,18 +114,48 @@ def create_app():
 
     jwt = JWTManager(app)
 
+    from app.security.guards import ensure_security_tables, token_issued_before_epoch
+    ensure_security_tables(app)
+
     @jwt.token_in_blocklist_loader
     def _is_token_revoked(jwt_header, jwt_payload):
-        # Si el JTI está en la tabla, el token se considera revocado
+        # Revocado si su JTI está en la lista (logout) o si fue emitido antes
+        # de un cambio de contraseña (revocación global del usuario).
         from app.models.token_blocklist import TokenBlocklist
         jti = jwt_payload.get("jti")
-        return TokenBlocklist.query.filter_by(jti=jti).first() is not None
+        if TokenBlocklist.query.filter_by(jti=jti).first() is not None:
+            return True
+        return token_issued_before_epoch(jwt_payload.get("sub"), jwt_payload.get("iat"))
+
+    @app.after_request
+    def _security_headers(resp):
+        h = resp.headers
+        h.setdefault("X-Content-Type-Options", "nosniff")
+        h.setdefault("X-Frame-Options", "DENY")
+        h.setdefault("Referrer-Policy", "no-referrer")
+        h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        h.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+        if request.path.startswith("/api/"):
+            h.setdefault("Cache-Control", "no-store")
+        return resp
+
+    @app.before_request
+    def _reject_oversized():
+        # Rechaza antes de que cualquier ruta intente leer el cuerpo.
+        cl = request.content_length
+        if cl is not None and cl > app.config['MAX_CONTENT_LENGTH']:
+            return {"ok": False, "error": "Archivo o petición demasiado grande"}, 413
+        return None
+
+    @app.errorhandler(413)
+    def _too_large(_e):
+        return {"ok": False, "error": "Archivo o petición demasiado grande"}, 413
 
     # Registra TODOS los blueprints desde routes/__init__.py
     register_routes(app)
 
-       # =========================
-    # DEBUG GLOBAL
+    # =========================
+    # DEBUG GLOBAL (solo si ENABLE_DEBUG_ROUTES=true)
     # =========================
     from flask import Blueprint, jsonify, current_app
     debug_bp = Blueprint("debug_global", __name__, url_prefix="/api/debug")
@@ -119,7 +184,8 @@ def create_app():
     except Exception as e:
         app.logger.error("debug import failed: %s", e)
 
-    app.register_blueprint(debug_bp)
+    if _as_bool(os.getenv("ENABLE_DEBUG_ROUTES")):
+        app.register_blueprint(debug_bp)
     
     @app.get("/healthz")
     def healthz():
@@ -129,6 +195,12 @@ def create_app():
 
     @app.get("/metrics")
     def metrics():
+        # Solo con token: Authorization: Bearer <METRICS_TOKEN>
+        import hmac
+        expected = (os.getenv("METRICS_TOKEN") or "").strip()
+        given = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        if not expected or not hmac.compare_digest(expected, given):
+            return {"ok": False, "error": "Not found"}, 404
         return metrics_http_response()
 
     # Registrar comandos CLI (mature-commissions)

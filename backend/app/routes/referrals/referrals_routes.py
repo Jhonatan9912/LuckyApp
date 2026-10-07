@@ -4,6 +4,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from flask import send_file, abort, current_app
 from sqlalchemy import text
 from app.db.database import db
+from app.security.guards import admin_required
 from app.services.referrals.referral_service import (
     get_summary_for_user,
     get_referrals_for_user,
@@ -63,12 +64,16 @@ def my_referrals_payouts_summary():
     return jsonify(data), 200
 
 @referrals_bp.post("/referrals/dev/mature")
-@jwt_required()
+@admin_required
 def dev_mature_referral_commissions():
     """
     DEV ONLY: promueve comisiones pending -> available usando minutos o días.
-    Ej: POST /api/referrals/dev/mature?minutes=1
+    Deshabilitado salvo ENABLE_DEV_ROUTES=true y solo para administradores
+    (antes cualquier usuario podía adelantar sus comisiones y retirarlas).
     """
+    import os
+    if os.getenv("ENABLE_DEV_ROUTES", "").lower() not in ("1", "true", "yes"):
+        abort(404)
     minutes = request.args.get("minutes", type=int)
     days = request.args.get("days", type=int)
 

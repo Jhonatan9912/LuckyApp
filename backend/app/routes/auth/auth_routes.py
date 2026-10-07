@@ -12,6 +12,16 @@ from app.services.auth.auth_service import login_with_phone, AuthError, get_prof
 from app.models.user import User
 from app.models.token_blocklist import TokenBlocklist
 from app.db.database import db
+from app.security.guards import (
+    client_ip, rate_limited, reset_rate_limit, too_many_requests, get_role_id,
+)
+import os
+import re
+
+# Límites de intentos de login (ajustables por variables de entorno)
+_LOGIN_PER_ACCOUNT = int(os.getenv("LOGIN_MAX_PER_ACCOUNT", "8"))      # por celular / 15 min
+_LOGIN_PER_IP = int(os.getenv("LOGIN_MAX_PER_IP", "60"))               # por IP / 15 min
+_LOGIN_WINDOW = 15 * 60
 
 auth_bp = Blueprint("auth_bp", __name__, url_prefix="/api/auth")
 
@@ -24,14 +34,24 @@ def _to_int(value, default=0):
 @auth_bp.post("/login")
 def login():
     data = request.get_json(silent=True) or {}
-    phone = (data.get("phone") or "").strip()
-    password = data.get("password") or ""
+    phone = str(data.get("phone") or "").strip()
+    password = str(data.get("password") or "")
 
     if not phone or not password:
         return jsonify({"ok": False, "error": "phone y password son requeridos"}), 400
+    if len(phone) > 32 or len(password) > 256:
+        return jsonify({"ok": False, "error": "Número de celular o contraseña inválidos"}), 401
+
+    # Frena ataques de fuerza bruta: por cuenta (últimos 10 dígitos) y por IP.
+    phone_key = re.sub(r"\D", "", phone)[-10:]
+    account_key = f"login:acct:{phone_key}"
+    ip_blocked = rate_limited(f"login:ip:{client_ip()}", _LOGIN_PER_IP, _LOGIN_WINDOW)
+    if ip_blocked or rate_limited(account_key, _LOGIN_PER_ACCOUNT, _LOGIN_WINDOW):
+        return too_many_requests()
 
     try:
         user = login_with_phone(phone, password)   # user incluye role_id
+        reset_rate_limit(account_key)
 
         # === USA el role_id REAL; si viene None, default 2 (estándar) ===
         raw_rid = user.get("role_id", None)
@@ -77,8 +97,11 @@ def refresh():
     Intercambia un refresh token válido por un nuevo access token.
     """
     uid_str = get_jwt_identity()
-    claims = get_jwt() or {}
-    rid = _to_int(claims.get("rid"), 2)
+    # El rol se lee de la BD: si a un admin le quitan el rol, su próximo
+    # token ya no lo tendrá. Si el usuario fue eliminado, no se renueva.
+    rid = get_role_id(_to_int(uid_str, 0))
+    if rid is None:
+        return jsonify({"ok": False, "error": "Usuario no encontrado"}), 401
 
     new_access = create_access_token(
         identity=str(uid_str),

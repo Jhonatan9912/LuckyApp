@@ -13,6 +13,9 @@ from app.services.admin.players_service import (
 
 admin_players_bp = Blueprint("admin_players", __name__, url_prefix="/api/admin")
 
+from app.security.guards import protect_blueprint_admin  # noqa: E402
+protect_blueprint_admin(admin_players_bp)
+
 def _get_role_id():
     claims = get_jwt() or {}
     role_id = claims.get("role_id")

@@ -1,6 +1,8 @@
 # app/routes/register/register_routes.py
 from flask import Blueprint, request, jsonify
+from werkzeug.exceptions import HTTPException
 from app.services.register.register_service import register_user
+from app.security.guards import client_ip, rate_limited, too_many_requests
 import traceback
 from datetime import datetime
 
@@ -8,8 +10,13 @@ register_bp = Blueprint('register', __name__, url_prefix="/api/auth")
 
 @register_bp.route('/register', methods=['POST'])
 def register():
+    # Límite de registros por IP (frena la creación masiva de cuentas)
+    if rate_limited(f"register:ip:{client_ip()}", 15, 3600):
+        return too_many_requests()
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({'ok': False, 'error': 'JSON inválido'}), 400
 
         # Parseo de fecha: acepta 'YYYY-MM-DD' o ISO completo.
         b = str(data.get('birthdate', '')).strip()
@@ -27,6 +34,8 @@ def register():
 
     except ValueError as ve:
         return jsonify({'ok': False, 'error': str(ve)}), 400
+    except HTTPException:
+        raise
     except Exception:
         traceback.print_exc()
         return jsonify({'ok': False, 'error': 'Error interno del servidor'}), 500
