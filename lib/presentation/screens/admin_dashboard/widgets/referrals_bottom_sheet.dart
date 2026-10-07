@@ -1,4 +1,6 @@
 // lib/presentation/screens/admin_dashboard/widgets/referrals_bottom_sheet.dart
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:base_app/core/ui/dialogs.dart' show AppSnackBars;
 import 'package:flutter/material.dart';
 import 'package:base_app/presentation/screens/admin_dashboard/logic/referrals_controller.dart';
 import 'package:base_app/data/api/admin_referrals_api.dart';
@@ -6,7 +8,6 @@ import 'package:base_app/data/api/api_service.dart';
 import 'package:base_app/data/models/top_referrer.dart'; // 👈 NUEVO
 import 'package:base_app/domain/models/commission_request.dart';
 import 'package:base_app/presentation/screens/admin_dashboard/widgets/user_detail_sheet.dart';
-import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:base_app/data/models/payout_batch.dart';
 import 'package:base_app/data/models/payout_batch_detail.dart';
@@ -358,7 +359,7 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
       // 5) Feedback
       if (!mounted) return;
       final batchId = out?['batch_id'];
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context).showAppSnackBar(
         SnackBar(
           content: Text(
             'Pago creado (lote #$batchId). Solicitudes marcadas como pagadas.',
@@ -370,7 +371,7 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
         Navigator.pop(context); // cierra loading
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('No se pudo crear el pago: $e')));
+        ).showAppSnackBar(SnackBar(content: Text('No se pudo crear el pago: $e')));
       }
     }
   }
@@ -416,13 +417,13 @@ class _ReferralsBottomSheetState extends State<ReferralsBottomSheet> {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Solicitudes rechazadas')));
+      ).showAppSnackBar(const SnackBar(content: Text('Solicitudes rechazadas')));
     } catch (e) {
       if (mounted) {
         Navigator.pop(context); // cierra loading
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('No se pudo rechazar: $e')));
+        ).showAppSnackBar(SnackBar(content: Text('No se pudo rechazar: $e')));
       }
     }
   }
@@ -1694,7 +1695,7 @@ class _RejectReasonSheetState extends State<_RejectReasonSheet> {
 
 class _PayBatchResult {
   final String note;
-  final List<File> files;
+  final List<PlatformFile> files;
   const _PayBatchResult({required this.note, required this.files});
 }
 
@@ -1714,7 +1715,7 @@ class _PaySelectedSheet extends StatefulWidget {
 class _PaySelectedSheetState extends State<_PaySelectedSheet> {
   final _formKey = GlobalKey<FormState>();
   final _noteCtrl = TextEditingController();
-  final List<File> _files = [];
+  final List<PlatformFile> _files = [];
 
   @override
   void dispose() {
@@ -1726,16 +1727,13 @@ class _PaySelectedSheetState extends State<_PaySelectedSheet> {
     final res = await FilePicker.platform.pickFiles(
       allowMultiple: true,
       withReadStream: false,
-      withData: false,
+      // En web no hay rutas de archivo: se leen los bytes.
+      withData: kIsWeb,
     );
     if (res == null) return;
 
-    final paths = res.files.map((f) => f.path).whereType<String>().toList();
     setState(() {
-      for (final p in paths) {
-        final f = File(p);
-        if (f.existsSync()) _files.add(f);
-      }
+      _files.addAll(res.files.where((f) => f.bytes != null || f.path != null));
     });
   }
 
@@ -1802,12 +1800,7 @@ class _PaySelectedSheetState extends State<_PaySelectedSheet> {
                     if (_files.isNotEmpty)
                       Expanded(
                         child: Text(
-                          _files
-                              .map(
-                                (f) =>
-                                    f.path.split(Platform.pathSeparator).last,
-                              )
-                              .join(' • '),
+                          _files.map((f) => f.name).join(' • '),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -1832,7 +1825,7 @@ class _PaySelectedSheetState extends State<_PaySelectedSheet> {
                           context,
                           _PayBatchResult(
                             note: _noteCtrl.text.trim(),
-                            files: List<File>.from(_files),
+                            files: List<PlatformFile>.from(_files),
                           ),
                         );
                       },

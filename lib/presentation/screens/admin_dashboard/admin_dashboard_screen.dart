@@ -5,12 +5,14 @@ import 'package:path_provider/path_provider.dart'; // 👈 NUEVO
 import 'package:open_filex/open_filex.dart';     // ya lo tenías
 import 'package:share_plus/share_plus.dart';     // 👈 NUEVO
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:base_app/core/ui/dialogs.dart';
 import 'package:flutter/material.dart';
+import 'package:base_app/core/utils/download/browser_download.dart';
 import 'logic/admin_dashboard_controller.dart';
 import 'widgets/kpi_grid.dart';
 import 'widgets/loans_by_month_chart.dart';
 import 'package:base_app/data/session/session_manager.dart';
-import '../login/login_screen.dart';
 import '../dashboard/widgets/help_bottom_sheet.dart';
 import 'widgets/users_bottom_sheet.dart';
 import 'widgets/games_bottom_sheet.dart';
@@ -56,7 +58,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final roleId = await SessionManager().getRoleId();
     if (roleId != 1) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        ScaffoldMessenger.of(context).showAppSnackBar(
           const SnackBar(
             content: Text('Solo administradores pueden ver este panel'),
           ),
@@ -81,54 +83,30 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Future<void> _confirmAndLogout() async {
-    final ok = await showDialog<bool>(
+    final ok = await AppDialogs.confirmPlain(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Cerrar sesión'),
-        content: const Text('¿Seguro que quieres salir de tu cuenta?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Salir'),
-          ),
-        ],
-      ),
+      title: 'Cerrar sesión',
+      message: '¿Seguro que quieres salir de tu cuenta?',
+      okText: 'Salir',
+      destructive: true,
+      icon: Icons.logout_rounded,
     );
     if (ok == true) {
       await SessionManager().clear();
       if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-        (_) => false,
-      );
+      Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
     }
   }
 
   /// 🔹 Descarga el CSV de juegos activos y ofrece abrirlo o compartirlo.
   Future<void> _downloadExcelReport() async {
     // 0) Confirmación previa
-    final confirm = await showDialog<bool>(
+    final confirm = await AppDialogs.confirmPlain(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Descargar informe'),
-        content: const Text(
-          '¿Deseas descargar el informe de juegos activos y números reservados?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Descargar'),
-          ),
-        ],
-      ),
+      title: 'Descargar informe',
+      message: '¿Deseas descargar el informe de juegos activos y números reservados?',
+      okText: 'Descargar',
+      icon: Icons.download_rounded,
     );
 
     if (confirm != true) return;
@@ -161,7 +139,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
       if (resp.statusCode != 200) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
+        ScaffoldMessenger.of(context).showAppSnackBar(
           SnackBar(
             content:
                 Text('Error al descargar informe (${resp.statusCode})'),
@@ -170,7 +148,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         return;
       }
 
-      // 5) Guardar archivo en documentos de la app
+      // 5) En web: descarga directa desde el navegador
+      if (kIsWeb) {
+        downloadBytesInBrowser(
+          resp.bodyBytes,
+          fileName: 'juegos_activos.csv',
+          mimeType: 'text/csv',
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showAppSnackBar(
+          const SnackBar(content: Text('Informe descargado (juegos_activos.csv)')),
+        );
+        return;
+      }
+
+      // 5b) Guardar archivo en documentos de la app
       final dir = await getApplicationDocumentsDirectory();
       final file = File('${dir.path}/juegos_activos.csv');
       await file.writeAsBytes(resp.bodyBytes, flush: true);
@@ -209,7 +201,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
         if (result.type != ResultType.done) {
           if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
+          ScaffoldMessenger.of(context).showAppSnackBar(
             const SnackBar(
               content: Text(
                 'No se pudo abrir el informe.\n'
@@ -228,7 +220,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         } catch (e, st) {
           debugPrint('Error al compartir informe: $e\n$st');
           if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
+          ScaffoldMessenger.of(context).showAppSnackBar(
             const SnackBar(
               content: Text('No se pudo compartir el informe.'),
             ),
@@ -238,7 +230,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     } catch (e, st) {
       debugPrint('Error descargando informe: $e\n$st');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context).showAppSnackBar(
         const SnackBar(
           content: Text('Ocurrió un error al descargar el informe.'),
         ),

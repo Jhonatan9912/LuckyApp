@@ -1,0 +1,38 @@
+# Configuración de seguridad para Hostinger (Apache / LiteSpeed)
+
+Options -Indexes
+ServerSignature Off
+
+# ── Forzar HTTPS ──
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+  # Bloquea archivos ocultos y de configuración (.git, .env, .htaccess…)
+  RewriteRule (^|/)\.(?!well-known/) - [F,L]
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Política de contenido: solo se cargan scripts del propio sitio y se
+  # habla únicamente con la API de Railway y las fuentes de Google.
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://luckyapp-production-ca29.up.railway.app https://fonts.gstatic.com https://fonts.googleapis.com; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+  Header unset X-Powered-By
+
+  # index.html y el arranque nunca se cachean (las actualizaciones llegan al instante)
+  <FilesMatch "^(index\.html|flutter_bootstrap\.js|version\.json|manifest\.json)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+  </FilesMatch>
+</IfModule>
+
+<IfModule mod_mime.c>
+  AddType application/wasm .wasm
+  AddType application/javascript .js .mjs
+</IfModule>

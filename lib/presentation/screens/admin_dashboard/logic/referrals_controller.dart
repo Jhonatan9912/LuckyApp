@@ -7,7 +7,7 @@ import 'package:base_app/data/models/top_referrer.dart';
 import 'package:base_app/domain/models/commission_request.dart';
 import 'package:base_app/data/models/admin_user_detail.dart';
 import 'package:base_app/data/models/commission_breakdown.dart';
-import 'dart:io';
+import 'package:file_picker/file_picker.dart' show PlatformFile;
 import 'package:base_app/data/models/payout_batch.dart';
 import 'package:base_app/data/models/payout_batch_detail.dart';
 
@@ -349,7 +349,7 @@ class ReferralsController extends ChangeNotifier {
   Future<Map<String, dynamic>?> createPayoutBatch({
     required List<int> requestIds,
     String note = '',
-    List<File> files = const [], // ✅ aquí
+    List<PlatformFile> files = const [],
   }) async {
     if (_paying) return null;
     _paying = true;

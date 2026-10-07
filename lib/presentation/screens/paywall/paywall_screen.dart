@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:base_app/core/ui/dialogs.dart' show AppSnackBars;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:base_app/presentation/providers/subscription_provider.dart';
@@ -43,7 +45,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
       final ok = await subs.buyPro(productId: productId);
 
       if (subs.isPremium) {
-        messenger.showSnackBar(
+        messenger.showAppSnackBar(
           const SnackBar(content: Text('Suscripción PRO activada')),
         );
         if (mounted) nav.maybePop();
@@ -56,7 +58,10 @@ class _PaywallScreenState extends State<PaywallScreen> {
       }
     } catch (e) {
       setState(() {
-        _message = 'Error al comprar: $e';
+        _message = kIsWeb
+            ? 'Las suscripciones se compran desde la app de Android (Google Play). '
+                'Cuando compres allí, tu plan se activa también en la web.'
+            : 'Error al comprar: $e';
       });
     } finally {
       if (mounted) setState(() => _purchasing = false);
@@ -72,7 +77,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
       await subs
           .restore(); // disparará restored → sync → refresh en el provider
       if (subs.isPremium) {
-        messenger.showSnackBar(
+        messenger.showAppSnackBar(
           const SnackBar(content: Text('PRO restaurado correctamente')),
         );
         if (mounted) nav.maybePop();

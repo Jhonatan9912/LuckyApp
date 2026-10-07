@@ -1,5 +1,6 @@
 // lib/core/utils/url_utils.dart
 import 'package:flutter/material.dart';
+import 'package:base_app/core/ui/dialogs.dart' show AppSnackBars;
 import 'package:url_launcher/url_launcher.dart';
 
 class UrlUtils {
@@ -28,7 +29,7 @@ class UrlUtils {
     if (await tryMode(LaunchMode.inAppWebView)) return;
 
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context).showAppSnackBar(
         SnackBar(content: Text('No pude abrir el enlace: $url')),
       );
     }

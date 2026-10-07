@@ -33,6 +33,8 @@ class NotificationsProvider extends ChangeNotifier {
   /// Inicializa la suscripción a onTokenRefresh.
   /// Llamar una sola vez en el arranque de la app (post-login también sirve).
   Future<void> init() async {
+    // Push (FCM) solo existe en la app móvil.
+    if (kIsWeb) return;
     // Toma el token actual de FCM (si existe)
     _currentToken =
         FcmMessaging.I.currentToken ?? await FirebaseMessaging.instance.getToken();
@@ -57,6 +59,7 @@ class NotificationsProvider extends ChangeNotifier {
   /// Hook para tu flujo de login: cuando el usuario queda autenticado,
   /// registra (o actualiza) el token en el backend.
   Future<void> onUserAuthenticated() async {
+    if (kIsWeb) return;
     // Asegura inicialización
     await init();
 

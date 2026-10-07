@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -275,7 +274,7 @@ Future<Map<String, dynamic>> commit({
           .timeout(const Duration(seconds: 10));
     } on TimeoutException {
       return _fail(status: null, code: 'NETWORK_ERROR', message: 'Timeout');
-    } on SocketException {
+    } on http.ClientException {
       return _fail(status: null, code: 'NETWORK_ERROR', message: 'Sin conexión');
     } catch (e) {
       return _fail(status: null, code: 'UNKNOWN', message: e.toString());
@@ -336,7 +335,7 @@ Future<Map<String, dynamic>> commit({
         );
       } on TimeoutException {
         return _fail(status: null, code: 'NETWORK_ERROR', message: 'Timeout');
-      } on SocketException {
+      } on http.ClientException {
         return _fail(status: null, code: 'NETWORK_ERROR', message: 'Sin conexión');
       } catch (e) {
         return _fail(status: null, code: 'UNKNOWN', message: e.toString());
@@ -378,7 +377,7 @@ return _fail(
           .timeout(const Duration(seconds: 10));
     } on TimeoutException {
       return _fail(status: null, code: 'NETWORK_ERROR', message: 'Timeout');
-    } on SocketException {
+    } on http.ClientException {
       return _fail(status: null, code: 'NETWORK_ERROR', message: 'Sin conexión');
     } catch (e) {
       return _fail(status: null, code: 'UNKNOWN', message: e.toString());
@@ -533,7 +532,7 @@ Future<Map<String, dynamic>> getMySelection({
           .timeout(const Duration(seconds: 10));
     } on TimeoutException {
       return _fail(status: null, code: 'NETWORK_ERROR', message: 'Timeout');
-    } on SocketException {
+    } on http.ClientException {
       return _fail(status: null, code: 'NETWORK_ERROR', message: 'Sin conexión');
     } catch (e) {
       return _fail(status: null, code: 'UNKNOWN', message: e.toString());

@@ -1,6 +1,7 @@
 // lib/main.dart
 import 'dart:async'; // por si luego usamos unawaited
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
@@ -37,13 +38,23 @@ import 'package:base_app/core/network/api_client.dart';
 import 'package:base_app/data/api/auth_api.dart';
 import 'presentation/screens/faq/referrals/referrals_faq_screen.dart';
 import 'core/notifications/fcm_messaging.dart';
+import 'web/web_shell.dart';
+import 'web/screens/web_login_screen.dart';
+import 'web/screens/web_register_screen.dart';
+import 'web/player/web_player_dashboard.dart';
+import 'web/admin/web_admin_dashboard.dart';
+import 'web/screens/web_reset_password_screen.dart';
+import 'web/screens/web_legal_screen.dart';
 import 'presentation/providers/notifications_provider.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+  // En web no hay configuración de Firebase (push solo en la app móvil).
+  if (!kIsWeb) {
+    await Firebase.initializeApp();
+  }
   _setupLogging();
 
   // Locale por defecto para Intl y formatos
@@ -68,15 +79,15 @@ Future<void> main() async {
             session: session,
           ),
         ),
-ChangeNotifierProvider(
-  create: (_) => ReferralProvider(
-    api: ReferralsApi(
-      baseUrl: Env.apiBaseUrl,
-      session: session,  // ya lo estabas enviando
-    ),
-    session: session,     // ← AHORA SÍ lo pasamos al provider
-  ),
-),
+        ChangeNotifierProvider(
+          create: (_) => ReferralProvider(
+            api: ReferralsApi(
+              baseUrl: Env.apiBaseUrl,
+              session: session, // ya lo estabas enviando
+            ),
+            session: session, // ← AHORA SÍ lo pasamos al provider
+          ),
+        ),
 
         ChangeNotifierProvider(
           create: (_) => PayoutsProvider(
@@ -111,6 +122,13 @@ ChangeNotifierProvider(
 
     // Ejecuta en microtarea para no retrasar el frame actual
     Future.microtask(() async {
+      // En web no hay FCM ni Google Play Billing: solo se cargan datos del backend.
+      if (kIsWeb) {
+        unawaited(subs.refresh(force: true));
+        unawaited(referrals.load(refresh: true));
+        return;
+      }
+
       try {
         // Inicializa FCM (puede tardar un poco). Si falla, no rompe la app.
         await FcmMessaging.I.initialize();
@@ -153,7 +171,7 @@ class BaseApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Tu Rifa App',
+      title: kIsWeb ? 'CM APP' : 'Tu Rifa App',
       debugShowCheckedModeBanner: false,
       navigatorKey: navigatorKey,
       theme: ThemeData(
@@ -207,21 +225,28 @@ class BaseApp extends StatelessWidget {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
-            textStyle: const TextStyle(fontWeight: FontWeight.w700, letterSpacing: 0.5),
+            textStyle: const TextStyle(
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+            ),
           ),
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
             foregroundColor: const Color(0xFFB8860B),
             side: const BorderSide(color: Color(0xFFD4AF37)),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             backgroundColor: const Color(0xFFD4AF37),
             foregroundColor: const Color(0xFF0A0A0A),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         ),
         inputDecorationTheme: InputDecorationTheme(
@@ -259,7 +284,10 @@ class BaseApp extends StatelessWidget {
           indicatorColor: Color(0xFFD4AF37),
           dividerColor: Color(0xFFEAD88A),
           labelStyle: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-          unselectedLabelStyle: TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
+          unselectedLabelStyle: TextStyle(
+            fontWeight: FontWeight.w500,
+            fontSize: 14,
+          ),
         ),
         popupMenuTheme: const PopupMenuThemeData(
           color: Colors.white,
@@ -298,6 +326,9 @@ class BaseApp extends StatelessWidget {
           style: TextButton.styleFrom(foregroundColor: const Color(0xFFD4AF37)),
         ),
       ),
+      // En web: pantallas rediseñadas a ancho completo y el resto enmarcadas.
+      builder: kIsWeb ? webAppBuilder : null,
+      navigatorObservers: kIsWeb ? [webRouteTracker] : const [],
       locale: const Locale('es', 'CO'),
       supportedLocales: const [Locale('es', 'CO'), Locale('es'), Locale('en')],
       localizationsDelegates: const [
@@ -307,11 +338,26 @@ class BaseApp extends StatelessWidget {
       ],
       home: const SplashScreen(),
       routes: {
-        '/login': (context) => const LoginScreen(),
-        '/registro': (context) => const RegisterScreen(),
+        '/login': (context) =>
+            kIsWeb ? const WebLoginScreen() : const LoginScreen(),
+        if (kIsWeb) '/restablecer': (_) => const WebResetPasswordScreen(),
+        if (kIsWeb)
+          '/terminos': (_) => const WebLegalScreen(
+            title: 'Términos y Condiciones',
+            asset: 'assets/legal/terms_es.md',
+          ),
+        if (kIsWeb)
+          '/datos': (_) => const WebLegalScreen(
+            title: 'Tratamiento de Datos',
+            asset: 'assets/legal/data_policy_es.md',
+          ),
+        '/registro': (context) =>
+            kIsWeb ? const WebRegisterScreen() : const RegisterScreen(),
         '/nueva-contrasena': (context) => const SetNewPasswordScreen(),
-        '/admin': (_) => const AdminDashboardScreen(),
-        '/dashboard': (_) => const DashboardScreen(),
+        '/admin': (_) =>
+            kIsWeb ? const WebAdminDashboard() : const AdminDashboardScreen(),
+        '/dashboard': (_) =>
+            kIsWeb ? const WebPlayerDashboard() : const DashboardScreen(),
         '/faq/restablecer': (_) => const FaqResetPasswordScreen(),
         '/faq/juego': (_) => const FaqPlayScreen(),
         '/pro': (_) => const PaywallScreen(),

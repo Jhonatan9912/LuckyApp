@@ -298,7 +298,7 @@ return AnimatedBuilder(
               navigator.pushNamedAndRemoveUntil('/login', (_) => false);
             } catch (e) {
               if (navigator.canPop()) navigator.pop();
-              messenger?.showSnackBar(
+              messenger?.showAppSnackBar(
                 SnackBar(content: Text('No se pudo cerrar sesión: $e')),
               );
             } finally {
@@ -345,7 +345,7 @@ return AnimatedBuilder(
                           onWithdraw: () async {
                             final submitted = await showPayoutRequestSheet(context);
                             if (submitted == true && context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
+                              ScaffoldMessenger.of(context).showAppSnackBar(
                                 const SnackBar(content: Text('Solicitud de retiro enviada')),
                               );
                             }

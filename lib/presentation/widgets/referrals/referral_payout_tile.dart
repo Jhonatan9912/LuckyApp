@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:base_app/core/ui/dialogs.dart' show AppSnackBars;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
@@ -100,7 +101,7 @@ class ReferralPayoutTile extends StatelessWidget {
                   onPressed: () async {
                     await Clipboard.setData(ClipboardData(text: c));
                     if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    ScaffoldMessenger.of(context).showAppSnackBar(
                       const SnackBar(content: Text('Código copiado')),
                     );
                   },

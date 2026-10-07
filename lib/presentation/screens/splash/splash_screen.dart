@@ -1,7 +1,10 @@
 // lib/presentation/screens/splash/splash_screen.dart
 import 'dart:async' show unawaited; // <- para usar unawaited
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:base_app/web/screens/web_splash_view.dart';
+import 'package:base_app/web/web_shell.dart' show kWebPublicRoutes, webRouteTracker;
 import 'package:base_app/data/session/session_manager.dart';
 import 'package:base_app/core/services/secure_storage.dart';
 import 'package:base_app/data/api/auth_api.dart';
@@ -29,6 +32,7 @@ class _SplashScreenState extends State<SplashScreen> {
     final authApi = context.read<AuthApi>();
     final session = context.read<SessionManager>();
     final subs = context.read<SubscriptionProvider>();
+    final splashRoute = ModalRoute.of(context);
 
     // Pequeña pausa estética
     await Future.delayed(const Duration(milliseconds: 400));
@@ -45,6 +49,17 @@ class _SplashScreenState extends State<SplashScreen> {
 
     // Si no hay token -> login
     if (token == null || token.isEmpty) {
+      // En web se puede entrar por un enlace directo a una pantalla PÚBLICA
+      // (ej. /#/registro): se respeta y solo se quita el splash. Cualquier otra
+      // (panel, admin) exige sesión: se limpia todo y se va al login.
+      if (kIsWeb && splashRoute != null && !splashRoute.isCurrent) {
+        if (kWebPublicRoutes.contains(webRouteTracker.current.value)) {
+          navigator.removeRoute(splashRoute);
+        } else {
+          navigator.pushNamedAndRemoveUntil('/login', (_) => false);
+        }
+        return;
+      }
       navigator.pushReplacementNamed('/login');
       return;
     }
@@ -74,6 +89,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) return const WebSplashView();
     return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }

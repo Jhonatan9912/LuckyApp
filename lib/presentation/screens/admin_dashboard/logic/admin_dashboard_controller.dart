@@ -289,7 +289,7 @@ Future<List<Map<String, dynamic>>> loadAllGames({
   int page = 1,
 }) async {
   final token = await SessionManager().getToken();
-  final uri = Uri.parse('$baseUrl/api/admin/games').replace(
+  final uri = Uri.parse('$baseUrl/api/admin/games/').replace(
     queryParameters: {
       if (q.isNotEmpty) 'q': q,
       'page': '$page',
@@ -338,7 +338,7 @@ Future<List<Map<String, dynamic>>> loadAllGames({
   /// Cuenta juegos en DB usando el mismo endpoint (lee el campo "total").
   Future<int> countAllGames({String q = ''}) async {
     final token = await SessionManager().getToken();
-    final uri = Uri.parse('$baseUrl/api/admin/games').replace(
+    final uri = Uri.parse('$baseUrl/api/admin/games/').replace(
       queryParameters: {
         if (q.isNotEmpty) 'q': q,
         'page': '1',

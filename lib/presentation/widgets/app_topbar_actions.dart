@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:base_app/core/ui/dialogs.dart';
 import 'package:provider/provider.dart';
 import 'package:base_app/presentation/providers/notifications_provider.dart';
 
@@ -7,22 +8,13 @@ class AppTopbarActions extends StatelessWidget {
   const AppTopbarActions({super.key, required this.onLogout});
 
   Future<void> _confirmLogout(BuildContext context) async {
-    final ok = await showDialog<bool>(
+    final ok = await AppDialogs.confirmPlain(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Cerrar sesión'),
-        content: const Text('¿Seguro que deseas cerrar tu sesión?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Cerrar sesión'),
-          ),
-        ],
-      ),
+      title: 'Cerrar sesión',
+      message: '¿Seguro que deseas cerrar tu sesión?',
+      okText: 'Cerrar sesión',
+      destructive: true,
+      icon: Icons.logout_rounded,
     );
 
     if (ok != true) return;

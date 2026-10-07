@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../login/login_screen.dart';
 import 'package:base_app/data/api/auth_api.dart';
 import 'package:base_app/core/ui/dialogs.dart';
 import 'package:base_app/core/validation/validators.dart';
@@ -99,10 +98,7 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen> {
       );
 
       if (!mounted) return; // ✅ otra guarda
-      navigator.pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-        (_) => false,
-      );
+      navigator.pushNamedAndRemoveUntil('/login', (_) => false);
     } on AuthException catch (e) {
       if (!mounted) return; // ✅ guarda
       await AppDialogs.error(

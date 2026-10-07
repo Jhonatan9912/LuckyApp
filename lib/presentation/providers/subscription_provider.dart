@@ -88,7 +88,9 @@ class SubscriptionProvider extends ChangeNotifier {
   String? get priceString => _product?.price;
 
   // ========= Internos Billing =========
-  final InAppPurchase _iap = InAppPurchase.instance;
+  // En web no existe Google Play Billing: se accede de forma perezosa
+  // para no tocar el plugin en el navegador.
+  InAppPurchase get _iap => InAppPurchase.instance;
   bool _billingConfigured = false;
   StreamSubscription<List<PurchaseDetails>>? _purchaseSub;
 
@@ -123,6 +125,10 @@ class SubscriptionProvider extends ChangeNotifier {
   /// Nueva forma explícita
   Future<void> configureBilling() async {
     if (_billingConfigured) return;
+    if (kIsWeb) {
+      dev.log('Billing no disponible en web: las compras se hacen desde la app');
+      return;
+    }
 
     final available = await _iap.isAvailable();
     if (!available) {
@@ -293,6 +299,10 @@ class SubscriptionProvider extends ChangeNotifier {
   }
 
   Future<bool> buyPro({String? productId}) async {
+    if (kIsWeb) {
+      throw Exception(
+          'Las suscripciones se compran desde la app de Android (Google Play).');
+    }
     try {
       if (!_billingConfigured) {
         await configureBilling();
@@ -326,6 +336,10 @@ class SubscriptionProvider extends ChangeNotifier {
   }
 
   Future<void> restore() async {
+    if (kIsWeb) {
+      await refresh(force: true);
+      return;
+    }
     try {
       await configureBilling();
       await _iap.restorePurchases();

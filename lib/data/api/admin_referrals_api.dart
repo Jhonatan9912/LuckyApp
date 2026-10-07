@@ -9,7 +9,7 @@ import 'package:base_app/data/models/top_referrer.dart';
 import 'package:base_app/domain/models/commission_request.dart';
 import 'package:base_app/data/models/admin_user_detail.dart';
 import 'package:base_app/data/models/commission_breakdown.dart';
-import 'dart:io';
+import 'package:file_picker/file_picker.dart' show PlatformFile;
 import 'package:base_app/data/models/payout_batch.dart';
 import 'package:base_app/data/models/payout_batch_detail.dart';
 
@@ -267,7 +267,7 @@ class AdminReferralsApi {
   Future<Map<String, dynamic>> createPayoutBatch({
     required List<int> requestIds,
     String note = '',
-    List<File> files = const [],
+    List<PlatformFile> files = const [],
   }) async {
     final token = await SessionManager().getToken();
     final uri = Uri.parse('$baseUrl/api/admin/referrals/payout-batches');
@@ -307,10 +307,16 @@ class AdminReferralsApi {
     req.fields['request_ids'] = json.encode(requestIds);
     req.fields['note'] = note;
 
-    // Convertir cada File -> MultipartFile y agregarlo
+    // Convertir cada archivo -> MultipartFile (bytes en web, ruta en móvil)
     for (final f in files) {
-      if (!await f.exists()) continue;
-      final mf = await http.MultipartFile.fromPath('files', f.path);
+      final http.MultipartFile mf;
+      if (f.bytes != null) {
+        mf = http.MultipartFile.fromBytes('files', f.bytes!, filename: f.name);
+      } else if (f.path != null) {
+        mf = await http.MultipartFile.fromPath('files', f.path!, filename: f.name);
+      } else {
+        continue;
+      }
       req.files.add(mf);
     }
 

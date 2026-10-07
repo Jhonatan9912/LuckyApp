@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:base_app/core/ui/dialogs.dart' show AppSnackBars;
 import 'package:google_fonts/google_fonts.dart';
-import '../login/login_screen.dart';
 import 'widgets/name_input.dart';
 // ❌ ya no necesitas importar phone_input.dart aquí (lo usa PhoneWithCountryInput por dentro)
 // import 'widgets/phone_input.dart';
@@ -12,10 +12,7 @@ import 'widgets/identification_number_input.dart';
 import 'widgets/email_input.dart'; // 👈 nuevo
 import 'widgets/confirm_password_input.dart'; // 👈 nuevo
 import 'widgets/phone_with_country_input.dart'; // 👈 nuevo
-import 'package:provider/provider.dart';
-import '../../../domain/models/user.dart';
-import '../../providers/register_provider.dart';
-import 'package:intl/intl.dart';
+import 'register_logic.dart';
 // imports nuevos arriba:
 import 'widgets/referral_checkbox_with_input.dart';
 import 'widgets/consent_check_row.dart';
@@ -48,19 +45,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _acceptData = false;
   bool get _canSubmit => !_submitting && _acceptTerms && _acceptData;
 
-  bool _isAdult(String birthDateStr) {
-    // tu formato actual es 'd/M/yyyy'
-    final dt = DateFormat('d/M/yyyy').parseStrict(birthDateStr);
-    final now = DateTime.now();
-
-    int age = now.year - dt.year;
-    final hadBirthdayThisYear =
-        (now.month > dt.month) || (now.month == dt.month && now.day >= dt.day);
-    if (!hadBirthdayThisYear) age--;
-
-    return age >= 18;
-  }
-
   @override
   void dispose() {
     nameController.dispose();
@@ -78,105 +62,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void _register() async {
     if (_submitting) return; // evita doble tap
 
-    final name = nameController.text.trim();
-    final rawPhone = phoneController.text.trim();
-    final phone = rawPhone.replaceAll(RegExp(r'\D'), ''); // solo dígitos
+    final data = RegisterFormData(
+      name: nameController.text,
+      rawPhone: phoneController.text,
+      rawCountryCode: countryCodeController.text,
+      birthDate: birthDateController.text,
+      password: passwordController.text,
+      confirmPassword: confirmPasswordController.text,
+      email: emailController.text,
+      idNumber: identificationNumberController.text,
+      idType: selectedIdType,
+      wasReferred: _wasReferred,
+      referralCode: referralCodeController.text,
+      acceptTerms: _acceptTerms,
+      acceptData: _acceptData,
+    );
 
-    // normaliza el código de país (permite + y dígitos)
-    final rawCode = countryCodeController.text.trim();
-    final countryCode = rawCode.replaceAll(RegExp(r'[^0-9+]'), '');
-
-    final birthDate = birthDateController.text.trim();
-    final password = passwordController.text.trim();
-    final confirmPassword = confirmPasswordController.text.trim();
-    final email = emailController.text.trim();
-    final idNumber = identificationNumberController.text.trim();
-
-    // Validaciones nuevas
-    final emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
-
-    if (name.isEmpty ||
-        phone.isEmpty ||
-        birthDate.isEmpty ||
-        password.isEmpty ||
-        confirmPassword.isEmpty ||
-        email.isEmpty ||
-        idNumber.isEmpty ||
-        selectedIdType == null ||
-        countryCode.isEmpty) {
-      _showMessage('Todos los campos son obligatorios.', isError: true);
+    final invalid = data.validate();
+    if (invalid != null) {
+      _showMessage(invalid, isError: true);
       return;
     }
-
-    if (!emailRegex.hasMatch(email)) {
-      _showMessage('Correo electrónico no válido.', isError: true);
-      return;
-    }
-
-    if (password != confirmPassword) {
-      _showMessage('Las contraseñas no coinciden.', isError: true);
-      return;
-    }
-    // ❗ Debe ser mayor de edad
-    if (!_isAdult(birthDate)) {
-      _showMessage('Debes ser mayor de edad (18+).', isError: true);
-      return;
-    }
-
-    if (!countryCode.startsWith('+')) {
-      _showMessage(
-        'El código de país debe iniciar con + (ej: +57).',
-        isError: true,
-      );
-      return;
-    }
-    // ✅ validaciones de consentimientos y referido
-    if (!_acceptTerms) {
-      _showMessage('Debes aceptar los Términos y Condiciones.', isError: true);
-      return;
-    }
-    if (!_acceptData) {
-      _showMessage('Debes aceptar el Tratamiento de Datos.', isError: true);
-      return;
-    }
-if (_wasReferred && referralCodeController.text.trim().isEmpty) {
-  _showMessage(
-    'Ingresa el código de referido o desmarca la opción.',
-    isError: true,
-  );
-  return;
-}
-
 
     setState(() => _submitting = true);
     try {
-      final provider = Provider.of<RegisterProvider>(context, listen: false);
-
-      final user = User(
-        name: name,
-        identificationTypeId: int.parse(selectedIdType!),
-        identificationNumber: idNumber,
-        phone: phone,
-        countryCode: countryCode,
-
-        birthdate: DateFormat('d/M/yyyy').parseStrict(birthDate),
-        password: password,
-        email: email,
-        acceptTerms: _acceptTerms, // 👈 NUEVO
-        acceptData: _acceptData, // 👈 NUEVO
-        referralCode: _wasReferred
-            ? referralCodeController.text.trim()
-            : null, // 👈 NUEVO (opcional)
-      );
-
-      final success = await provider.register(user /*, email: email */);
-
-      if (!success) {
-        // 👇 toma el mensaje real que expone el provider (viene del backend)
-        final msg =
-            provider.errorMessage ??
-            'No se pudo registrar. Verifica los datos ingresados.';
-        _showMessage(msg, isError: true);
+      final error = await submitRegistration(context, data);
+      if (error != null) {
+        _showMessage(error, isError: true);
         return;
       }
 
@@ -184,10 +96,7 @@ if (_wasReferred && referralCodeController.text.trim().isEmpty) {
       _showMessage('Usuario registrado correctamente.');
       Future.delayed(const Duration(seconds: 2), () {
         if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const LoginScreen()),
-        );
+        Navigator.pushReplacementNamed(context, '/login');
       });
     } catch (e) {
       _showMessage('Error: ${e.toString()}', isError: true);
@@ -197,7 +106,7 @@ if (_wasReferred && referralCodeController.text.trim().isEmpty) {
   }
 
   void _showMessage(String msg, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    ScaffoldMessenger.of(context).showAppSnackBar(
       SnackBar(
         backgroundColor: isError ? Colors.red[700] : Colors.green[700],
         content: Text(msg, style: GoogleFonts.montserrat(color: Colors.white)),

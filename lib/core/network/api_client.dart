@@ -1,7 +1,6 @@
 // lib/core/network/api_client.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:base_app/data/session/session_manager.dart';
 import 'package:base_app/core/services/app_logger.dart';
@@ -134,7 +133,7 @@ class ApiClient {
         appLogger.d({'event': 'api_req', 'm': method, 'url': uri.toString()});
       }
       res = await run().timeout(const Duration(seconds: 20));
-    } on SocketException {
+    } on http.ClientException {
       rethrow;
     } on TimeoutException {
       rethrow;
@@ -167,7 +166,7 @@ class ApiClient {
       }
       res = await run().timeout(const Duration(seconds: 20));
       return res;
-    } on SocketException {
+    } on http.ClientException {
       rethrow;
     } on TimeoutException {
       rethrow;

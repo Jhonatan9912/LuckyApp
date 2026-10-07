@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:base_app/core/services/app_logger.dart';
@@ -75,7 +74,7 @@ class AuthApi {
             : 'Error de autenticación';
         throw AuthException(msg, statusCode: res.statusCode);
       }
-    } on SocketException {
+    } on http.ClientException {
       throw AuthException('No hay conexión con el servidor');
     } on TimeoutException {
       throw AuthException('Tiempo de espera agotado');
@@ -133,7 +132,7 @@ class AuthApi {
               : 'Token inválido o expirado';
           throw AuthException(msg, statusCode: res.statusCode);
         }
-      } on SocketException {
+      } on http.ClientException {
         throw AuthException('No hay conexión con el servidor');
       } on TimeoutException {
         throw AuthException('Tiempo de espera agotado');
@@ -186,7 +185,7 @@ class AuthApi {
             : 'Token inválido o expirado';
         throw AuthException(msg, statusCode: res.statusCode);
       }
-    } on SocketException {
+    } on http.ClientException {
       throw AuthException('No hay conexión con el servidor');
     } on TimeoutException {
       throw AuthException('Tiempo de espera agotado');
@@ -249,7 +248,7 @@ class AuthApi {
             : 'No se pudo enviar el código';
         throw AuthException(msg, statusCode: res.statusCode);
       }
-    } on SocketException {
+    } on http.ClientException {
       throw AuthException('No hay conexión con el servidor');
     } on TimeoutException {
       throw AuthException('Tiempo de espera agotado');
@@ -317,7 +316,7 @@ class AuthApi {
             : 'Código inválido';
         throw AuthException(msg, statusCode: res.statusCode);
       }
-    } on SocketException {
+    } on http.ClientException {
       throw AuthException('No hay conexión con el servidor');
     } on TimeoutException {
       throw AuthException('Tiempo de espera agotado');
@@ -451,7 +450,7 @@ class AuthApi {
           ? body['error'].toString()
           : 'No se pudo enviar el código';
       throw AuthException(msg, statusCode: res.statusCode);
-    } on SocketException {
+    } on http.ClientException {
       throw AuthException('No hay conexión con el servidor');
     } on TimeoutException {
       throw AuthException('Tiempo de espera agotado');
@@ -528,7 +527,7 @@ class AuthApi {
         throw AuthException('Token de restablecimiento no recibido');
       }
       return token;
-    } on SocketException {
+    } on http.ClientException {
       throw AuthException('No hay conexión con el servidor');
     } on TimeoutException {
       throw AuthException('Tiempo de espera agotado');
@@ -596,7 +595,7 @@ class AuthApi {
             : 'No se pudo actualizar la contraseña';
         throw AuthException(msg, statusCode: res.statusCode);
       }
-    } on SocketException {
+    } on http.ClientException {
       throw AuthException('No hay conexión con el servidor');
     } on TimeoutException {
       throw AuthException('Tiempo de espera agotado');
@@ -662,7 +661,7 @@ class AuthApi {
             : 'No se pudo refrescar la sesión';
         throw AuthException(msg, statusCode: res.statusCode);
       }
-    } on SocketException {
+    } on http.ClientException {
       throw AuthException('No hay conexión con el servidor');
     } on TimeoutException {
       throw AuthException('Tiempo de espera agotado');

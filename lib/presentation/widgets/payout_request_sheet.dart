@@ -1,5 +1,8 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:base_app/web/widgets/web_ui.dart' show showWebModal;
 // lib/presentation/widgets/payout_request_sheet.dart
 import 'package:flutter/material.dart';
+import 'package:base_app/core/ui/dialogs.dart' show AppSnackBars;
 import 'package:provider/provider.dart';
 
 import 'package:base_app/domain/models/bank.dart';
@@ -27,6 +30,15 @@ class _PayoutOption {
 }
 
 Future<bool?> showPayoutRequestSheet(BuildContext context) {
+  // En web se abre como modal centrado.
+  if (kIsWeb) {
+    return showWebModal<bool>(
+      context,
+      title: 'Solicitar retiro',
+      subtitle: 'Recibe tus comisiones en tu cuenta bancaria o billetera.',
+      builder: (_) => const _PayoutRequestForm(),
+    );
+  }
   return showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
@@ -461,7 +473,7 @@ class _PayoutRequestFormState extends State<_PayoutRequestForm> {
                                 final focusScope = FocusScope.of(context);
                                 // Bloquea el envío si ya no cumple el mínimo de $100.000 (por carrera o refresh)
                                 if (!referrals.canWithdraw) {
-                                  messenger.showSnackBar(
+                                  messenger.showAppSnackBar(
                                     const SnackBar(
                                       content: Text(
                                         'Tu saldo disponible aún no alcanza \$100.000',
@@ -490,7 +502,7 @@ class _PayoutRequestFormState extends State<_PayoutRequestForm> {
                                   navigator.pop(true);
                                 } else {
                                   if (!mounted) return;
-                                  messenger.showSnackBar(
+                                  messenger.showAppSnackBar(
                                     SnackBar(
                                       content: Text(
                                         p.submitError ??
