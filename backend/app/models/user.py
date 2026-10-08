@@ -35,3 +35,6 @@ class User(db.Model):
 
     # Auditoría
     created_at = db.Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    # Supresión de datos (Habeas Data): marca de cuenta eliminada/anonimizada
+    deleted_at = db.Column(DateTime(timezone=True), nullable=True)

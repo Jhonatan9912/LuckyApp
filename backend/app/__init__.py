@@ -116,6 +116,8 @@ def create_app():
 
     from app.security.guards import ensure_security_tables, token_issued_before_epoch
     ensure_security_tables(app)
+    from app.services.account.account_service import ensure_account_schema
+    ensure_account_schema(app)
 
     @jwt.token_in_blocklist_loader
     def _is_token_revoked(jwt_header, jwt_payload):

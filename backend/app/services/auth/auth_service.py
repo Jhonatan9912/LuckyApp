@@ -111,6 +111,8 @@ def login_with_phone(phone: str, password: str) -> dict:
     if not user:
         check_password_hash(_DUMMY_HASH, password or "")
         raise AuthError("Número de celular o contraseña inválidos")
+    if getattr(user, "deleted_at", None) is not None:
+        raise AuthError("Número de celular o contraseña inválidos")
     if not _password_is_valid(user, password):
         raise AuthError("Número de celular o contraseña inválidos")
 

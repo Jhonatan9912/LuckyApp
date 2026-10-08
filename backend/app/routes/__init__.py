@@ -20,8 +20,9 @@ from app.routes.health import health_bp
 from app.subscriptions.routes import subscriptions_bp
 from app.subscriptions.webhooks import webhooks_bp
 from app.routes.referrals.referrals_routes import referrals_bp, referrals_public_bp
-from app.routes.dev_mock import dev_bp      
+from app.routes.dev_mock import dev_bp
 from app.routes.payouts.banks_routes import meta_bp
+from app.routes.account.account_routes import account_bp
 
 def register_routes(app):
     app.register_blueprint(identification_bp)
@@ -50,3 +51,4 @@ def register_routes(app):
     app.register_blueprint(payouts_bp)
     app.register_blueprint(meta_bp)
     app.register_blueprint(referrals_public_bp)
+    app.register_blueprint(account_bp)

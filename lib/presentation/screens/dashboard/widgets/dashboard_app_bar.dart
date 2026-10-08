@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:base_app/presentation/widgets/app_topbar_actions.dart';
+import 'package:base_app/presentation/screens/legal/account_privacy_screen.dart';
 import '../controller/dashboard_controller.dart'; // 👈 importa el controller
 import 'notification_icon.dart';
 
@@ -62,6 +63,14 @@ class DashboardAppBar extends StatelessWidget implements PreferredSizeWidget {
           NotificationIcon(
             unreadCount: ctrl.unreadCount,
             onPressed: onBellTap, // ✅ único onPressed, no nulo
+          ),
+          IconButton(
+            icon: const Icon(Icons.manage_accounts_outlined),
+            tooltip: 'Mi cuenta y privacidad',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AccountPrivacyScreen()),
+            ),
           ),
           AppTopbarActions(
             onLogout: () async {

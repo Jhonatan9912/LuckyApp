@@ -35,5 +35,40 @@
 </head>
 <body style="background-color:#0A0A0A;">
   <script src="flutter_bootstrap.js" async></script>
+
+  <!-- Aviso de cookies (solo cookies esenciales de funcionamiento) -->
+  <style>
+    #cookie-notice{position:fixed;left:0;right:0;bottom:0;z-index:2147483647;
+      background:#141414;color:#EDEDED;border-top:1px solid #D4AF37;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      padding:14px 16px;display:none;box-shadow:0 -4px 16px rgba(0,0,0,.4)}
+    #cookie-notice.show{display:flex;flex-wrap:wrap;align-items:center;
+      gap:12px;justify-content:center}
+    #cookie-notice p{margin:0;font-size:14px;line-height:1.4;max-width:720px}
+    #cookie-notice a{color:#F5C842;text-decoration:underline}
+    #cookie-notice button{background:#D4AF37;color:#0A0A0A;border:none;
+      border-radius:8px;padding:10px 18px;font-size:14px;font-weight:600;
+      cursor:pointer;white-space:nowrap}
+    #cookie-notice button:focus-visible{outline:2px solid #fff;outline-offset:2px}
+  </style>
+  <div id="cookie-notice" role="region" aria-label="Aviso de cookies">
+    <p>Usamos cookies y almacenamiento local <strong>esenciales</strong> para
+      mantener tu sesión y el correcto funcionamiento del sitio. No usamos
+      cookies de publicidad ni de rastreo. Consulta nuestra
+      <a href="#/datos">Política de Tratamiento de Datos</a>.</p>
+    <button id="cookie-ok" type="button">Entendido</button>
+  </div>
+  <script>
+    (function () {
+      var KEY = 'cookie_notice_ack_v1';
+      function hasAck() { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } }
+      function ack() { try { localStorage.setItem(KEY, '1'); } catch (e) {} }
+      if (hasAck()) return;
+      var el = document.getElementById('cookie-notice');
+      var btn = document.getElementById('cookie-ok');
+      el.classList.add('show');
+      btn.addEventListener('click', function () { ack(); el.classList.remove('show'); });
+    })();
+  </script>
 </body>
 </html>

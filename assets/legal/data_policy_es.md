@@ -59,6 +59,16 @@ El Titular puede:
 - **Presentar quejas** ante la **Superintendencia de Industria y Comercio (SIC)** por infracción a las normas de protección de datos.  
 - **Acceder gratuitamente** a sus datos personales al menos **una vez al mes**.
 
+**Cómo eliminar tu cuenta y tus datos:** puedes hacerlo tú mismo, en cualquier
+momento, desde la aplicación o la web en **"Mi cuenta y privacidad" → "Eliminar
+mi cuenta"**. Al confirmar, se cierra tu acceso y se eliminan de forma permanente
+tus datos personales (nombre, documento, teléfono, correo y fecha de nacimiento).
+Por obligación legal (control fiscal), los registros de pagos y comisiones se
+conservan **anonimizados** por los plazos aplicables. Si tienes comisiones
+pendientes por cobrar o una suscripción de pago activa, deberás resolverlas antes.
+También puedes solicitar la eliminación escribiendo a
+[luckyapp25@gmail.com](mailto:luckyapp25@gmail.com).
+
 ---
 
 ## 6. Procedimiento de consultas y reclamos
@@ -79,6 +89,17 @@ Implementamos medidas de seguridad técnicas, administrativas y organizativas pr
 - Controles de acceso restringido.  
 - Registro de eventos y auditorías internas.  
 - Evaluaciones periódicas de riesgo.
+
+---
+
+## 7-bis. Cookies y almacenamiento local
+En la versión web usamos **únicamente** cookies y almacenamiento local
+**esenciales**, necesarios para mantener tu sesión iniciada y para el correcto
+funcionamiento del sitio (por ejemplo, recordar que ya viste este aviso). **No
+utilizamos cookies de publicidad, analítica ni de rastreo** de terceros. Como
+son estrictamente necesarias, estas cookies no requieren consentimiento previo;
+aun así, mostramos un aviso informativo. Puedes borrarlas desde la configuración
+de tu navegador, aunque esto puede cerrar tu sesión.
 
 ---
 
