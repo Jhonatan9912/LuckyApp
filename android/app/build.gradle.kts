@@ -101,6 +101,5 @@ flutter {
 }
 
 dependencies {
-    implementation("com.android.billingclient:billing-ktx:6.2.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
