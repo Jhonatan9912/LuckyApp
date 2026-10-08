@@ -18,6 +18,7 @@ import 'package:base_app/core/utils/lottery_number_format.dart';
 import 'package:base_app/presentation/providers/referral_provider.dart';
 import 'package:base_app/presentation/providers/subscription_provider.dart';
 import 'package:base_app/presentation/screens/dashboard/controller/dashboard_controller.dart';
+import 'package:base_app/presentation/screens/legal/account_privacy_screen.dart';
 
 import '../alerts/web_alerts.dart';
 import '../shell/web_shell_layout.dart';
@@ -433,6 +434,13 @@ class _WebPlayerDashboardState extends State<WebPlayerDashboard> {
               tooltip: 'Notificaciones',
               badge: unread,
               onPressed: _openNotifications,
+            ),
+            WebIconButton(
+              icon: Icons.manage_accounts_outlined,
+              tooltip: 'Mi cuenta y privacidad',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AccountPrivacyScreen()),
+              ),
             ),
           ],
           body: body,
