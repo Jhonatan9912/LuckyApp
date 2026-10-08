@@ -61,18 +61,26 @@ def _unauthorized():
     return jsonify({"ok": False, "code": "UNAUTHORIZED", "error": "No autorizado"}), 401
 
 
-def _forbidden():
-    return jsonify({"ok": False, "code": "FORBIDDEN", "error": "Solo administradores"}), 403
+def _not_found():
+    # Para NO revelar que la ruta es un panel de administración, un usuario
+    # autenticado sin rol admin recibe exactamente lo mismo que una ruta
+    # inexistente: 404. Así un atacante no puede distinguir una URL de admin
+    # real de una que no existe.
+    return jsonify({"ok": False, "code": "NOT_FOUND", "error": "No encontrado"}), 404
 
 
 def check_admin():
-    """Devuelve una respuesta de error si el usuario no es admin; None si lo es."""
+    """Devuelve una respuesta de error si el usuario no es admin; None si lo es.
+
+    - Token ausente/ inválido/ expirado -> 401 (el cliente puede refrescar).
+    - Token válido pero sin rol admin    -> 404 (se oculta la existencia).
+    """
     uid = current_user_id()
     if uid is None:
         return _unauthorized()
     if not is_admin(uid):
         log.warning("admin_denied uid=%s path=%s", uid, request.path)
-        return _forbidden()
+        return _not_found()
     return None
 
 

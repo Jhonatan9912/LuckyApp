@@ -58,10 +58,8 @@ class _WebAdminDashboardState extends State<WebAdminDashboard> {
   Future<void> _guardAndLoad() async {
     final session = SessionManager();
     if (await session.getRoleId() != 1) {
-      WebAlerts.toast(
-        'Solo administradores pueden ver este panel.',
-        tone: AlertTone.error,
-      );
+      // Sin rol admin: redirige en silencio al panel normal, sin revelar que
+      // esta ruta es un panel de administración.
       if (mounted) {
         Navigator.of(
           context,

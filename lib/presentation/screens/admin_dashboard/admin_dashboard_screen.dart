@@ -57,14 +57,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Future<void> _guardAndLoad() async {
     final roleId = await SessionManager().getRoleId();
     if (roleId != 1) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showAppSnackBar(
-          const SnackBar(
-            content: Text('Solo administradores pueden ver este panel'),
-          ),
-        );
-        Navigator.of(context).maybePop();
-      }
+      // Sin rol admin: se vuelve en silencio, sin revelar que esto es un panel
+      // de administración (no se muestra ningún mensaje).
+      if (mounted) Navigator.of(context).maybePop();
       return;
     }
     await ctrl.load();
