@@ -3,6 +3,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'package:base_app/core/ui/game_number_text.dart';
+
 import '../theme/web_palette.dart';
 
 /// Esfera tipo balota con número, iluminación 3D y flotación suave.
@@ -113,33 +115,12 @@ class _LotteryBallState extends State<LotteryBall>
   }
 }
 
-/// Número de juego. En Quinta ("1234-5") el último dígito va en rojo.
+/// Número de juego. En Quinta se ve "1234-5" con el último dígito en rojo.
 class BallNumberText extends StatelessWidget {
   final String text;
   final TextStyle style;
   const BallNumberText(this.text, {super.key, required this.style});
 
-  static const Color quintaRed = Color(0xFFE53935);
-
   @override
-  Widget build(BuildContext context) {
-    final i = text.lastIndexOf('-');
-    if (i <= 0 || i == text.length - 1) {
-      return Text(text, maxLines: 1, softWrap: false, style: style);
-    }
-    return Text.rich(
-      TextSpan(
-        style: style,
-        children: [
-          TextSpan(text: text.substring(0, i)),
-          TextSpan(
-            text: text.substring(i + 1),
-            style: style.copyWith(color: quintaRed),
-          ),
-        ],
-      ),
-      maxLines: 1,
-      softWrap: false,
-    );
-  }
+  Widget build(BuildContext context) => GameNumberText(text, style: style);
 }

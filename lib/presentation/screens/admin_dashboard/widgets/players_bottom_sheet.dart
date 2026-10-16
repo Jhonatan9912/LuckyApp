@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:base_app/core/ui/dialogs.dart' as custom;
+import 'package:base_app/core/ui/game_number_text.dart';
 
 /// BottomSheet de Jugadores (estructura similar a Users/Games).
 class PlayersBottomSheet extends StatefulWidget {
@@ -484,16 +485,9 @@ class _PlayersBottomSheetState extends State<PlayersBottomSheet> {
                                                       FontWeight.w600,
                                                 ),
                                               ),
-                                              TextSpan(
-                                                text: p.numbers
-                                                    .map(
-                                                      (n) =>
-                                                          n.toString().padLeft(
-                                                                p.digits,
-                                                                '0',
-                                                              ),
-                                                    )
-                                                    .join(', '),
+                                              gameNumbersSpan(
+                                                p.numbers,
+                                                p.digits,
                                               ),
                                             ],
                                           ),

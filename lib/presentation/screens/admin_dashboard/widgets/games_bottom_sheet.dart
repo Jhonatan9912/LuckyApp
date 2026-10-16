@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:base_app/core/ui/dialogs.dart' as custom;
 import 'package:flutter/services.dart';
+import 'package:base_app/core/ui/game_number_text.dart';
+import 'package:base_app/core/utils/lottery_number_format.dart';
 
 /// BottomSheet de Juegos (estructura igual al de Usuarios).
 class GamesBottomSheet extends StatefulWidget {
@@ -680,15 +682,14 @@ class _GamesBottomSheetState extends State<GamesBottomSheet> {
                                                     FontWeight.w600,
                                               ),
                                             ),
-                                            TextSpan(
-                                              text: g.winningNumber ==
-                                                      null
-                                                  ? '—'
-                                                  : g.winningNumber!
-                                                      .toString()
-                                                      .padLeft(
-                                                          g.digits, '0'),
-                                            ),
+                                            g.winningNumber == null
+                                                ? const TextSpan(text: '—')
+                                                : gameNumberSpan(
+                                                    formatGameNumber(
+                                                      g.winningNumber!,
+                                                      g.digits,
+                                                    ),
+                                                  ),
                                           ],
                                         ),
                                       ),

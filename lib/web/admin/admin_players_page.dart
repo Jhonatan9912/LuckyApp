@@ -12,6 +12,7 @@ import '../shell/web_shell_layout.dart';
 import '../theme/web_palette.dart';
 import '../widgets/web_ui.dart';
 import 'admin_common.dart';
+import 'package:base_app/core/utils/lottery_number_format.dart';
 
 class AdminPlayersPage extends StatefulWidget {
   final AdminDashboardController ctrl;
@@ -324,7 +325,12 @@ class _AdminPlayersPageState extends State<AdminPlayersPage> {
                     ),
                     WebColumn(
                       'Números',
-                      (p) => NumberPills(p.numbers),
+                      (p) => NumberPills([
+                        for (final n in p.numbers)
+                          int.tryParse(n) == null
+                              ? n
+                              : formatGameNumber(int.parse(n), p.digits),
+                      ]),
                       flex: 5,
                     ),
                     WebColumn(

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:base_app/core/utils/lottery_number_format.dart';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:base_app/presentation/screens/dashboard/logic/sound_helper.dart';
@@ -1438,7 +1439,9 @@ if (digits <= 0) {
 
 // 👇 Aplicamos el formato final
 final String winningFormatted =
-    rawWinning.isNotEmpty ? rawWinning.padLeft(digits, '0') : rawWinning;
+    int.tryParse(rawWinning) == null
+        ? rawWinning
+        : formatGameNumber(int.parse(rawWinning), digits);
 
     return {
       'id': id ?? -1, // evita nulls
@@ -1553,7 +1556,9 @@ final String winningFormatted =
           : int.tryParse('${data['digits'] ?? ''}') ?? 3;
 
       // 👇 número ganador ya rellenado con ceros a la izquierda
-      final formattedWinning = rawWinning.padLeft(digits, '0');
+      final formattedWinning = int.tryParse(rawWinning) == null
+          ? rawWinning
+          : formatGameNumber(int.parse(rawWinning), digits);
 
       final cand = {
         'id': id,

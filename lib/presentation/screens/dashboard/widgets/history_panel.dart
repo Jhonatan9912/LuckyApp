@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:base_app/core/utils/lottery_number_format.dart';
+import 'package:base_app/core/ui/game_number_text.dart';
 
 class HistoryPanel extends StatelessWidget {
   /// items: { game_id|id, numbers: [int|str], winning_number?, result|status?,
@@ -214,8 +215,9 @@ class _HistoryCard extends StatelessWidget {
                   'Número ganador: ',
                   style: TextStyle(fontWeight: FontWeight.w600),
                 ),
-                Text(
-                  formatGameNumber(winningNumber!, digits),
+                GameNumberText.number(
+                  winningNumber!,
+                  digits,
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     color: outcome == _Outcome.won
@@ -285,7 +287,7 @@ class _HistoryCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 6),
         child: FittedBox(
           fit: BoxFit.scaleDown,
-          child: Text(
+          child: GameNumberText(
             txt,
             style: TextStyle(fontWeight: FontWeight.w700, color: textColor),
           ),
