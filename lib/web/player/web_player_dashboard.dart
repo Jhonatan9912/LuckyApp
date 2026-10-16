@@ -19,6 +19,7 @@ import 'package:base_app/presentation/providers/referral_provider.dart';
 import 'package:base_app/presentation/providers/subscription_provider.dart';
 import 'package:base_app/presentation/screens/dashboard/controller/dashboard_controller.dart';
 import 'package:base_app/presentation/screens/legal/account_privacy_screen.dart';
+import 'package:base_app/presentation/widgets/wins/win_stars.dart';
 
 import '../alerts/web_alerts.dart';
 import '../shell/web_shell_layout.dart';
@@ -429,6 +430,7 @@ class _WebPlayerDashboardState extends State<WebPlayerDashboard> {
           actions: [
             if (!subs.isPremium && !WebBreakpoints.isMobile(context))
               _ProChip(onTap: () => setState(() => _section = _Section.plan)),
+            WinStarsBadge(wins: _ctrl.wins, size: 18, showEmpty: true),
             WebIconButton(
               icon: Icons.notifications_none_rounded,
               tooltip: 'Notificaciones',

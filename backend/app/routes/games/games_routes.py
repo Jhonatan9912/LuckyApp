@@ -16,6 +16,7 @@ from app.services.games.games_service import (
     commit_selection_auto,  # 👈 NUEVO
     get_current_selection,  # ← usar la selección SOLO del juego abierto
     list_user_history,
+    count_user_wins,
 )
 
 
@@ -294,3 +295,13 @@ def api_history():
         return jsonify(data), 200
     finally:
         conn.close()
+
+
+@games_bp.get("/my-wins")
+@jwt_required(optional=True)
+def api_my_wins():
+    """Victorias acumuladas del usuario (para sus estrellas de ganador)."""
+    uid = _resolve_user_id()
+    if not uid:
+        return jsonify({"error": "No autorizado"}), 403
+    return jsonify({"ok": True, "wins": count_user_wins(int(uid))}), 200

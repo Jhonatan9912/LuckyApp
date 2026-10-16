@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:base_app/presentation/widgets/app_topbar_actions.dart';
+import 'package:base_app/presentation/widgets/wins/win_stars.dart';
 import 'package:base_app/presentation/screens/legal/account_privacy_screen.dart';
 import '../controller/dashboard_controller.dart'; // 👈 importa el controller
 import 'notification_icon.dart';
@@ -60,6 +61,7 @@ class DashboardAppBar extends StatelessWidget implements PreferredSizeWidget {
       actionsIconTheme: const IconThemeData(color: Color(0xFFD4AF37)),
       actions: [
         if (isLoggedIn) ...[
+          Center(child: WinStarsBadge(wins: ctrl.wins, size: 15, showEmpty: true)),
           NotificationIcon(
             unreadCount: ctrl.unreadCount,
             onPressed: onBellTap, // ✅ único onPressed, no nulo

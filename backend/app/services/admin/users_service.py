@@ -10,6 +10,17 @@ class UserHasActiveGames(Exception):
         self.numbers_count = int(numbers_count or 0)
         self.games_count = int(games_count or 0)
 
+# Victorias del usuario: juegos con número ganador que coincide con uno de
+# los números que reservó (misma regla que count_user_wins / el historial).
+_WINS_SQL = """(
+                SELECT COUNT(DISTINCT gw.id)::int
+                FROM public.game_numbers gnw
+                JOIN public.games gw ON gw.id = gnw.game_id
+                WHERE gnw.taken_by = u.id
+                  AND gw.winning_number IS NOT NULL
+                  AND gnw.number = gw.winning_number
+                )"""
+
 def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Dict[str, Any]:
     page = max(1, int(page or 1))
     per_page = max(1, min(500, int(per_page or 50)))
@@ -50,7 +61,9 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
                     ELSE
                     UPPER(COALESCE(sub.status,'NONE'))
                     || COALESCE(' (vence ' || TO_CHAR(sub.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') || ')','')
-                END AS subscription
+                END AS subscription,
+
+                {_WINS_SQL} AS wins
 
                 FROM users u
                 LEFT JOIN public.roles r ON r.id = u.role_id
@@ -105,7 +118,8 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
             'NONE'::text      AS subscription_status,
             FALSE::boolean    AS subscription_is_active,
             NULL::timestamptz AS subscription_expires_at,
-            'FREE'::text      AS subscription_label
+            'FREE'::text      AS subscription_label,
+            {_WINS_SQL} AS wins
 
           FROM users u
           LEFT JOIN public.roles r ON r.id = u.role_id

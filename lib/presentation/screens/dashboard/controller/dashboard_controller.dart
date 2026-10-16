@@ -1323,6 +1323,19 @@ _numbersByMode[_mode] = List.filled(5, 0);
 
   List<Map<String, dynamic>> get notifications => _notifications;
   int get unreadCount => _unreadCount;
+
+  // Victorias acumuladas del usuario (estrellas de ganador).
+  int _wins = 0;
+  int get wins => _wins;
+
+  Future<void> loadWins() async {
+    if (_authToken == null || _authToken!.isEmpty) return;
+    final w = await _gamesApi.getMyWins(token: _authToken);
+    if (w != null && w != _wins) {
+      _wins = w;
+      notifyListeners();
+    }
+  }
   int? _toInt(dynamic v) {
     if (v == null) return null;
     if (v is int) return v;
@@ -1490,6 +1503,7 @@ final String winningFormatted =
           .cast<Map<String, dynamic>>();
       notifyListeners();
     }
+    unawaited(loadWins());
   }
 
   Future<List<Map<String, dynamic>>> fetchWinnerNotificationsOnce() async {
@@ -1568,6 +1582,9 @@ final String winningFormatted =
     final ids = result.map<int>((m) => m['id'] as int).toList();
     _shownNotifIds.addAll(ids);
     unawaited(markReadIds(ids));
+
+    // Hubo resultado: refresca las estrellas (la insignia celebra si ganó).
+    if (result.isNotEmpty) unawaited(loadWins());
 
         // 👇 NUEVO: si hay ganador para el tipo de juego actual,
     // reseteamos el tablero para que vuelva a salir el botón JUGAR.

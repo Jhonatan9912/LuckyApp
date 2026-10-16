@@ -6,6 +6,8 @@ import 'package:base_app/presentation/screens/admin_dashboard/logic/admin_dashbo
 import 'package:base_app/presentation/screens/admin_dashboard/widgets/users_bottom_sheet.dart'
     show UserRow;
 
+import 'package:base_app/presentation/widgets/wins/win_stars.dart';
+
 import '../alerts/web_alerts.dart';
 import '../shell/web_shell_layout.dart';
 import '../theme/web_palette.dart';
@@ -84,6 +86,12 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         '' || 'none' => 'Sin plan',
         final s => s,
       };
+
+  Widget _winsBadge(UserRow u) => WinStarsBadge(
+    wins: u.wins,
+    size: 15,
+    onTap: () => showWinStarsDetails(context, u.wins, userName: u.name),
+  );
 
   String _planLabel(UserRow u) {
     final s = (u.subscription ?? '').trim();
@@ -335,9 +343,20 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               else
                 WebTable<UserRow>(
                   rows: rows,
-                  mobileTitle: (u) => Text(
-                    u.name,
-                    style: WebPalette.display(15, weight: FontWeight.w700),
+                  mobileTitle: (u) => Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          u.name,
+                          overflow: TextOverflow.ellipsis,
+                          style: WebPalette.display(15, weight: FontWeight.w700),
+                        ),
+                      ),
+                      if (u.wins > 0) ...[
+                        const SizedBox(width: 8),
+                        _winsBadge(u),
+                      ],
+                    ],
                   ),
                   trailing: (u) => RowActions(
                     busy: _busyId == u.id,
@@ -385,6 +404,16 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                               label: 'Usuario',
                               color: WebPalette.textMuted,
                             ),
+                      flex: 2,
+                    ),
+                    WebColumn(
+                      'Victorias',
+                      (u) => u.wins > 0
+                          ? Align(
+                              alignment: Alignment.centerLeft,
+                              child: _winsBadge(u),
+                            )
+                          : const CellText('—'),
                       flex: 2,
                     ),
                     WebColumn('Plan', (u) => CellText(_planLabel(u)), flex: 2),

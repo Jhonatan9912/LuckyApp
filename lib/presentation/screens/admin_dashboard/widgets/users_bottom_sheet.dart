@@ -3,6 +3,8 @@ import 'package:base_app/core/ui/dialogs.dart'
     as custom; // 👈 usa tus diálogos bonitos
 import 'dart:async';
 
+import 'package:base_app/presentation/widgets/wins/win_stars.dart';
+
 class UsersBottomSheet extends StatefulWidget {
   /// Carga la lista de usuarios.
   final Future<List<UserRow>> Function() loader;
@@ -497,11 +499,30 @@ final showExpires =
                               isThreeLine: true,
                               contentPadding: const EdgeInsets.only(right: 4),
                               leading: const Icon(Icons.person),
-                              title: Text(
-                                u.name,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              title: Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      u.name,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  if (u.wins > 0) ...[
+                                    const SizedBox(width: 6),
+                                    WinStarsBadge(
+                                      wins: u.wins,
+                                      size: 14,
+                                      onTap: () => showWinStarsDetails(
+                                        context,
+                                        u.wins,
+                                        userName: u.name,
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                               subtitle: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -660,6 +681,9 @@ class UserRow {
   final String? subscriptionEntitlement; // p.ej. "pro"
   final String? subscriptionExpiresAt; // ISO string si viene
 
+  /// Victorias acumuladas (estrellas de ganador).
+  final int wins;
+
   const UserRow({
     required this.id,
     required this.name,
@@ -671,6 +695,7 @@ class UserRow {
     this.subscriptionStatus,
     this.subscriptionEntitlement,
     this.subscriptionExpiresAt,
+    this.wins = 0,
   });
 
   factory UserRow.fromJson(Map<String, dynamic> j) {
@@ -688,6 +713,7 @@ class UserRow {
       subscriptionEntitlement: (j['subscription_entitlement'] as String?)
           ?.toLowerCase(),
       subscriptionExpiresAt: j['subscription_expires_at'] as String?,
+      wins: (j['wins'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -716,6 +742,7 @@ class UserRow {
           subscriptionEntitlement ?? this.subscriptionEntitlement,
       subscriptionExpiresAt:
           subscriptionExpiresAt ?? this.subscriptionExpiresAt,
+      wins: wins,
     );
   }
 }

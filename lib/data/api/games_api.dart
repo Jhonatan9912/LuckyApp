@@ -514,6 +514,22 @@ Future<Map<String, dynamic>> getMySelection({
     );
   }
 
+  /// Victorias acumuladas del usuario (estrellas de ganador).
+  /// Devuelve null si no se pudo consultar.
+  Future<int?> getMyWins({String? token}) async {
+    final uri = Uri.parse('$baseUrl/api/games/my-wins');
+    try {
+      final res = await _client
+          .get(uri, headers: _headers(token: token))
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode < 200 || res.statusCode >= 300) return null;
+      final parsed = jsonDecode(res.body);
+      return (parsed['wins'] as num?)?.toInt();
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>> getHistory({
     String? token,
     int? xUserId,

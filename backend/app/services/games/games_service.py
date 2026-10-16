@@ -700,3 +700,27 @@ def list_user_history(conn, user_id: int, page: int, per_page: int, max_digits: 
         except Exception:
             pass
         return {"ok": False, "message": f"history_error: {e}"}
+
+
+def count_user_wins(user_id: int) -> int:
+    """
+    Cantidad de juegos que el usuario ha ganado.
+
+    Un juego cuenta como ganado cuando ya tiene número ganador y ese número
+    está entre los que el usuario reservó (misma regla que el historial).
+    No filtra por plan: son las victorias de toda su vida en la plataforma.
+    """
+    row = db.session.execute(
+        text(
+            """
+            SELECT COUNT(DISTINCT g.id)
+            FROM public.game_numbers gn
+            JOIN public.games g ON g.id = gn.game_id
+            WHERE gn.taken_by = :uid
+              AND g.winning_number IS NOT NULL
+              AND gn.number = g.winning_number
+            """
+        ),
+        {"uid": int(user_id)},
+    ).scalar()
+    return int(row or 0)
