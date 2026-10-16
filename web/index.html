@@ -38,13 +38,15 @@
 
   <!-- Aviso de cookies (solo cookies esenciales de funcionamiento) -->
   <style>
-    #cookie-notice{position:fixed;left:0;right:0;bottom:0;z-index:2147483647;
-      background:#141414;color:#EDEDED;border-top:1px solid #D4AF37;
-      font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-      padding:14px 16px;display:none;box-shadow:0 -4px 16px rgba(0,0,0,.4)}
-    #cookie-notice.show{display:flex;flex-wrap:wrap;align-items:center;
-      gap:12px;justify-content:center}
-    #cookie-notice p{margin:0;font-size:14px;line-height:1.4;max-width:720px}
+    #cookie-notice{position:fixed;right:20px;bottom:20px;z-index:2147483647;
+      width:360px;max-width:calc(100vw - 32px);box-sizing:border-box;
+      background:#141414;color:#EDEDED;border:1px solid #D4AF37;
+      border-radius:14px;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      padding:16px;display:none;box-shadow:0 8px 28px rgba(0,0,0,.55)}
+    #cookie-notice.show{display:flex;flex-direction:column;gap:12px}
+    #cookie-notice p{margin:0;font-size:13px;line-height:1.45}
+    #cookie-notice button{align-self:flex-end}
+    @media (max-width:480px){#cookie-notice{right:16px;bottom:16px}}
     #cookie-notice a{color:#F5C842;text-decoration:underline}
     #cookie-notice button{background:#D4AF37;color:#0A0A0A;border:none;
       border-radius:8px;padding:10px 18px;font-size:14px;font-weight:600;
