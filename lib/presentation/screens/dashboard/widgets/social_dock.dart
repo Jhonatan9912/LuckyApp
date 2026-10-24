@@ -1,6 +1,6 @@
 // lib/presentation/screens/dashboard/widgets/social_dock.dart
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:base_app/core/ui/brand_icons.dart';
 import 'package:base_app/core/config/links.dart';
 import 'package:base_app/core/utils/url_utils.dart';
 
@@ -45,7 +45,7 @@ class SocialDock extends StatelessWidget {
       );
     }
 
-    // Versión sin Stack: metemos el FaIcon directamente
+    // Versión sin Stack: metemos el Icon directamente
     Widget circleWithIcon({
       required IconData icon,
       required String tooltip,
@@ -93,7 +93,7 @@ class SocialDock extends StatelessWidget {
               onTap: onTap,
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: FaIcon(icon, size: 18), // 👈 icono dentro del InkWell
+                child: Icon(icon, size: 18), // 👈 icono dentro del InkWell
               ),
             ),
           ),
@@ -105,7 +105,7 @@ class SocialDock extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         item(
-          icon: FontAwesomeIcons.whatsapp,
+          icon: BrandIcons.whatsapp,
           tooltip: 'Comunidad en WhatsApp',
           onTap: () => UrlUtils.openExternal(
             context,
@@ -114,7 +114,7 @@ class SocialDock extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         item(
-          icon: FontAwesomeIcons.facebookF,
+          icon: BrandIcons.facebookF,
           tooltip: 'Página en Facebook',
           onTap: () => UrlUtils.openExternal(
             context,

@@ -53,7 +53,6 @@ dependencies:
   firebase_messaging:
   flutter_local_notifications:
   permission_handler:
-  font_awesome_flutter: ^10.7.0
   path_provider: ^2.1.0
   open_filex: ^4.0.0
   share_plus: ^10.0.0
@@ -93,6 +92,12 @@ flutter:
       - assets/legal/
       # Fuentes de google_fonts empaquetadas: evita descargarlas de Google al arrancar
       - assets/google_fonts/
+
+  fonts:
+    # Solo la fuente Brands de Font Awesome (íconos de WhatsApp y Facebook)
+    - family: FaBrands
+      fonts:
+        - asset: assets/fonts/fa-brands-400.ttf
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

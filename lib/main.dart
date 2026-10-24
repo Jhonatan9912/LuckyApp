@@ -19,8 +19,10 @@ import 'presentation/screens/splash/splash_screen.dart';
 import 'presentation/screens/login/login_screen.dart';
 import 'presentation/screens/reset_password/set_new_password_screen.dart';
 import 'presentation/screens/register/register_screen.dart';
-import 'presentation/screens/admin_dashboard/admin_dashboard_screen.dart';
-import 'presentation/screens/dashboard/dashboard_screen.dart';
+import 'presentation/screens/admin_dashboard/admin_dashboard_screen.dart'
+    deferred as admin_mobile;
+import 'presentation/screens/dashboard/dashboard_screen.dart'
+    deferred as player_mobile;
 
 import 'presentation/screens/faq/faq_reset_password_screen.dart';
 import 'presentation/screens/faq/faq_play_screen.dart';
@@ -41,8 +43,9 @@ import 'core/notifications/fcm_messaging.dart';
 import 'web/web_shell.dart';
 import 'web/screens/web_login_screen.dart';
 import 'web/screens/web_register_screen.dart';
-import 'web/player/web_player_dashboard.dart';
-import 'web/admin/web_admin_dashboard.dart';
+import 'web/player/web_player_dashboard.dart' deferred as player_web;
+import 'web/admin/web_admin_dashboard.dart' deferred as admin_web;
+import 'core/ui/deferred_screen.dart';
 import 'web/screens/web_reset_password_screen.dart';
 import 'web/screens/web_legal_screen.dart';
 import 'presentation/providers/notifications_provider.dart';
@@ -354,10 +357,25 @@ class BaseApp extends StatelessWidget {
         '/registro': (context) =>
             kIsWeb ? const WebRegisterScreen() : const RegisterScreen(),
         '/nueva-contrasena': (context) => const SetNewPasswordScreen(),
-        '/admin': (_) =>
-            kIsWeb ? const WebAdminDashboard() : const AdminDashboardScreen(),
-        '/dashboard': (_) =>
-            kIsWeb ? const WebPlayerDashboard() : const DashboardScreen(),
+        // Dashboards con carga diferida: en la web se descargan al abrirlos.
+        '/admin': (_) => kIsWeb
+            ? DeferredScreen(
+                loadLibrary: admin_web.loadLibrary,
+                builder: (_) => admin_web.WebAdminDashboard(),
+              )
+            : DeferredScreen(
+                loadLibrary: admin_mobile.loadLibrary,
+                builder: (_) => admin_mobile.AdminDashboardScreen(),
+              ),
+        '/dashboard': (_) => kIsWeb
+            ? DeferredScreen(
+                loadLibrary: player_web.loadLibrary,
+                builder: (_) => player_web.WebPlayerDashboard(),
+              )
+            : DeferredScreen(
+                loadLibrary: player_mobile.loadLibrary,
+                builder: (_) => player_mobile.DashboardScreen(),
+              ),
         '/faq/restablecer': (_) => const FaqResetPasswordScreen(),
         '/faq/juego': (_) => const FaqPlayScreen(),
         '/pro': (_) => const PaywallScreen(),

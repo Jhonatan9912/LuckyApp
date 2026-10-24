@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:base_app/core/ui/brand_icons.dart';
 import 'package:base_app/core/utils/url_utils.dart';
 import 'package:base_app/core/config/links.dart';
 
@@ -78,7 +78,7 @@ class SocialDockWithLabel extends StatelessWidget {
               onTap: onTap,
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: FaIcon(icon, size: 18, color: color),
+                child: Icon(icon, size: 18, color: color),
               ),
             ),
           ),
@@ -91,7 +91,7 @@ class SocialDockWithLabel extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
       item(
-        icon: FontAwesomeIcons.whatsapp,
+        icon: BrandIcons.whatsapp,
         color: const Color(0xFF25D366),
         tooltip: 'Contactar asesor por WhatsApp',
         onTap: () => UrlUtils.openExternal(
@@ -102,7 +102,7 @@ class SocialDockWithLabel extends StatelessWidget {
 
         const SizedBox(height: 10),
         item(
-          icon: FontAwesomeIcons.facebookF,
+          icon: BrandIcons.facebookF,
           color: const Color(0xFF1877F2),
           tooltip: 'Página en Facebook',
           onTap: () => UrlUtils.openExternal(
