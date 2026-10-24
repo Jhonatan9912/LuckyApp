@@ -32,7 +32,10 @@ def create_app():
         app.logger.warning("CORS_ORIGINS no definido: se permite cualquier origen.")
     CORS(
         app,
-        resources={r"/api/.*": {"origins": cors_origins}},
+        resources={
+            r"/api/.*": {"origins": cors_origins},
+            r"/identification-types": {"origins": cors_origins},
+        },
         allow_headers=["Authorization", "Content-Type", "Accept"],
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         max_age=600,
