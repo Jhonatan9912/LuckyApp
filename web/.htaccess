@@ -28,3 +28,14 @@
     RewriteCond %{HTTP_HOST} ^www\. [NC]
     RewriteRule ^ https://cambiemostumundo.com%{REQUEST_URI} [L,R=301]
 </IfModule>
+
+# Caché: los archivos pesados se guardan en el navegador; los de arranque se
+# revalidan siempre (respuesta 304 rápida) para que cada despliegue llegue.
+<IfModule mod_headers.c>
+    <FilesMatch "\.(wasm|png|jpg|jpeg|webp|gif|svg|ico|otf|ttf|woff2?|mp3|wav|bin)$">
+        Header set Cache-Control "public, max-age=2592000"
+    </FilesMatch>
+    <FilesMatch "^(index\.html|flutter_bootstrap\.js|main\.dart\.js|flutter_service_worker\.js|version\.json|manifest\.json)$">
+        Header set Cache-Control "no-cache"
+    </FilesMatch>
+</IfModule>
