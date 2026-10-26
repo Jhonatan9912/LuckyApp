@@ -581,6 +581,71 @@ def manual_grant_pro(
         "source": "manual_offline",
     }
 
+_NO_EXPIRY = datetime(2099, 12, 31, tzinfo=timezone.utc)
+
+
+def admin_set_plan(
+    user_id: int,
+    product_id: str,
+    days: Optional[int] = None,
+    indefinite: bool = False,
+) -> Dict[str, Any]:
+    """
+    Fija el plan de un usuario por decisión del administrador (corrige, sube o
+    baja el plan aunque ya tenga uno vigente). NO genera comisión de referido.
+
+    - indefinite=True -> sin vencimiento (31/12/2099).
+    - days -> vence en `days` días desde ahora.
+    """
+    uid = int(user_id)
+    pid = (product_id or "").strip()
+    if pid not in {
+        "cm_prueba_2", "cm_prueba_3", "cm_prueba_4", "cm_prueba_5",
+        "cms_suscripcion", "cml_suscripcion", "cm_suscripcion", "cmu_suscripcion",
+    }:
+        raise ValueError(f"Producto no permitido: {pid}")
+
+    now = _now_utc()
+    if indefinite:
+        expiry_dt = _NO_EXPIRY
+    else:
+        expiry_dt = now + timedelta(days=max(1, min(int(days or 30), 3660)))
+
+    sub: Optional[UserSubscription] = (
+        UserSubscription.query
+        .filter_by(user_id=uid, entitlement="pro")
+        .first()
+    )
+    if not sub:
+        sub = UserSubscription(user_id=uid, entitlement="pro")
+
+    sub.status = "active"
+    _set_attr(sub, ["is_premium", "is_active"], True)
+    _set_attr(sub, ["period_start", "current_period_start"], now)
+    _set_attr(sub, ["expires_at", "current_period_end"], expiry_dt)
+    if hasattr(sub, "auto_renewing"):
+        sub.auto_renewing = False
+    _set_attr(sub, ["platform"], "admin_override")
+    _set_attr(sub, ["product_id", "last_product_id"], pid)
+    _set_attr(sub, ["last_sync_at"], now)
+    _set_attr(sub, ["purchase_token"], f"admin-{uid}-{int(now.timestamp())}")
+
+    db.session.add(sub)
+    db.session.commit()
+    _log_event("admin_set_plan", user_id=uid, product_id=pid, indefinite=indefinite)
+
+    plan, _ = _infer_plan_from_product_id(pid)
+    return {
+        "ok": True,
+        "userId": uid,
+        "plan": plan,
+        "productId": pid,
+        "status": "active",
+        "expiresAt": expiry_dt.isoformat(),
+        "indefinite": bool(indefinite),
+    }
+
+
 class PurchaseOwnedByOtherUser(Exception):
     """El purchaseToken ya está vinculado a la suscripción de otro usuario."""
 

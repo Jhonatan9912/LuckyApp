@@ -199,6 +199,44 @@ Future<List<Map<String, dynamic>>> loadAllUsers({
     return body;
   }
 
+  /// Fija/corrige el plan de un usuario (aunque ya tenga uno activo).
+  /// Con [indefinite] el plan no vence; si no, dura [days] días.
+  Future<Map<String, dynamic>> adminSetPlan({
+    required int userId,
+    required String productId,
+    int days = 30,
+    bool indefinite = false,
+  }) async {
+    final token = await SessionManager().getToken();
+    final uri = Uri.parse('$baseUrl/api/subscriptions/admin-set');
+
+    final res = await http
+        .post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: json.encode({
+            'user_id': userId,
+            'product_id': productId,
+            'days': days,
+            'indefinite': indefinite,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    final Map<String, dynamic> body =
+        json.decode(res.body) as Map<String, dynamic>;
+    if (res.statusCode != 200) {
+      throw Exception(
+        (body['msg'] ?? body['code'] ?? 'No se pudo cambiar el plan.')
+            .toString(),
+      );
+    }
+    return body;
+  }
+
   /// Devuelve un Map con: id, name, phone, public_code, role_id, role
   Future<Map<String, dynamic>> updateUserRole(int userId, int newRoleId) async {
     final token = await SessionManager().getToken();
