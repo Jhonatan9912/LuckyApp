@@ -337,8 +337,6 @@ return AnimatedBuilder(
 
                     Consumer2<SubscriptionProvider, ReferralProvider>(
                       builder: (_, subs, refs, __) {
-                        if (subs.isTrial) return const _TrialInfoBanner();
-                        if (!subs.isPaidPremium) return _ReferralCTABanner(onTap: _openSubscriptionSheet);
                         return ReferralPayoutTile(
                           code: _ctrl.referralCode,
                           minToWithdraw: 100000,
