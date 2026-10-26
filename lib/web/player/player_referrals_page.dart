@@ -46,28 +46,6 @@ class PlayerReferralsPage extends StatelessWidget {
     final subs = context.watch<SubscriptionProvider>();
     final refs = context.watch<ReferralProvider>();
 
-    if (!subs.isPaidPremium) {
-      return WebPage(
-        children: [
-          WebPanel(
-            child: EmptyState(
-              icon: Icons.groups_2_outlined,
-              title: subs.isTrial
-                  ? 'Referidos no disponibles en la prueba'
-                  : 'Gana dinero con tus referidos',
-              message:
-                  'Con un plan pagado obtienes tu código de referido y ganas comisión cada vez que un amigo compre un plan con él.',
-              action: GoldButton(
-                label: 'Ver planes',
-                expand: false,
-                onPressed: onOpenPlans,
-              ),
-            ),
-          ),
-        ],
-      );
-    }
-
     final hero = WebPanel(
       highlight: true,
       child: LayoutBuilder(

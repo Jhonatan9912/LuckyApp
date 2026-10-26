@@ -613,30 +613,6 @@ class _ReferralCard extends StatelessWidget {
     final subs = context.watch<SubscriptionProvider>();
     final refs = context.watch<ReferralProvider>();
 
-    if (!subs.isPaidPremium) {
-      return WebPanel(
-        title: 'Gana con referidos',
-        icon: Icons.groups_2_outlined,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              subs.isTrial
-                  ? 'Durante la prueba gratuita no se generan comisiones. Activa un plan pagado para ganar con tus referidos.'
-                  : 'Invita amigos con tu código y gana comisión cuando compren un plan. Disponible con un plan pagado.',
-              style: WebPalette.body(13.5),
-            ),
-            const SizedBox(height: 14),
-            GhostButton(
-              label: 'Ver planes',
-              icon: Icons.workspace_premium_outlined,
-              onPressed: onOpenPlans,
-            ),
-          ],
-        ),
-      );
-    }
-
     return WebPanel(
       title: 'Tus referidos',
       icon: Icons.groups_2_outlined,
@@ -654,6 +630,13 @@ class _ReferralCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           if ((code ?? '').isNotEmpty) ReferralCodeBox(code: code!),
+          if (!subs.isPaidPremium) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Compártelo siempre. Ganas comisión cuando tus referidos compren un plan.',
+              style: WebPalette.body(12.5, color: WebPalette.textFaint),
+            ),
+          ],
           const SizedBox(height: 14),
           GhostButton(
             label: 'Ver mis referidos',
