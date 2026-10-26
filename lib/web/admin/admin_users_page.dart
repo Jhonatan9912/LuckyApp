@@ -94,9 +94,19 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   );
 
   String _planLabel(UserRow u) {
-    final s = (u.subscription ?? '').trim();
-    if (s.isNotEmpty && s != '-') return s;
+    final pid = (u.subscriptionProductId ?? '').trim();
+    for (final p in _plans) {
+      if (pid.isNotEmpty && pid.startsWith(p.$1)) return p.$2;
+    }
     return (u.subscriptionEntitlement ?? '') == 'pro' ? 'PRO' : 'Gratis';
+  }
+
+  /// Fecha de vencimiento completa; "Sin vencimiento" si es 2099 o más.
+  String _expiryLabel(UserRow u) {
+    final d = DateTime.tryParse(u.subscriptionExpiresAt ?? '')?.toLocal();
+    if (d == null) return '—';
+    if (d.year >= 2099) return 'Sin vencimiento';
+    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
   }
 
   List<UserRow> get _rows {
@@ -221,6 +231,74 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     } catch (e) {
       await WebAlerts.dialog(
         title: 'No se pudo activar',
+        message: prettyError(e),
+        tone: AlertTone.error,
+      );
+    } finally {
+      if (mounted) setState(() => _busyId = null);
+    }
+  }
+
+  /// Corrige o cambia el plan aunque ya tenga uno activo. Sin comisión de referido.
+  Future<void> _changePlan(UserRow u) async {
+    String? selected;
+    var indefinite = false;
+    final result = await showWebModal<(String, bool)>(
+      context,
+      title: 'Cambiar plan',
+      subtitle: 'Para ${u.name} · reemplaza el plan actual',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final (id, name, price, _) in _plans.where((p) => !p.$4))
+              ChoiceTile(
+                title: name,
+                subtitle: price,
+                icon: Icons.workspace_premium_rounded,
+                selected: selected == id,
+                onTap: () => setLocal(() => selected = id),
+              ),
+            ChoiceTile(
+              title: 'Sin vencimiento',
+              subtitle: 'El plan no vence nunca',
+              icon: Icons.all_inclusive_rounded,
+              selected: indefinite,
+              onTap: () => setLocal(() => indefinite = !indefinite),
+            ),
+            Text(
+              indefinite
+                  ? 'No genera comisión de referido.'
+                  : 'Dura 30 días desde hoy. No genera comisión de referido.',
+              style: WebPalette.body(12.5, color: WebPalette.textFaint),
+            ),
+            ModalActions(
+              okText: 'Aplicar plan',
+              onOk: selected == null
+                  ? null
+                  : () => Navigator.of(ctx).pop((selected!, indefinite)),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null) return;
+
+    setState(() => _busyId = u.id);
+    try {
+      await widget.ctrl.adminSetPlan(
+        userId: u.id,
+        productId: result.$1,
+        indefinite: result.$2,
+      );
+      WebAlerts.toast(
+        'Plan actualizado para "${u.name}".',
+        tone: AlertTone.success,
+      );
+      await _load();
+    } catch (e) {
+      await WebAlerts.dialog(
+        title: 'No se pudo cambiar',
         message: prettyError(e),
         tone: AlertTone.error,
       );
@@ -367,6 +445,11 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                         () => _grantPlan(u),
                       ),
                       RowAction(
+                        Icons.swap_vert_circle_outlined,
+                        'Cambiar plan',
+                        () => _changePlan(u),
+                      ),
+                      RowAction(
                         Icons.admin_panel_settings_outlined,
                         u.roleId == 1
                             ? 'Quitar administrador'
@@ -416,7 +499,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                           : const CellText('—'),
                       flex: 2,
                     ),
-                    WebColumn('Plan', (u) => CellText(_planLabel(u)), flex: 2),
+                    WebColumn('Plan', (u) => CellText(_planLabel(u)), flex: 3),
+                    WebColumn('Vence', (u) => CellText(_expiryLabel(u)), flex: 2),
                     WebColumn(
                       'Estado',
                       (u) => StatusChip(

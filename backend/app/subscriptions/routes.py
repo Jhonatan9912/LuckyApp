@@ -166,6 +166,42 @@ def subscription_manual_grant():
         current_app.logger.exception("manual_grant_pro_failed")
         return jsonify({"ok": False, "code": "MANUAL_GRANT_FAILED", "msg": "Error interno"}), 500
 
+@subscriptions_bp.post("/admin-set")
+@jwt_required()
+def subscription_admin_set():
+    """
+    Admin: fija/corrige el plan de un usuario (aunque ya tenga uno activo),
+    con duración en días o sin vencimiento. No genera comisión de referido.
+    """
+    if not is_admin(current_user_id()):
+        return jsonify({"ok": False, "code": "UNAUTHORIZED"}), 401
+
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"ok": False, "code": "BAD_JSON"}), 400
+
+    user_id = body.get("user_id") or body.get("userId")
+    product_id = (body.get("product_id") or body.get("productId") or "").strip()
+    if not user_id or not product_id:
+        return jsonify({"ok": False, "code": "MISSING_FIELDS"}), 400
+
+    try:
+        from app.subscriptions.service import admin_set_plan
+        out = admin_set_plan(
+            int(user_id),
+            product_id,
+            days=body.get("days"),
+            indefinite=bool(body.get("indefinite", False)),
+        )
+        return jsonify(out), 200
+    except ValueError as ve:
+        return jsonify({"ok": False, "code": "BAD_PRODUCT", "msg": str(ve)}), 400
+    except Exception:
+        current_app.logger.exception("admin_set_plan_failed")
+        return jsonify({"ok": False, "code": "ADMIN_SET_FAILED", "msg": "Error interno"}), 500
+
+
 @subscriptions_bp.post("/reconcile/one")
 @jwt_required()
 def subscription_reconcile_one():

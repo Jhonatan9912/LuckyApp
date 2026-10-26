@@ -48,6 +48,7 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
                     THEN TRUE ELSE FALSE
                 END AS subscription_is_active,
                 sub.expires_at                      AS subscription_expires_at,
+                sub.last_product_id                 AS subscription_product_id,
 
                 -- etiqueta amigable que espera el front (campo "subscription")
                 CASE
@@ -68,7 +69,7 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
                 FROM users u
                 LEFT JOIN public.roles r ON r.id = u.role_id
                 LEFT JOIN LATERAL (
-                SELECT s.entitlement, s.status, s.is_premium, s.expires_at
+                SELECT s.entitlement, s.status, s.is_premium, s.expires_at, s.last_product_id
                 FROM public.user_subscriptions s
                 WHERE s.user_id = u.id
                 ORDER BY COALESCE(s.expires_at, s.updated_at, s.created_at) DESC NULLS LAST
@@ -118,6 +119,7 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
             'NONE'::text      AS subscription_status,
             FALSE::boolean    AS subscription_is_active,
             NULL::timestamptz AS subscription_expires_at,
+            NULL::text        AS subscription_product_id,
             'FREE'::text      AS subscription_label,
             {_WINS_SQL} AS wins
 
