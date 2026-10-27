@@ -295,13 +295,15 @@ class StatusChip extends StatelessWidget {
               decoration: BoxDecoration(color: color, shape: BoxShape.circle),
             ),
           const SizedBox(width: 6),
-          Text(
+          Flexible(
+            child: Text(
             label,
             style: WebPalette.body(
               12,
               weight: FontWeight.w700,
               color: color,
               height: 1.2,
+            ),
             ),
           ),
         ],
@@ -488,6 +490,9 @@ class WebTable<T> extends StatelessWidget {
   final Widget Function(T row)? mobileTitle;
   final bool Function(T row)? isSelected;
 
+  /// Ancho mínimo de la tabla en escritorio; si no cabe, se desplaza en horizontal.
+  final double? minWidth;
+
   const WebTable({
     super.key,
     required this.columns,
@@ -496,6 +501,7 @@ class WebTable<T> extends StatelessWidget {
     this.onRowTap,
     this.mobileTitle,
     this.isSelected,
+    this.minWidth,
   });
 
   @override
@@ -503,6 +509,13 @@ class WebTable<T> extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, c) {
         if (c.maxWidth < 760) return _mobile();
+        final min = minWidth;
+        if (min != null && c.maxWidth < min) {
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(width: min, child: _desktop()),
+          );
+        }
         return _desktop();
       },
     );
@@ -711,9 +724,10 @@ class CellText extends StatelessWidget {
         ),
       );
     }
+    // Sin recortar con "…": el texto largo baja a otra línea.
     return Text(
       text.isEmpty ? '—' : text,
-      overflow: TextOverflow.ellipsis,
+      softWrap: true,
       style: mono
           ? WebPalette.display(
               14,

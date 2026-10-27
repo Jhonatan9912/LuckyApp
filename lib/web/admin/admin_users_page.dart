@@ -546,13 +546,13 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               else
                 WebTable<UserRow>(
                   rows: rows,
+                  minWidth: 1280,
                   onRowTap: _showDetail,
                   mobileTitle: (u) => Row(
                     children: [
                       Flexible(
                         child: Text(
                           u.name,
-                          overflow: TextOverflow.ellipsis,
                           style: WebPalette.display(15, weight: FontWeight.w700),
                         ),
                       ),
