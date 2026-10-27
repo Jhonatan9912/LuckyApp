@@ -11,6 +11,9 @@ class UsersBottomSheet extends StatefulWidget {
 /// Activa/renueva PRO manualmente indicando el product_id (cm_suscripcion / cml_suscripcion).
 final Future<Map<String, dynamic>> Function(int userId, String productId)? onManualGrantPro;
 
+  /// Trae la ficha completa de un usuario (datos, referidor y referidos).
+  final Future<Map<String, dynamic>> Function(int userId)? onLoadDetail;
+
 
   /// Actualiza el rol del usuario en backend. Debe devolver el usuario actualizado.
   /// Si por ahora tu backend solo devuelve {ok:true}, igual funcionará (fallback local).
@@ -32,6 +35,7 @@ final Future<Map<String, dynamic>> Function(int userId, String productId)? onMan
       RoleItem(id: 2, name: 'Usuario'),
     ],
     this.onManualGrantPro, // 👈 agrega esta línea
+    this.onLoadDetail,
   });
 
 
@@ -226,6 +230,113 @@ Future<String?> _pickPlanDialog(BuildContext context, UserRow u) async {
       );
     }
   }
+/// dd/mm/aaaa; "Sin vencimiento" si es 2099 o más; "—" si no hay fecha.
+String _fmtDate(String? iso, {bool expiry = false}) {
+  final d = DateTime.tryParse(iso ?? '')?.toLocal();
+  if (d == null) return '—';
+  if (expiry && d.year >= 2099) return 'Sin vencimiento';
+  return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+}
+
+Widget _detailRow(String label, String value) => Padding(
+  padding: const EdgeInsets.symmetric(vertical: 3),
+  child: Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      SizedBox(
+        width: 110,
+        child: Text(label, style: const TextStyle(color: Colors.black54)),
+      ),
+      Expanded(child: SelectableText(value.isEmpty ? '—' : value)),
+    ],
+  ),
+);
+
+/// Ficha completa: datos, quién lo refirió y a quién refirió.
+Future<void> _openDetail(UserRow u) async {
+  final load = widget.onLoadDetail;
+  if (load == null) return;
+  Map<String, dynamic> d;
+  try {
+    d = await load(u.id);
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('No se pudo cargar: $e')),
+    );
+    return;
+  }
+  if (!mounted) return;
+
+  final user = Map<String, dynamic>.from(d['user'] as Map? ?? {});
+  final by = d['referred_by'] == null
+      ? null
+      : Map<String, dynamic>.from(d['referred_by'] as Map);
+  final referred = ((d['referred'] as List?) ?? const [])
+      .map((e) => Map<String, dynamic>.from(e as Map))
+      .toList();
+
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (ctx) => DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.85,
+      maxChildSize: 0.95,
+      builder: (_, sc) => ListView(
+        controller: sc,
+        padding: const EdgeInsets.all(20),
+        children: [
+          Text(
+            u.name,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          _detailRow('Celular', '${user['country_code'] ?? ''} ${user['phone'] ?? ''}'.trim()),
+          _detailRow('Correo', '${user['email'] ?? ''}'),
+          _detailRow('Código', '${user['public_code'] ?? ''}'),
+          _detailRow('Rol', '${user['role'] ?? ''}'),
+          _detailRow('Registro', _fmtDate('${user['created_at'] ?? ''}')),
+          _detailRow('Suscripción', _subLabel(u)),
+          _detailRow('Vence', _fmtDate(u.subscriptionExpiresAt, expiry: true)),
+          const SizedBox(height: 14),
+          const Text(
+            'Referido por',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          ),
+          const SizedBox(height: 4),
+          if (by == null)
+            const Text('Nadie lo refirió.')
+          else ...[
+            _detailRow('Nombre', '${by['name'] ?? ''}'),
+            _detailRow('Código', '${by['public_code'] ?? ''}'),
+            _detailRow('Celular', '${by['phone'] ?? ''}'),
+            _detailRow('Fecha', _fmtDate('${by['created_at'] ?? ''}')),
+          ],
+          const SizedBox(height: 14),
+          Text(
+            'Personas que refirió (${referred.length})',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          ),
+          const SizedBox(height: 4),
+          if (referred.isEmpty)
+            const Text('Aún no ha referido a nadie.')
+          else
+            for (final r in referred)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Text(
+                  '${r['name'] ?? ''} · ${r['public_code'] ?? ''} · ${r['phone'] ?? ''}\n'
+                  '${_fmtDate('${r['created_at'] ?? ''}')} · ${r['has_active_plan'] == true ? 'Con plan' : 'Sin plan'}',
+                ),
+              ),
+        ],
+      ),
+    ),
+  );
+}
+
 Future<void> _grantPro(UserRow u) async {
   // 🔒 Blindaje: solo bloquear si REALMENTE tiene PRO activa
   if (_hasActivePro(u)) {
@@ -497,6 +608,9 @@ final showExpires =
                             padding: const EdgeInsets.symmetric(horizontal: 8),
                             child: ListTile(
                               isThreeLine: true,
+                              onTap: widget.onLoadDetail == null
+                                  ? null
+                                  : () => _openDetail(u),
                               contentPadding: const EdgeInsets.only(right: 4),
                               leading: const Icon(Icons.person),
                               title: Row(
@@ -504,7 +618,6 @@ final showExpires =
                                   Flexible(
                                     child: Text(
                                       u.name,
-                                      overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
                                         fontWeight: FontWeight.bold,
                                       ),
@@ -588,7 +701,13 @@ final showExpires =
                                   Text('Suscripción: ${_subLabel(u)}'),
                                   if (showStatus) Text('Estado: ${_statusLabelEs(u)}'),
                                   if (showExpires)
-                                    Text('Vence: ${u.subscriptionExpiresAt}'),
+                                    Text(
+                                      'Vence: ${_fmtDate(u.subscriptionExpiresAt, expiry: true)}',
+                                    ),
+                                  if ((u.referredByName ?? '').isNotEmpty)
+                                    Text(
+                                      'Referido por: ${u.referredByName} (${u.referredByCode ?? ''})',
+                                    ),
 
                                   const SizedBox(height: 2),
                                   Text('Código: ${u.code}'),

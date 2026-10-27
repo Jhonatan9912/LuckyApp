@@ -257,6 +257,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           }
         },
         onDelete: (userId) => ctrl.deleteUser(userId),
+        onLoadDetail: (userId) => ctrl.loadUserDetail(userId),
         // ⭐ NUEVO: activar PRO manualmente (30 días)
         onManualGrantPro: (userId, productId) async {
           final resp = await ctrl.manualGrantPro(
