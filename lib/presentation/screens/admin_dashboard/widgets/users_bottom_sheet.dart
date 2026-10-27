@@ -681,6 +681,8 @@ class UserRow {
   final String? subscriptionEntitlement; // p.ej. "pro"
   final String? subscriptionExpiresAt; // ISO string si viene
   final String? subscriptionProductId; // p.ej. "cmu_suscripcion"
+  final String? referredByName; // quién lo refirió (si alguien)
+  final String? referredByCode;
 
   /// Victorias acumuladas (estrellas de ganador).
   final int wins;
@@ -697,6 +699,8 @@ class UserRow {
     this.subscriptionEntitlement,
     this.subscriptionExpiresAt,
     this.subscriptionProductId,
+    this.referredByName,
+    this.referredByCode,
     this.wins = 0,
   });
 
@@ -716,6 +720,8 @@ class UserRow {
           ?.toLowerCase(),
       subscriptionExpiresAt: j['subscription_expires_at'] as String?,
       subscriptionProductId: j['subscription_product_id'] as String?,
+      referredByName: j['referred_by_name'] as String?,
+      referredByCode: j['referred_by_code'] as String?,
       wins: (j['wins'] as num?)?.toInt() ?? 0,
     );
   }
@@ -732,6 +738,8 @@ class UserRow {
     String? subscriptionEntitlement,
     String? subscriptionExpiresAt,
     String? subscriptionProductId,
+    String? referredByName,
+    String? referredByCode,
   }) {
     return UserRow(
       id: id ?? this.id,
@@ -748,6 +756,8 @@ class UserRow {
           subscriptionExpiresAt ?? this.subscriptionExpiresAt,
       subscriptionProductId:
           subscriptionProductId ?? this.subscriptionProductId,
+      referredByName: referredByName ?? this.referredByName,
+      referredByCode: referredByCode ?? this.referredByCode,
       wins: wins,
     );
   }

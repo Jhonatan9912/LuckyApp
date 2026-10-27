@@ -50,6 +50,10 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
                 sub.expires_at                      AS subscription_expires_at,
                 sub.last_product_id                 AS subscription_product_id,
 
+                -- quién lo refirió (primer referidor registrado)
+                refby.name                          AS referred_by_name,
+                refby.public_code                   AS referred_by_code,
+
                 -- etiqueta amigable que espera el front (campo "subscription")
                 CASE
                     WHEN sub.entitlement IS NULL THEN 'Sin suscripción'
@@ -75,6 +79,14 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
                 ORDER BY COALESCE(s.expires_at, s.updated_at, s.created_at) DESC NULLS LAST
                 LIMIT 1
                 ) sub ON TRUE
+                LEFT JOIN LATERAL (
+                SELECT ru.name, ru.public_code
+                FROM public.referrals rf
+                JOIN users ru ON ru.id = rf.referrer_user_id
+                WHERE rf.referred_user_id = u.id
+                ORDER BY rf.id ASC
+                LIMIT 1
+                ) refby ON TRUE
         {where_sql}
         ORDER BY u.id DESC
         OFFSET :offset
@@ -120,6 +132,8 @@ def list_users(q: Optional[str] = None, page: int = 1, per_page: int = 50) -> Di
             FALSE::boolean    AS subscription_is_active,
             NULL::timestamptz AS subscription_expires_at,
             NULL::text        AS subscription_product_id,
+            NULL::text        AS referred_by_name,
+            NULL::text        AS referred_by_code,
             'FREE'::text      AS subscription_label,
             {_WINS_SQL} AS wins
 

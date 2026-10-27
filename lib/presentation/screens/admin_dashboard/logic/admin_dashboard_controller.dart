@@ -199,6 +199,21 @@ Future<List<Map<String, dynamic>>> loadAllUsers({
     return body;
   }
 
+  /// Detalle de un usuario: datos, quién lo refirió y a quién refirió.
+  Future<Map<String, dynamic>> loadUserDetail(int userId) async {
+    final token = await SessionManager().getToken();
+    final res = await http
+        .get(
+          Uri.parse('$baseUrl/api/admin/users/$userId/detail'),
+          headers: {'Authorization': 'Bearer $token'},
+        )
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+    return json.decode(res.body) as Map<String, dynamic>;
+  }
+
   /// Fija/corrige el plan de un usuario (aunque ya tenga uno activo).
   /// Con [indefinite] el plan no vence; si no, dura [days] días.
   Future<Map<String, dynamic>> adminSetPlan({

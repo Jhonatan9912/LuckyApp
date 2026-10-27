@@ -42,6 +42,70 @@ def admin_users():
     return jsonify({"ok": True, **data})
 
 # ---------------------------------------------------------------------
+# GET /api/admin/users/<id>/detail -> datos, referidor y personas referidas
+# ---------------------------------------------------------------------
+@bp.get("/users/<int:user_id>/detail")
+@jwt_required()
+def admin_user_detail(user_id):
+    claims = get_jwt() or {}
+    role_id = claims.get("role_id") or claims.get("rid") or claims.get("role")
+    if role_id is None:
+        role_id = db.session.execute(
+            text("SELECT role_id FROM users WHERE id=:uid"),
+            {"uid": get_jwt_identity()},
+        ).scalar()
+    if int(role_id) != 1:
+        return jsonify({"ok": False, "error": "Solo administradores"}), 403
+
+    u = db.session.execute(text("""
+        SELECT u.id, u.name, u.phone, u.email, u.public_code, u.country_code,
+               u.created_at, COALESCE(r.role_name, 'Desconocido') AS role
+        FROM users u
+        LEFT JOIN public.roles r ON r.id = u.role_id
+        WHERE u.id = :uid
+    """), {"uid": user_id}).mappings().first()
+    if not u:
+        return jsonify({"ok": False, "error": "Usuario no encontrado"}), 404
+
+    referrer = db.session.execute(text("""
+        SELECT ru.id, ru.name, ru.phone, ru.public_code, rf.created_at
+        FROM public.referrals rf
+        JOIN users ru ON ru.id = rf.referrer_user_id
+        WHERE rf.referred_user_id = :uid
+        ORDER BY rf.id ASC
+        LIMIT 1
+    """), {"uid": user_id}).mappings().first()
+
+    referred = db.session.execute(text("""
+        SELECT rf.id, ru.id AS user_id, ru.name, ru.phone, ru.public_code,
+               rf.status::text AS status, rf.created_at,
+               (s.is_premium IS TRUE AND s.expires_at > NOW()) AS has_active_plan
+        FROM public.referrals rf
+        JOIN users ru ON ru.id = rf.referred_user_id
+        LEFT JOIN LATERAL (
+            SELECT is_premium, expires_at
+            FROM public.user_subscriptions
+            WHERE user_id = ru.id
+            ORDER BY COALESCE(expires_at, updated_at, created_at) DESC NULLS LAST
+            LIMIT 1
+        ) s ON TRUE
+        WHERE rf.referrer_user_id = :uid
+        ORDER BY rf.id DESC
+    """), {"uid": user_id}).mappings().all()
+
+    def _row(r):
+        # fechas en ISO 8601 para que el front las pueda leer
+        return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in dict(r).items()}
+
+    return jsonify({
+        "ok": True,
+        "user": _row(u),
+        "referred_by": _row(referrer) if referrer else None,
+        "referred": [_row(r) for r in referred],
+    })
+
+
+# ---------------------------------------------------------------------
 # PUT /api/admin/users/<user_id>/role  -> actualizar rol del usuario
 # Body: { "role_id": 1|2|3 }
 # ---------------------------------------------------------------------
