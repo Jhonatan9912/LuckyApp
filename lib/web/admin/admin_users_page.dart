@@ -239,6 +239,131 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     }
   }
 
+  String _fmtIso(dynamic iso) {
+    final d = DateTime.tryParse('${iso ?? ''}')?.toLocal();
+    if (d == null) return '—';
+    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+  }
+
+  Widget _detailLine(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 130,
+          child: Text(
+            label,
+            style: WebPalette.body(13, color: WebPalette.textFaint),
+          ),
+        ),
+        Expanded(
+          child: SelectableText(
+            value.isEmpty ? '—' : value,
+            style: WebPalette.body(13.5),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  /// Ficha del usuario: datos, quién lo refirió y a quién refirió.
+  Future<void> _showDetail(UserRow u) async {
+    Map<String, dynamic> d;
+    try {
+      d = await widget.ctrl.loadUserDetail(u.id);
+    } catch (e) {
+      await WebAlerts.dialog(
+        title: 'No se pudo cargar',
+        message: prettyError(e),
+        tone: AlertTone.error,
+      );
+      return;
+    }
+    if (!mounted) return;
+
+    final user = Map<String, dynamic>.from(d['user'] as Map? ?? {});
+    final by = d['referred_by'] == null
+        ? null
+        : Map<String, dynamic>.from(d['referred_by'] as Map);
+    final referred = ((d['referred'] as List?) ?? const [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+
+    await showWebModal<void>(
+      context,
+      title: u.name,
+      subtitle: 'Datos del usuario y referidos',
+      maxWidth: 640,
+      builder: (ctx) => SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _detailLine('Celular', '${user['country_code'] ?? ''} ${user['phone'] ?? ''}'.trim()),
+            _detailLine('Correo', '${user['email'] ?? ''}'),
+            _detailLine('Código', '${user['public_code'] ?? ''}'),
+            _detailLine('Rol', '${user['role'] ?? ''}'),
+            _detailLine('Registro', _fmtIso(user['created_at'])),
+            _detailLine('Plan', _planLabel(u)),
+            _detailLine('Vence', _expiryLabel(u)),
+            const SizedBox(height: 14),
+            Text(
+              'Referido por',
+              style: WebPalette.display(15, weight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            if (by == null)
+              Text('Nadie lo refirió.', style: WebPalette.body(13.5))
+            else ...[
+              _detailLine('Nombre', '${by['name'] ?? ''}'),
+              _detailLine('Código', '${by['public_code'] ?? ''}'),
+              _detailLine('Celular', '${by['phone'] ?? ''}'),
+              _detailLine('Fecha', _fmtIso(by['created_at'])),
+            ],
+            const SizedBox(height: 14),
+            Text(
+              'Personas que refirió (${referred.length})',
+              style: WebPalette.display(15, weight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            if (referred.isEmpty)
+              Text('Aún no ha referido a nadie.', style: WebPalette.body(13.5))
+            else
+              for (final r in referred)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${r['name'] ?? ''} · ${r['public_code'] ?? ''} · ${r['phone'] ?? ''}',
+                          style: WebPalette.body(13.5),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _fmtIso(r['created_at']),
+                        style: WebPalette.body(12.5, color: WebPalette.textFaint),
+                      ),
+                      const SizedBox(width: 8),
+                      StatusChip(
+                        label: r['has_active_plan'] == true
+                            ? 'Con plan'
+                            : 'Sin plan',
+                        color: r['has_active_plan'] == true
+                            ? WebPalette.emerald
+                            : WebPalette.textFaint,
+                      ),
+                    ],
+                  ),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Corrige o cambia el plan aunque ya tenga uno activo. Sin comisión de referido.
   Future<void> _changePlan(UserRow u) async {
     String? selected;
@@ -421,6 +546,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               else
                 WebTable<UserRow>(
                   rows: rows,
+                  onRowTap: _showDetail,
                   mobileTitle: (u) => Row(
                     children: [
                       Flexible(
@@ -498,6 +624,15 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                             )
                           : const CellText('—'),
                       flex: 2,
+                    ),
+                    WebColumn(
+                      'Referido por',
+                      (u) => CellText(
+                        (u.referredByName ?? '').isEmpty
+                            ? '—'
+                            : '${u.referredByName} (${u.referredByCode ?? ''})',
+                      ),
+                      flex: 3,
                     ),
                     WebColumn('Plan', (u) => CellText(_planLabel(u)), flex: 3),
                     WebColumn('Vence', (u) => CellText(_expiryLabel(u)), flex: 2),
