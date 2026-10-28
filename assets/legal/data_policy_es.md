@@ -1,5 +1,5 @@
 # Política de Tratamiento de Datos Personales (Habeas Data)
-_Última actualización: 22 de octubre de 2025_
+_Última actualización: 28 de octubre de 2026_
 
 **Responsable del Tratamiento:** Carlos Andrés Muñoz Ordóñez  
 **Aplicación/Servicio:** Método CAMO  
@@ -36,7 +36,7 @@ Esta Política describe cómo recolectamos, usamos, almacenamos y protegemos los
 - **Proveer** los servicios de asesoría y organización.  
 - **Enviar notificaciones** sobre números, grupos y referidos.  
 - **Gestionar** el programa de referidos y **procesar pagos de comisiones**.  
-- **Mejorar** la aplicación mediante **análisis anónimos** y métricas de uso.  
+- **Mejorar** la aplicación mediante **análisis anónimos** y métricas de uso (incluida la analítica web con Google Analytics).  
 - **Cumplir** con requerimientos legales y regulatorios (p. ej., tributarios, contables y de protección al consumidor).  
 - **Verificar y prevenir fraudes** en el uso de referidos o comisiones.
 
@@ -93,13 +93,23 @@ Implementamos medidas de seguridad técnicas, administrativas y organizativas pr
 ---
 
 ## 7-bis. Cookies y almacenamiento local
-En la versión web usamos **únicamente** cookies y almacenamiento local
-**esenciales**, necesarios para mantener tu sesión iniciada y para el correcto
-funcionamiento del sitio (por ejemplo, recordar que ya viste este aviso). **No
-utilizamos cookies de publicidad, analítica ni de rastreo** de terceros. Como
-son estrictamente necesarias, estas cookies no requieren consentimiento previo;
-aun así, mostramos un aviso informativo. Puedes borrarlas desde la configuración
-de tu navegador, aunque esto puede cerrar tu sesión.
+En la versión web usamos:
+
+- **Cookies y almacenamiento local esenciales**, necesarios para mantener tu
+  sesión iniciada y para el correcto funcionamiento del sitio (por ejemplo,
+  recordar que ya viste este aviso). Al ser estrictamente necesarias, no
+  requieren consentimiento previo.
+- **Google Analytics (Google LLC)**, una herramienta de analítica que usa
+  cookies para medir de forma **agregada y anónima** cuántas personas visitan el
+  sitio, desde qué país o dispositivo y cómo llegan a él. No usamos esta
+  información para identificarte ni para publicidad, y no la combinamos con tus
+  datos de cuenta.
+
+**No utilizamos cookies de publicidad ni de rastreo con fines publicitarios.**
+Puedes borrar las cookies o bloquear Google Analytics desde la configuración de
+tu navegador (o con el complemento oficial de inhabilitación de Google
+Analytics); borrar las esenciales puede cerrar tu sesión. Google puede procesar
+estos datos fuera de Colombia, conforme a lo indicado en la sección 8.
 
 ---
 
@@ -159,4 +169,4 @@ Resumen:
 ## 14. Contacto
 **Correo:** [luckyapp25@gmail.com](mailto:luckyapp25@gmail.com)  
 **Responsable:** Carlos Andrés Muñoz Ordóñez  
-**Versión:** 22/10/2025
+**Versión:** 28/10/2026

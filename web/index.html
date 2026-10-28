@@ -40,6 +40,15 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preload" href="main.dart.js" as="script">
+
+  <!-- Google Analytics 4 -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-30L5RHBJVV"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-30L5RHBJVV');
+  </script>
 </head>
 <body style="background-color:#0A0A0A;">
   <!-- Pantalla de carga: se ve al instante mientras Flutter descarga la app -->
@@ -69,7 +78,7 @@
   </script>
   <script src="flutter_bootstrap.js" async></script>
 
-  <!-- Aviso de cookies (solo cookies esenciales de funcionamiento) -->
+  <!-- Aviso de cookies (esenciales + Google Analytics) -->
   <style>
     #cookie-notice{position:fixed;right:20px;bottom:20px;z-index:2147483647;
       width:360px;max-width:calc(100vw - 32px);box-sizing:border-box;
@@ -88,14 +97,15 @@
   </style>
   <div id="cookie-notice" role="region" aria-label="Aviso de cookies">
     <p>Usamos cookies y almacenamiento local <strong>esenciales</strong> para
-      mantener tu sesión y el correcto funcionamiento del sitio. No usamos
-      cookies de publicidad ni de rastreo. Consulta nuestra
+      mantener tu sesión y, además, <strong>Google Analytics</strong> para medir
+      de forma anónima las visitas al sitio. No usamos cookies de publicidad.
+      Consulta nuestra
       <a href="#/datos">Política de Tratamiento de Datos</a>.</p>
     <button id="cookie-ok" type="button">Entendido</button>
   </div>
   <script>
     (function () {
-      var KEY = 'cookie_notice_ack_v1';
+      var KEY = 'cookie_notice_ack_v2';
       function hasAck() { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } }
       function ack() { try { localStorage.setItem(KEY, '1'); } catch (e) {} }
       if (hasAck()) return;
